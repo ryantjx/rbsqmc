@@ -1,0 +1,11 @@
+jax
+numpy
+scipy
+polars
+pandas
+matplotlib
+seaborn
+altair
+jaxlib
+numba
+pytest
