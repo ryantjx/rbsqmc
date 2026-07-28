@@ -17,7 +17,7 @@ Describe the SQMC algorithm. Demonstrate its empirical performance in JAX compar
 
 ## Application: Football Match Prediction using a Sequential Quasi-Monte Carlo approach
 
-SMC and QMC suffer from the inherent curse of dimensionality - SMC relies on importance sampling, which performs poorly in high dimensions because of greater discrepancy between the proposal and the target distributions. For QMC, standard discrepancy bounds deteriorate with increasing dimension.
+SQMC suffer from the inherent curse of dimensionality - SQMC relies on importance sampling at every step, which performs poorly in high dimensions because of greater discrepancy between the proposal and the target distributions.
 
 A practical improvement of SQMC appears when we are able to reformulate the problem to operate on a lower dimension during the resampling step, achieving the benefits of QMC whilst solving for the high-dimensional problem. (Gerber, M., Chopin, N. 2017) (3.1)
 
@@ -35,7 +35,9 @@ $$x_0^f = \begin{bmatrix} x_0^{f, attack} \\ x_0^{f, defense} \end{bmatrix} \sim
 
 $$\Sigma_0 = \Sigma_{\text{teams}} \otimes \Sigma_0^f = \begin{bmatrix} \sigma_{11}\Sigma_0^f & \sigma_{12}\Sigma_0^f & \cdots & \sigma_{1F}\Sigma_0^f \\ \sigma_{21}\Sigma_0^f & \sigma_{22}\Sigma_0^f & \cdots & \sigma_{2F}\Sigma_0^f \\ \vdots & \vdots & \ddots & \vdots \\ \sigma_{F1}\Sigma_0^f & \sigma_{F2}\Sigma_0^f & \cdots & \sigma_{FF}\Sigma_0^f \end{bmatrix}$$
 
-**Transition distribution** follows an OU-process with a stationary distribution $\mathcal{N}(\mu_0, \Sigma_0)$ and a mean-reversion parameter $\kappa$.
+
+
+**Transition distribution** follows an OU-process with a stationary distribution $\mathcal{N}(\mu_0, \Sigma_0)$ and a mean-reversion parameter $\kappa$ and $\Delta t$ represents the time difference between the previous and current observation.
 
 $$x_t = x_{t-1} + \phi_t(\mu_0 - x_{t-1}) + \epsilon_t$$
 
@@ -45,15 +47,52 @@ where $\epsilon_t \sim \mathcal{N}(0, Q_t)$, $\phi_t = \exp(- \kappa \Delta t)$,
 
 **Likelihood function** is a bivariate Poisson distribution,
 
-$$G_k(y_t \mid x_t^{h(t)}, x_t^{a(t)}) = e^{-(\lambda_1 + \lambda_2 + \lambda_3)} \frac{\lambda_1^{y_t^{h(t)}}}{y_t^{h(t)}!} \frac{\lambda_2^{y_t^{a(t)}}}{y_t^{a(t)}!} \sum_{j=0}^{\min(y_t^{h(t)}, y_t^{a(t)})} \binom{y_t^{h(t)}}{j} \binom{y_t^{a(t)}}{j} j! \left( \frac{\lambda_{3}}{\lambda_1 \lambda_2} \right)^j$$
+$$G_t(y_t \mid x_t^{h(t)}, x_t^{a(t)}) = e^{-(\lambda_1 + \lambda_2 + \lambda_3)} \frac{\lambda_1^{y_t^{h(t)}}}{y_t^{h(t)}!} \frac{\lambda_2^{y_t^{a(t)}}}{y_t^{a(t)}!} \sum_{j=0}^{\min(y_t^{h(t)}, y_t^{a(t)})} \binom{y_t^{h(t)}}{j} \binom{y_t^{a(t)}}{j} j! \left( \frac{\lambda_{3}}{\lambda_1 \lambda_2} \right)^j$$
 
 where $\lambda_1 = \exp(\alpha + x_t^{\text{att}, h(t)} - x_t^{\text{def}, a(t)})$, $\lambda_2 = \exp(\alpha + x_t^{\text{att}, a(t)} - x_t^{\text{def}, h(t)})$, $\lambda_3 = \exp(\beta)$.
 
 ### Sequential Quasi-Monte Carlo (SQMC)
 
-$$p(x^{h(k)}, x^{a(k)} \mid y_{1:k}) \propto G_k(y_k \mid x^{h(k)}, x^{a(k)}) p(x^{h(k)}, x^{a(k)} \mid y_{1:k-1})$$
+$$p(x^{h(t)}, x^{a(t)} \mid y_{1:t}) \propto G_t(y_t \mid x^{h(t)}, x^{a(t)}) p(x^{h(t)}, x^{a(t)} \mid y_{1:t-1})$$
 
 #### Rao-Blackwellized Sequential Quasi-Monte Carlo (RB-SQMC)
+
+We define $E_k = \{x^{h(t)}, x^{a(t)}\}$ as the set of latent states involved in the observation at time $k$. The joint distribution of the latent states can be factorized as
+
+$$p(x_{0:t}, y_{1:t}) = p(x^{E_t}_{0:t} \mid y_{1:t}) p(x^{-E_t}_{0:t} \mid x^{E_t}_{0:t})$$
+
+From the given model above, the transition distribution is linear Gaussian and the mean and covariance of the latent states not involved in the observation are deterministic and observation independent. Latent states not involved in the observation can be marginalized out analytically,
+
+$$p(x^{-E_t}_{0:t + 1} \mid x^{E_t}_{0:t}) = \mathcal{N}(\mu_0 + \phi_{t + 1} (x^{E_t}_{0:t} - \mu_0), Q_{t+1})$$
+
+Using the bootstrap filter, we can sample latent states involved in the observation and compute the weight update step using the likelihood function $G_t$.
+
+$$w_t = p(x^{E_t}_{0:t+1} \mid y_{1:t+1}) \propto G_{t+1}(y_{t+1} \mid x^{E_t}_{0:t+1}) p(x^{E_t}_{0:t+1} \mid y_{1:t})$$
+
+Thereafter, resampling is performed on the propagated particles, subsequently rsetting the weights to $w_t^{(i)} = 1 / N$ for $N$ particles.
+
+##### Smoothing
+
+At terminal time, we obtain a mixture of Gaussians for the latent states. 
+
+$$p(x_{T} \mid y_{1:T}) = \sum_{i=1}^{N} w_T^{(i)} p(x_{T} \mid y_{1:T}) \sim \mathcal{N}(\mu_T, \Sigma_T)$$
+
+Smoothing can be performed by using the Forward Filtering Backward Simulation (FFBSi) algorithm. We can obtain the smoothed latent state by recursively sampling backwards from the terminal time $T$ to the initial time $0$.
+
+$$\begin{aligned}
+p(x_{t} \mid x_{t+1} y_{1:T}) &\propto p(x_{t} \mid x_{t+1}, y_{1:T}) p(x_{t+1} \mid y_{1:T}) \\ &\propto p(x_{t} \mid x_{t+1}) \sum_{i=1}^{N} w_t^{(i)} p(x_{t}^{(i)} \mid y_{1:T}) \\ & \approx \sum_{i=1}^{N} w_{t \mid t+1}^{(i)} \mathcal{N}(x_{t} \mid m_{t \mid t+1}^{(i)}, \Sigma_{t \mid t+1}^{(i)})
+\end{aligned}$$
+
+$$w_{t \mid t+1}^{(i)} \approx w_t^{(i)} \mathcal{N}(x_{t+1} \mid \mu_0 + \phi_{t+1}(x_t - \mu_0), \Phi_{t+1} \Sigma_t \Phi_{t+1} + Q_{t+1})$$
+
+$$m_{t \mid t+1}^{(i)} = \mu_t + J_t (x_{t+1} - \Phi_{t+1} \mu_k)$$
+
+$$\Sigma_{t \mid t+1}^{(i)} = \Sigma_t - J_t \Phi_{t+1} \Sigma_t$$
+
+where $J_t = \Sigma_t (\Sigma_t + Q_{t+1})^{-1}$.
+
+$$x_k^{(i)} \sim \mathcal{N}(m_{t \mid t+1}^{(i)}, \Sigma_{t \mid t+1}^{(i)})$$
+
 
 ### Performance of SMC, SQMC, RB-SQMC
 

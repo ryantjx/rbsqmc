@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import pytest
 import numpy as np
 import jax.numpy as jnp
-from src.scripts.qmc.qmc import Sobol
+from scripts.qmc.qmc_archive import Sobol
 
 
 class TestSobol:
