@@ -48,10 +48,10 @@ ENV/
 Thumbs.db
 
 # Outputs
-outputs/
-*.png
-*.jpg
-*.pdf
+# outputs/
+# *.png
+# *.jpg
+# *.pdf
 
 # Logs
 *.log
