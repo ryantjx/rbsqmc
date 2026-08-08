@@ -35,12 +35,13 @@ echo "  N=1000, start_date=2000-01-01, n_epochs=10"
 echo "============================================================"
 
 # --- Step 1: Run the bootstrap script on a GPU VM ---
-# GPU_N controls particle count (default 100, fits L4 24GB VRAM)
-# GPU_TYPE controls the accelerator (default L4 with 24GB; T4 has 16GB and OOMs at N=100)
-# Override with: GPU_N=200 GPU_TYPE=T4 ./run_colab_smoothing.sh
-GPU_TYPE="${GPU_TYPE:-L4}"
-echo "[1/5] Launching Colab GPU session and running ${SCRIPT} (GPU=${GPU_TYPE}, GPU_N=${GPU_N:-100})..."
-GPU_N="${GPU_N:-100}" colab run --gpu "${GPU_TYPE}" --keep --timeout 3600 --session "${SESSION}" "${SCRIPT}"
+# GPU_N controls particle count (default 50, fits T4 16GB VRAM)
+# GPU_TYPE controls the accelerator (default T4 with 16GB)
+# Override with: GPU_N=100 GPU_TYPE=L4 ./run_colab_smoothing.sh
+GPU_TYPE="${GPU_TYPE:-T4}"
+GPU_N="${GPU_N:-50}"
+echo "[1/5] Launching Colab GPU session and running ${SCRIPT} (GPU=${GPU_TYPE}, N=${GPU_N})..."
+colab run --gpu "${GPU_TYPE}" --keep --timeout 3600 --session "${SESSION}" "${SCRIPT}" "${GPU_N}"
 
 # --- Step 2: Check active sessions ---
 echo "[2/5] Checking active Colab sessions..."
