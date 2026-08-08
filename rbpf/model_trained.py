@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from data import download_results
+from data import download_results, read_results
 from graphic import generate_all_plots, save_results, weighted_mean
 # from model import run_filter, MAX_GOALS, N
 from smoothing import load_params, EMParams
@@ -70,7 +70,10 @@ def main():
 
     # --- 1. Load data ---
     print("Downloading match results...")
-    data, results, team_id_to_name = download_results(
+    # data, results, team_id_to_name = download_results(
+    #     start_date=args.start_date, end_date=args.end_date, max_goals=MAX_GOALS,
+    # )
+    data, results, team_id_to_name = read_results(
         start_date=args.start_date, end_date=args.end_date, max_goals=MAX_GOALS,
     )
     NUM_TEAMS = len(team_id_to_name)

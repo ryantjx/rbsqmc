@@ -11,7 +11,7 @@ from data import download_results, FootballResults
 
 jax.config.update("jax_platforms", "cpu")
 
-N = 100
+N = 10
 MAX_GOALS = 8
 class RBPFState(NamedTuple):
     x: jax.Array
@@ -197,12 +197,19 @@ def run_filter(key, results, init_gamma, init_kappa, num_teams, n,
         init_friendly_scale=init_friendly_scale,
         num_teams=num_teams
     )
-    return cuthbert.filtering.filter(rbpf, augmented_results, key=key)
+    # Prepare the initial state from the first time step's model inputs
+    init_state = rbpf.init_prepare(
+        jax.tree.map(lambda x: x[0], augmented_results), key=key,
+    )
+    # Filter over the remaining T steps (exclude the initial state at index 0)
+    rest_inputs = jax.tree.map(lambda x: x[1:], augmented_results)
+    filtered_states = cuthbert.filtering.filter(rbpf, rest_inputs, init_state, key=key)
+    return filtered_states
 
 
 def main():
     
-    data, results, team_id_to_name = download_results(start_date="2000-01-01", end_date = "2025-12-31", max_goals=MAX_GOALS)
+    data, results, team_id_to_name = download_results(start_date="2020-01-01", end_date = "2025-12-31", max_goals=MAX_GOALS)
 
     print("DataFrame head:")
     print(data[['date', 'home_team', 'away_team', 'home_score', 'away_score']].head())
@@ -283,7 +290,7 @@ def main():
     print(f"  obeservations:   {len(results.timestamp)}")
     print(f"  particles.x:     {filtered_states.particles.x.shape}")
     # print(f"  particles.gamma: {filtered_states.particles.gamma.shape}")
-    print(f"  particles.gamma: {augmented_results.gamma_t.shape}")
+    print(f"  particles.gamma: {gamma_trajectory.shape}")
     print(f"  log_weights:     {filtered_states.log_weights.shape}")
     print(f"  log_normalizing_constant: {filtered_states.log_normalizing_constant.shape}")
 

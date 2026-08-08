@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import numpy as np
 from typing import NamedTuple
@@ -5,6 +6,7 @@ import jax
 
 jax.config.update("jax_platforms", "cpu")
 RAW_URL="https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
+PARQUET_PATH = os.path.join(os.path.dirname(__file__), "data", "results.parquet")
 
 class FootballResults(NamedTuple):
     match_index_id : jax.Array
@@ -62,6 +64,55 @@ def download_results(
     data["away_team_id"] = data["away_team"].map(team_name_to_id)
     data = data.reset_index(drop=True)
     # print(data.head())
+    return data, to_jax_data(data), team_id_to_name
+
+def read_results(
+        start_date: str = "1872-11-30", # date of first game
+        end_date: str | None = None,
+        max_goals: int = 8
+) -> tuple[pd.DataFrame, FootballResults, dict[int, str]]:
+    """
+    Read results from the local parquet file (no internet required) and apply
+    the same filtering/processing as `download_results`.
+
+    Outputs:
+        - results_df: pd.DataFrame with columns ['match_index_id', 'timestamp', 'home_team_id', 'away_team_id', 'home_score', 'away_score']
+        - results: FootballResults named tuple with the same data as jax arrays
+        - team_id_to_name: dict mapping team_id to team_name
+    """
+    data = pd.read_parquet(PARQUET_PATH)
+    # Ensure 'date' is parsed as datetime (parquet may store it as a string)
+    data["date"] = pd.to_datetime(data["date"])
+
+    # Fix dates
+    if data['date'].min() >= pd.Timestamp("2026-01-18"):
+        data.loc[
+            (data["home_team"] == "Morocco")
+            & (data["away_team"] == "Senegal")
+            & (data["date"] == "2026-01-18"),
+            ["home_score", "away_score"],
+        ] = [0, 1]
+
+    # Process time data into days since origin date
+    data = data[(data["date"] >= start_date) & (data["date"] <= end_date if end_date else True)]
+    data.sort_values(by="date", inplace=True)
+    data["timestamp"] = (data["date"] - data["date"].min()).dt.days
+    data["timestamp_prev"] = data["timestamp"].shift(1).fillna(0).astype(int)
+    data["friendly"] = data["tournament"].str.contains(
+        "Friendly", case=False, na=False
+    )
+    data[["home_score", "away_score"]] = data[["home_score", "away_score"]].fillna(-1).astype(int)
+    data = data[(data['home_score'] <= max_goals) & (data['away_score'] <= max_goals)]
+
+    all_teams = pd.unique(data[["home_team", "away_team"]].values.ravel())
+    # Create a stable mapping: team_name -> team_id
+    team_name_to_id = {name: i for i, name in enumerate(sorted(all_teams))}
+    team_id_to_name = {i: name for i, name in enumerate(sorted(all_teams))}
+
+    # Assign integer IDs back to the dataframe
+    data["home_team_id"] = data["home_team"].map(team_name_to_id)
+    data["away_team_id"] = data["away_team"].map(team_name_to_id)
+    data = data.reset_index(drop=True)
     return data, to_jax_data(data), team_id_to_name
 
 def to_jax_data(df: pd.DataFrame) -> FootballResults:

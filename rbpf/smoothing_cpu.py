@@ -25,7 +25,7 @@ from cuthbert.smc.backward_sampler import build_smoother
 from cuthbertlib.smc.smoothing import exact_sampling
 
 from bivariate_poisson import loglik
-from data import download_results, FootballResults
+from data import download_results, FootballResults, read_results
 from model import (
     RBPFState, RBPFFootballResults,
     init_sample, propagate_sample, _log_potential,
@@ -34,7 +34,7 @@ from model import (
 
 jax.config.update("jax_platforms", "cpu")
 
-N = 100
+N = 10
 MAX_GOALS = 8
 
 
@@ -385,8 +385,11 @@ def run_em(
 
 
 def main():
-    data, results, team_id_to_name = download_results(
-        start_date="2000-01-01", end_date="2025-12-31", max_goals=MAX_GOALS,
+    # data, results, team_id_to_name = download_results(
+    #     start_date="2000-01-01", end_date="2025-12-31", max_goals=MAX_GOALS,
+    # )
+    data, results, team_id_to_name = read_results(
+        start_date="2020-01-01", end_date="2025-12-31", max_goals=MAX_GOALS,
     )
 
     NUM_TEAMS = len(team_id_to_name)
