@@ -16,7 +16,7 @@ echo "============================================================"
 
 # --- Step 1: Run the bootstrap script on a GPU VM ---
 echo "[1/4] Launching Colab GPU session and running ${SCRIPT}..."
-colab run --gpu T4 --keep "${SCRIPT}"
+colab run --gpu T4 --keep --timeout 600 "${SCRIPT}"
 
 # --- Step 2: Download outputs ---
 echo "[2/4] Downloading outputs from VM..."
