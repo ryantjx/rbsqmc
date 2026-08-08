@@ -27,7 +27,7 @@ import time
 REPO_URL = "https://github.com/ryantjx/rbsqmc.git"
 REPO_DIR = "/content/rbsqmc"
 RBPF_DIR = os.path.join(REPO_DIR, "rbpf")
-OUTPUT_DIR = os.path.join(RBPF_DIR, "outputs")
+OUTPUT_DIR = os.path.join(RBPF_DIR, "outputs_gpu")
 
 DEPS = [
     "jax",
@@ -159,6 +159,10 @@ def main():
     # Patch n_epochs (handle any value)
     src = re.sub(r'n_epochs=\d+, output_dir', f'n_epochs={TEST_N_EPOCHS}, output_dir', src)
 
+    # Patch output_dir to outputs_gpu (label GPU outputs separately)
+    src = src.replace('output_dir="./outputs"', 'output_dir="./outputs_gpu"')
+    src = src.replace('"./outputs/em_params_init.json"', '"./outputs_gpu/em_params_init.json"')
+
     with open(smoothing_path, "w") as f:
         f.write(src)
     log(f"  Patched {smoothing_path}")
@@ -169,6 +173,7 @@ def main():
     log(f"  N = {TEST_N}: {'OK' if f'N = {TEST_N}' in verify else 'FAILED'}")
     log(f"  start_date = {TEST_START_DATE}: {'OK' if TEST_START_DATE in verify else 'FAILED'}")
     log(f"  n_epochs = {TEST_N_EPOCHS}: {'OK' if f'n_epochs={TEST_N_EPOCHS}' in verify else 'FAILED'}")
+    log(f"  output_dir = outputs_gpu: {'OK' if 'outputs_gpu' in verify else 'FAILED'}")
 
     # --- Step 5: Verify JAX sees the GPU ---
     log("Verifying JAX GPU availability...")
@@ -183,10 +188,10 @@ def main():
     os.chdir(RBPF_DIR)
     log(f"Working directory: {os.getcwd()}")
 
-    # Create outputs directory (smoothing.py's main() calls save_params before run_em
+    # Create outputs_gpu directory (smoothing.py's main() calls save_params before run_em
     # creates the directory with os.makedirs)
-    os.makedirs("outputs", exist_ok=True)
-    log("Created outputs/ directory")
+    os.makedirs("outputs_gpu", exist_ok=True)
+    log("Created outputs_gpu/ directory")
 
     log("Running smoothing.py (unbuffered, streaming output)...")
     log("=" * 60)

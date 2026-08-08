@@ -29,7 +29,7 @@ import time
 REPO_URL = "https://github.com/ryantjx/rbsqmc.git"
 REPO_DIR = "/content/rbsqmc"
 RBPF_DIR = os.path.join(REPO_DIR, "rbpf")
-OUTPUT_DIR = os.path.join(RBPF_DIR, "outputs")
+OUTPUT_DIR = os.path.join(RBPF_DIR, "outputs_gpu")
 
 DEPS = [
     "jax",
@@ -111,6 +111,23 @@ def patch_cpu_to_cuda(filepath: str):
         log(f"  No CPU lock found in {filepath} (already CUDA or not present)")
 
 
+def patch_file(filepath: str, replacements: list[tuple[str, str]]):
+    """Apply a list of (old, new) string replacements to a file."""
+    with open(filepath, "r") as f:
+        src = f.read()
+
+    original = src
+    for old, new in replacements:
+        src = src.replace(old, new)
+
+    if src != original:
+        with open(filepath, "w") as f:
+            f.write(src)
+        log(f"  Patched {filepath}")
+    else:
+        log(f"  No changes needed in {filepath}")
+
+
 def main():
     log("=" * 60)
     log("SMOOTHING GPU RUNNER — STARTING")
@@ -138,6 +155,15 @@ def main():
         else:
             log(f"  Warning: {fpath} not found, skipping")
 
+    # --- Step 3b: Patch output_dir to outputs_gpu ---
+    log("Patching smoothing.py output_dir to outputs_gpu...")
+    smoothing_path = os.path.join(RBPF_DIR, "smoothing.py")
+    patch_file(smoothing_path, [
+        ('output_dir="./outputs"', 'output_dir="./outputs_gpu"'),
+        ('"./outputs/em_params_init.json"', '"./outputs_gpu/em_params_init.json"'),
+    ])
+    log("  Patched output_dir → outputs_gpu")
+
     # --- Step 4: Verify JAX sees the GPU ---
     log("Verifying JAX GPU availability...")
     check_cmd = [
@@ -151,10 +177,10 @@ def main():
     os.chdir(RBPF_DIR)
     log(f"Working directory: {os.getcwd()}")
 
-    # Create outputs directory (smoothing.py's main() calls save_params before run_em
+    # Create outputs_gpu directory (smoothing.py's main() calls save_params before run_em
     # creates the directory with os.makedirs)
-    os.makedirs("outputs", exist_ok=True)
-    log("Created outputs/ directory")
+    os.makedirs("outputs_gpu", exist_ok=True)
+    log("Created outputs_gpu/ directory")
 
     log("Running smoothing.py (unbuffered, streaming output)...")
     log("=" * 60)
