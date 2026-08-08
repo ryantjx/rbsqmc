@@ -164,6 +164,19 @@ def main():
     ])
     log("  Patched output_dir → outputs_gpu")
 
+    # --- Step 3c: Patch N to fit GPU memory ---
+    # T4 has 16GB VRAM. N=1000 with 262 teams needs ~59GB (OOM).
+    # N=100 is a safe middle ground that fits in 16GB.
+    GPU_N = os.environ.get("GPU_N", "100")
+    log(f"Patching N to {GPU_N} (to fit T4 16GB VRAM)...")
+    import re
+    with open(smoothing_path, "r") as f:
+        src = f.read()
+    src = re.sub(r'^N = \d+\n', f'N = {GPU_N}\n', src, count=1, flags=re.MULTILINE)
+    with open(smoothing_path, "w") as f:
+        f.write(src)
+    log(f"  Patched N → {GPU_N}")
+
     # --- Step 4: Verify JAX sees the GPU ---
     log("Verifying JAX GPU availability...")
     check_cmd = [
@@ -176,6 +189,11 @@ def main():
     # --- Step 5: Run smoothing.py with unbuffered output ---
     os.chdir(RBPF_DIR)
     log(f"Working directory: {os.getcwd()}")
+
+    # Set XLA env vars to help with GPU memory fragmentation
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+    log("Set XLA_PYTHON_CLIENT_PREALLOCATE=false, ALLOCATOR=platform")
 
     # Create outputs_gpu directory (smoothing.py's main() calls save_params before run_em
     # creates the directory with os.makedirs)
