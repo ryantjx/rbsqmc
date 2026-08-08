@@ -36,7 +36,7 @@ OUTPUT_FILES=(
 
 echo "============================================================"
 echo "  COLAB SMOOTHING GPU — PRODUCTION RUN"
-echo "  N=10000, start_date=2000-01-01, n_epochs=15, teams=WorldCup2026"
+echo "  N=1000, start_date=2000-01-01, n_epochs=15, teams=WorldCup2026"
 echo "============================================================"
 
 # --- Step 1: Run the bootstrap script on a GPU VM ---

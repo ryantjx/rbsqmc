@@ -34,7 +34,7 @@ from model import (
 
 jax.config.update("jax_platforms", "cuda") # Script to run GPU
 
-N = 10000
+N = 1000
 MAX_GOALS = 8
 
 
