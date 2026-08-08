@@ -46,7 +46,7 @@ DEPS = [
     "cuthbert",
 ]
 
-# Files that hardcode CPU — patched to GPU
+# Files that hardcode CPU — patched to CUDA
 PATCH_TARGETS = ["smoothing.py", "model.py", "data.py"]
 
 
@@ -68,8 +68,28 @@ def run(cmd, **kwargs):
     return result
 
 
-def patch_cpu_to_gpu(filepath: str):
-    """Replace jax_platforms 'cpu' with 'gpu' in a file."""
+def run_streaming(cmd):
+    """Run a command with stdout/stderr piped to our stdout in real time."""
+    log(f"Running: {' '.join(cmd) if isinstance(cmd, list) else cmd}")
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    for line in proc.stdout:
+        print(line, end="", flush=True)
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Command failed (exit {proc.returncode}): "
+            f"{' '.join(cmd) if isinstance(cmd, list) else cmd}"
+        )
+
+
+def patch_cpu_to_cuda(filepath: str):
+    """Replace jax_platforms 'cpu' with 'cuda' in a file."""
     with open(filepath, "r") as f:
         src = f.read()
 
@@ -77,18 +97,18 @@ def patch_cpu_to_gpu(filepath: str):
     # Handle both single and double quote variants
     for old, new in [
         ('jax.config.update("jax_platforms", "cpu")',
-         'jax.config.update("jax_platforms", "gpu")'),
+         'jax.config.update("jax_platforms", "cuda")'),
         ("jax.config.update('jax_platforms', 'cpu')",
-         "jax.config.update('jax_platforms', 'gpu')"),
+         "jax.config.update('jax_platforms', 'cuda')"),
     ]:
         src = src.replace(old, new)
 
     if src != original:
         with open(filepath, "w") as f:
             f.write(src)
-        log(f"  Patched {filepath}: cpu → gpu")
+        log(f"  Patched {filepath}: cpu → cuda")
     else:
-        log(f"  No CPU lock found in {filepath} (already GPU or not present)")
+        log(f"  No CPU lock found in {filepath} (already CUDA or not present)")
 
 
 def main():
@@ -134,7 +154,7 @@ def main():
     log("=" * 60)
 
     # -u = unbuffered, so tqdm and print stream in real time
-    run([sys.executable, "-u", "smoothing.py"])
+    run_streaming([sys.executable, "-u", "smoothing.py"])
 
     log("=" * 60)
     log("smoothing.py COMPLETED")

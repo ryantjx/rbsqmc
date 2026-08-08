@@ -32,7 +32,7 @@ from model import (
     build_rbpf_filter, compute_gamma_trajectory, run_filter,
 )
 
-jax.config.update("jax_platforms", "cpu")
+jax.config.update("jax_platforms", "cuda") # Script to run GPU
 
 N = 1000
 MAX_GOALS = 8

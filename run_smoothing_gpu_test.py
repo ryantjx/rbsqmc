@@ -44,7 +44,7 @@ DEPS = [
     "cuthbert",
 ]
 
-# Files that hardcode CPU — patched to GPU
+# Files that hardcode CPU — patched to CUDA
 PATCH_TARGETS = ["smoothing.py", "model.py", "data.py"]
 
 # Test parameters
@@ -148,7 +148,7 @@ def main():
     with open(smoothing_path, "r") as f:
         src = f.read()
 
-    # Determine which N value is in the file (committed: N=100, local: N=1000)
+    # Patch N (handle any value: committed N=100, local N=1000, etc.)
     import re
     src = re.sub(r'^N = \d+\n', f'N = {TEST_N}\n', src, count=1, flags=re.MULTILINE)
 
@@ -156,41 +156,8 @@ def main():
     src = src.replace('start_date="2000-01-01"', f'start_date="{TEST_START_DATE}"')
     src = src.replace("start_date='2000-01-01'", f"start_date='{TEST_START_DATE}'")
 
-    # Patch n_epochs (handle both n_epochs=10 and n_epochs=5 etc.)
+    # Patch n_epochs (handle any value)
     src = re.sub(r'n_epochs=\d+, output_dir', f'n_epochs={TEST_N_EPOCHS}, output_dir', src)
-
-    # Ensure download_results is used (VM has no local parquet for read_results)
-    # Uncomment download_results if it's commented out, comment out read_results
-    src = src.replace(
-        '    # data, results, team_id_to_name = download_results(\n'
-        '    #     start_date=',
-        '    data, results, team_id_to_name = download_results(\n'
-        '    #     start_date=',  # keep the inner line commented, we'll fix below
-    )
-    # Actually, do a clean swap: uncomment download_results block, comment read_results
-    src = re.sub(
-        r'    # data, results, team_id_to_name = download_results\(\n'
-        r'    #     (start_date=.*?)\n'
-        r'    # \)\n'
-        r'    data, results, team_id_to_name = read_results\(\n'
-        r'        (start_date=.*?)\n'
-        r'        (end_date=.*?)\n'
-        r'        (max_goals=.*?)\n'
-        r'    \)',
-        lambda m: (
-            f'    data, results, team_id_to_name = download_results(\n'
-            f'        {m.group(1)}\n'
-            f'        {m.group(2)}\n'
-            f'        {m.group(3)}\n'
-            f'    )\n'
-            f'    # data, results, team_id_to_name = read_results(\n'
-            f'    #     {m.group(1)}\n'
-            f'    #     {m.group(2)}\n'
-            f'    #     {m.group(3)}\n'
-            f'    # )'
-        ),
-        src,
-    )
 
     with open(smoothing_path, "w") as f:
         f.write(src)
@@ -202,7 +169,6 @@ def main():
     log(f"  N = {TEST_N}: {'OK' if f'N = {TEST_N}' in verify else 'FAILED'}")
     log(f"  start_date = {TEST_START_DATE}: {'OK' if TEST_START_DATE in verify else 'FAILED'}")
     log(f"  n_epochs = {TEST_N_EPOCHS}: {'OK' if f'n_epochs={TEST_N_EPOCHS}' in verify else 'FAILED'}")
-    log(f"  download_results active: {'OK' if 'data, results, team_id_to_name = download_results(' in verify and not verify.count('data, results, team_id_to_name = download_results(') > 1 or True else 'check'}")
 
     # --- Step 5: Verify JAX sees the GPU ---
     log("Verifying JAX GPU availability...")

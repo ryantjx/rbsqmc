@@ -147,8 +147,9 @@ immediately on completion and you lose the outputs.
 
 `smoothing.py` (and its dependencies `model.py`, `data.py`) all hardcode
 `jax.config.update("jax_platforms", "cpu")`. To run on GPU, these must be
-patched to `"gpu"` on the VM. The repo includes a bootstrap script
-(`run_smoothing_gpu.py`) that handles cloning, installing, patching, and
+patched to `"cuda"` on the VM (Colab T4 uses the CUDA backend, not 'gpu').
+The repo includes a bootstrap script (`run_smoothing_gpu.py`) that handles
+cloning, installing, patching, and
 running with real-time progress output.
 
 ### One-shot (recommended)
@@ -160,7 +161,7 @@ colab run --gpu T4 --keep run_smoothing_gpu.py
 This will:
 1. Clone `rbsqmc` to `/content/rbsqmc`
 2. Install all deps (including `cuthbert` from PyPI and `tqdm`)
-3. Patch `jax_platforms` from `"cpu"` to `"gpu"` in `smoothing.py`, `model.py`, `data.py`
+3. Patch `jax_platforms` from `"cpu"` to `"cuda"` in `smoothing.py`, `model.py`, `data.py`
 4. Verify JAX sees the GPU
 5. Run `smoothing.py` with unbuffered output (tqdm + print stream in real time)
 6. Print a summary of the final EM parameters and list all output files
@@ -196,8 +197,8 @@ git clone https://github.com/ryantjx/rbsqmc.git
 pip install jax jaxlib numpy scipy polars pandas matplotlib seaborn altair numba tqdm cuthbert
 
 cd /content/rbsqmc/rbpf
-# Patch all three files: cpu → gpu
-sed -i 's/jax.config.update("jax_platforms", "cpu")/jax.config.update("jax_platforms", "gpu")/' smoothing.py model.py data.py
+# Patch all three files: cpu → cuda
+sed -i 's/jax.config.update("jax_platforms", "cpu")/jax.config.update("jax_platforms", "cuda")/' smoothing.py model.py data.py
 
 python -u smoothing.py
 ```
@@ -219,5 +220,5 @@ Then `colab download` and `colab stop` as above.
   your fork on the VM if you need unpublished local edits.
 - **JAX on CPU**: `model.py` and `smoothing.py` force CPU via
   `jax.config.update("jax_platforms", "cpu")`. For GPU runs, patch this to
-  `"gpu"` (the `run_smoothing_gpu.py` script does this automatically).
+  `"cuda"` (the `run_smoothing_gpu.py` script does this automatically).
 - **smoothing.py imports `tqdm`**: ensure it's installed (`pip install tqdm`).
