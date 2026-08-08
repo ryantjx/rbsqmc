@@ -25,7 +25,7 @@ from cuthbert.smc.backward_sampler import build_smoother
 from cuthbertlib.smc.smoothing import exact_sampling
 
 from bivariate_poisson import loglik
-from data import download_results, FootballResults, read_results
+from data import download_results, FootballResults, read_results, WORLDCUP_2026_TEAMS
 from model import (
     RBPFState, RBPFFootballResults,
     init_sample, propagate_sample, _log_potential,
@@ -34,7 +34,7 @@ from model import (
 
 jax.config.update("jax_platforms", "cuda") # Script to run GPU
 
-N = 1000
+N = 10000
 MAX_GOALS = 8
 
 
@@ -389,7 +389,7 @@ def main():
     #     start_date="2000-01-01", end_date="2025-12-31", max_goals=MAX_GOALS,
     # )
     data, results, team_id_to_name = read_results(
-        start_date="2000-01-01", end_date="2025-12-31", max_goals=MAX_GOALS,
+        start_date="2000-01-01", end_date="2025-12-31", max_goals=MAX_GOALS, teams_only=WORLDCUP_2026_TEAMS,
     )
 
     NUM_TEAMS = len(team_id_to_name)
@@ -416,7 +416,7 @@ def main():
 
     # Run EM
     final_params, log_marginal_history = run_em(
-        results, init_params, NUM_TEAMS, n_epochs=10, output_dir="./outputs",
+        results, init_params, NUM_TEAMS, n_epochs=15, output_dir="./outputs",
     )
 
     print(f"\n{'='*60}")

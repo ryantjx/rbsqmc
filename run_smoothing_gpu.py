@@ -164,19 +164,22 @@ def main():
     ])
     log("  Patched output_dir → outputs_gpu")
 
-    # --- Step 3c: Patch N to fit GPU memory ---
-    # T4 has 16GB VRAM. N=1000 with 262 teams needs ~59GB (OOM).
-    # N=50 needs ~7.6GB, fits in T4's ~12.5GB available.
-    # Pass via sys.argv: colab run --gpu T4 --keep run_smoothing_gpu.py 50
-    GPU_N = sys.argv[1] if len(sys.argv) > 1 else "50"
-    log(f"Patching N to {GPU_N} (to fit GPU VRAM)...")
-    import re
-    with open(smoothing_path, "r") as f:
-        src = f.read()
-    src = re.sub(r'^N = \d+\n', f'N = {GPU_N}\n', src, count=1, flags=re.MULTILINE)
-    with open(smoothing_path, "w") as f:
-        f.write(src)
-    log(f"  Patched N → {GPU_N}")
+    # --- Step 3c: Patch N if specified (otherwise use smoothing.py's default) ---
+    # With WORLDCUP_2026_TEAMS filter (48 teams), the Kronecker product is (96×96)
+    # instead of (524×524), so much higher N is feasible on a T4.
+    # Pass via sys.argv: colab run --gpu T4 --keep run_smoothing_gpu.py 5000
+    if len(sys.argv) > 1:
+        GPU_N = sys.argv[1]
+        log(f"Patching N to {GPU_N} (overridden via sys.argv)...")
+        import re
+        with open(smoothing_path, "r") as f:
+            src = f.read()
+        src = re.sub(r'^N = \d+\n', f'N = {GPU_N}\n', src, count=1, flags=re.MULTILINE)
+        with open(smoothing_path, "w") as f:
+            f.write(src)
+        log(f"  Patched N → {GPU_N}")
+    else:
+        log("Using N from smoothing.py (no override)")
 
     # --- Step 4: Verify JAX sees the GPU ---
     log("Verifying JAX GPU availability...")

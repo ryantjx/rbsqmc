@@ -13,7 +13,7 @@ LOCAL_OUTPUTS="./rbpf/outputs_gpu"
 SCRIPT="run_smoothing_gpu.py"
 SESSION="rbsqmc"
 
-# Production run has 10 epochs — generate the expected file list
+# Production run has 15 epochs — generate the expected file list
 OUTPUT_FILES=(
     em_params_init.json
     em_params_epoch_0.json
@@ -26,22 +26,31 @@ OUTPUT_FILES=(
     em_params_epoch_7.json
     em_params_epoch_8.json
     em_params_epoch_9.json
+    em_params_epoch_10.json
+    em_params_epoch_11.json
+    em_params_epoch_12.json
+    em_params_epoch_13.json
+    em_params_epoch_14.json
     em_params_final.json
 )
 
 echo "============================================================"
 echo "  COLAB SMOOTHING GPU — PRODUCTION RUN"
-echo "  N=1000, start_date=2000-01-01, n_epochs=10"
+echo "  N=10000, start_date=2000-01-01, n_epochs=15, teams=WorldCup2026"
 echo "============================================================"
 
 # --- Step 1: Run the bootstrap script on a GPU VM ---
-# GPU_N controls particle count (default 50, fits T4 16GB VRAM)
 # GPU_TYPE controls the accelerator (default T4 with 16GB)
-# Override with: GPU_N=100 GPU_TYPE=L4 ./run_colab_smoothing.sh
+# GPU_N optionally overrides particle count (default: use smoothing.py's N=10000)
+# With 48 teams (WorldCup2026 filter), N=10000 fits in T4 16GB VRAM.
+# Override with: GPU_N=5000 GPU_TYPE=T4 ./run_colab_smoothing.sh
 GPU_TYPE="${GPU_TYPE:-T4}"
-GPU_N="${GPU_N:-50}"
-echo "[1/5] Launching Colab GPU session and running ${SCRIPT} (GPU=${GPU_TYPE}, N=${GPU_N})..."
-colab run --gpu "${GPU_TYPE}" --keep --timeout 3600 --session "${SESSION}" "${SCRIPT}" "${GPU_N}"
+echo "[1/5] Launching Colab GPU session and running ${SCRIPT} (GPU=${GPU_TYPE})..."
+if [ -n "${GPU_N:-}" ]; then
+    colab run --gpu "${GPU_TYPE}" --keep --timeout 3600 --session "${SESSION}" "${SCRIPT}" "${GPU_N}"
+else
+    colab run --gpu "${GPU_TYPE}" --keep --timeout 3600 --session "${SESSION}" "${SCRIPT}"
+fi
 
 # --- Step 2: Check active sessions ---
 echo "[2/5] Checking active Colab sessions..."

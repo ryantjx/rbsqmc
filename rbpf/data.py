@@ -1,4 +1,5 @@
 import os
+import json
 import pandas as pd
 import numpy as np
 from typing import NamedTuple
@@ -7,6 +8,10 @@ import jax
 jax.config.update("jax_platforms", "cpu")
 RAW_URL="https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
 PARQUET_PATH = os.path.join(os.path.dirname(__file__), "data", "results.parquet")
+WORLDCUP_2026_PATH = os.path.join(os.path.dirname(__file__), "worldcup2026.json")
+
+with open(WORLDCUP_2026_PATH) as f:
+    WORLDCUP_2026_TEAMS: set[str] = set(json.load(f))
 
 class FootballResults(NamedTuple):
     match_index_id : jax.Array
@@ -21,7 +26,8 @@ class FootballResults(NamedTuple):
 def download_results(
         start_date: str = "1872-11-30", # date of first game
         end_date: str | None = None,
-        max_goals: int = 8
+        max_goals: int = 8,
+        teams_only: set[str] | None = None,
 ) -> tuple[pd.DataFrame, FootballResults, dict[int, str]]:
     """
     
@@ -54,6 +60,11 @@ def download_results(
     data[["home_score", "away_score"]] = data[["home_score", "away_score"]].fillna(-1).astype(int)
     data = data[(data['home_score'] <= max_goals) & (data['away_score'] <= max_goals)]
 
+    if teams_only is not None:
+        data = data[
+            data["home_team"].isin(teams_only) & data["away_team"].isin(teams_only)
+        ]
+
     all_teams = pd.unique(data[["home_team", "away_team"]].values.ravel())
     # Create a stable mapping: team_name -> team_id
     team_name_to_id = {name: i for i, name in enumerate(sorted(all_teams))}
@@ -69,7 +80,8 @@ def download_results(
 def read_results(
         start_date: str = "1872-11-30", # date of first game
         end_date: str | None = None,
-        max_goals: int = 8
+        max_goals: int = 8,
+        teams_only: set[str] | None = None,
 ) -> tuple[pd.DataFrame, FootballResults, dict[int, str]]:
     """
     Read results from the local parquet file (no internet required) and apply
@@ -103,6 +115,11 @@ def read_results(
     )
     data[["home_score", "away_score"]] = data[["home_score", "away_score"]].fillna(-1).astype(int)
     data = data[(data['home_score'] <= max_goals) & (data['away_score'] <= max_goals)]
+
+    if teams_only is not None:
+        data = data[
+            data["home_team"].isin(teams_only) & data["away_team"].isin(teams_only)
+        ]
 
     all_teams = pd.unique(data[["home_team", "away_team"]].values.ravel())
     # Create a stable mapping: team_name -> team_id
