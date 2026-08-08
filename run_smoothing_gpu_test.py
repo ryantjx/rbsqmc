@@ -182,6 +182,12 @@ def main():
     # --- Step 6: Run smoothing.py with unbuffered output ---
     os.chdir(RBPF_DIR)
     log(f"Working directory: {os.getcwd()}")
+
+    # Create outputs directory (smoothing.py's main() calls save_params before run_em
+    # creates the directory with os.makedirs)
+    os.makedirs("outputs", exist_ok=True)
+    log("Created outputs/ directory")
+
     log("Running smoothing.py (unbuffered, streaming output)...")
     log("=" * 60)
 
