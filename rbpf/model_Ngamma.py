@@ -15,16 +15,8 @@ N = 100
 MAX_GOALS = 8
 class RBPFState(NamedTuple):
     x: jax.Array
+    gamma: jax.Array
 
-class RBPFFootballResults(NamedTuple):
-    match_index_id : jax.Array
-    timestamp: jax.Array
-    timestamp_prev: jax.Array
-    home_team_id: jax.Array
-    away_team_id: jax.Array
-    home_score: jax.Array
-    away_score: jax.Array
-    gamma_t: jax.Array
 
 def init_sample(
         key : jax.Array, 
@@ -39,23 +31,24 @@ def init_sample(
         cov=jnp.kron(init_gamma, init_B),
     )
     x = x_flat.reshape(init_mean.shape)
-    return RBPFState(x=x)
+    return RBPFState(x=x, gamma=init_gamma)
 
 def propagate_sample(
         key: jax.Array, 
         state: RBPFState, 
         model_inputs: FootballResults, 
         init_mean: jnp.ndarray,
+        init_gamma: jnp.ndarray,
         init_B: jnp.ndarray,
         init_kappa: float,
         num_teams: int):
     # 1. Propagate all states (OU process)
     dt = model_inputs.timestamp - model_inputs.timestamp_prev
     phi_t = jnp.exp(-init_kappa * dt) * jnp.eye(num_teams)
+
     pred_mean = init_mean + phi_t @ (state.x - init_mean)
-    pred_gamma = model_inputs.gamma_t
-    # Q_t = init_gamma - phi_t @ init_gamma @ phi_t.T
-    # pred_gamma = (phi_t @ state.gamma @ phi_t.T + Q_t)
+    Q_t = init_gamma - phi_t @ init_gamma @ phi_t.T
+    pred_gamma = (phi_t @ state.gamma @ phi_t.T + Q_t)
     # pred_gamma = (phi_t @ state.gamma @ phi_t.T + init_gamma - phi_t @ init_gamma @ phi_t.T)
 
     obs_indices = jnp.array([model_inputs.home_team_id, model_inputs.away_team_id])
@@ -63,9 +56,6 @@ def propagate_sample(
     # 2. Sample for observed teams
     mu_E = pred_mean[obs_indices]                              # (2, 2)
     gamma_EE = pred_gamma[jnp.ix_(obs_indices, obs_indices)]   # (2, 2)
-    # Add jitter to prevent singular gamma_EE when dt=0 and teams were observed
-    # in the previous step (zeroed rows make gamma_EE singular)
-    gamma_EE = gamma_EE + 1e-6 * jnp.eye(gamma_EE.shape[0])
     Sigma_EE = jnp.kron(gamma_EE, init_B)                      # (4, 4)
 
     key, subkey = jax.random.split(key)
@@ -93,7 +83,7 @@ def propagate_sample(
     keep_mask = jnp.outer(~obs_mask, ~obs_mask)                # (num_teams, num_teams)
     gamma_updated = gamma_updated * keep_mask
 
-    return RBPFState(x=x_update)
+    return RBPFState(x=x_update, gamma=gamma_updated)
 
 # wrapper function to index the observed teams
 def _log_potential(
@@ -130,7 +120,7 @@ def build_rbpf_filter(
         propagate_sample=partial(
             propagate_sample,
             init_mean=init_mean,
-            # init_gamma=init_gamma,
+            init_gamma=init_gamma,
             init_B=init_B,
             init_kappa=init_kappa,
             num_teams=num_teams
@@ -146,67 +136,11 @@ def build_rbpf_filter(
     )
     return rbpf
 
-def compute_gamma_trajectory(model_inputs, init_gamma, init_kappa, num_teams):
-    """Deterministic gamma evolution. One copy per time step, NOT per particle."""
-    def gamma_step(prev_gamma, model_input):
-        dt = model_input.timestamp - model_input.timestamp_prev
-        phi_t = jnp.exp(-init_kappa * dt) * jnp.eye(num_teams)
-        Q_t = init_gamma - phi_t @ init_gamma @ phi_t.T
-        pred_gamma = phi_t @ prev_gamma @ phi_t.T + Q_t
-
-        obs_indices = jnp.array([model_input.home_team_id, model_input.away_team_id])
-        gamma_EE = pred_gamma[jnp.ix_(obs_indices, obs_indices)]
-        # Add jitter to prevent singular gamma_EE when dt=0 and teams were observed
-        # in the previous step (zeroed rows make gamma_EE singular)
-        gamma_EE = gamma_EE + 1e-6 * jnp.eye(gamma_EE.shape[0])
-        gamma_RE_full = pred_gamma[:, obs_indices]
-        K_full = jnp.linalg.solve(gamma_EE.T, gamma_RE_full.T).T
-        gamma_updated = pred_gamma - K_full @ gamma_RE_full.T
-
-        obs_mask = jnp.zeros(num_teams, dtype=bool).at[obs_indices].set(True)
-        gamma_updated = gamma_updated * jnp.outer(~obs_mask, ~obs_mask)
-
-        return gamma_updated, pred_gamma   # carry post-update, store predictive
-
-    rest_inputs = jax.tree.map(lambda x: x[1:], model_inputs)
-    _, pred_gamma_traj = jax.lax.scan(gamma_step, init_gamma, rest_inputs)
-    return jnp.concatenate([init_gamma[None], pred_gamma_traj])  # (T+1, M, M)
-
-@partial(jax.jit, static_argnames=("num_teams", "n"))
-def run_filter(key, results, init_gamma, init_kappa, num_teams, n,
-               init_mean, init_B, init_alpha, init_beta, init_friendly_scale):
-    gamma_trajectory = compute_gamma_trajectory(results, init_gamma, init_kappa, num_teams)
-    augmented_results = RBPFFootballResults(
-        match_index_id=results.match_index_id,
-        timestamp=results.timestamp,
-        timestamp_prev=results.timestamp_prev,
-        home_team_id=results.home_team_id,
-        away_team_id=results.away_team_id,
-        home_score=results.home_score,
-        away_score=results.away_score,
-        gamma_t=gamma_trajectory
-    )
-    rbpf = build_rbpf_filter(
-        n=n,
-        init_mean=init_mean,
-        init_gamma=init_gamma,
-        init_B=init_B,
-        init_kappa=init_kappa,
-        init_alpha=init_alpha,
-        init_beta=init_beta,
-        init_friendly_scale=init_friendly_scale,
-        num_teams=num_teams
-    )
-    return cuthbert.filtering.filter(rbpf, augmented_results, key=key)
-
-
 def main():
     
-    data, results, team_id_to_name = download_results(start_date="2000-01-01", end_date = "2025-12-31", max_goals=MAX_GOALS)
-
+    data, results, team_id_to_name = download_results(start_date="2020-01-01", max_goals=MAX_GOALS)
     print("DataFrame head:")
-    print(data[['date', 'home_team', 'away_team', 'home_score', 'away_score']].head())
-    print(data[['date', 'home_team', 'away_team', 'home_score', 'away_score']].tail())
+    print(data.head())
     NUM_TEAMS = len(team_id_to_name)
     INIT_MEAN = jnp.zeros((NUM_TEAMS, 2))
     key = jax.random.PRNGKey(42)
@@ -227,42 +161,10 @@ def main():
     print(INIT_B)
     print(f"Kappa: {INIT_KAPPA}, Alpha: {INIT_ALPHA}, Beta: {INIT_BETA}, Friendly Scale: {INIT_FRIENDLY_SCALE}" )
 
-    # print("Building RBPF filter...")
-    # gamma_trajectory = compute_gamma_trajectory(results, INIT_GAMMA, INIT_KAPPA, NUM_TEAMS)
-    # augmented_results = RBPFFootballResults(
-    #     match_index_id=results.match_index_id,
-    #     timestamp=results.timestamp,
-    #     timestamp_prev=results.timestamp_prev,
-    #     home_team_id=results.home_team_id,
-    #     away_team_id=results.away_team_id,
-    #     home_score=results.home_score,
-    #     away_score=results.away_score,
-    #     gamma_t=gamma_trajectory
-    # )
-    # # Build the filter with the data-dependent params
-    # rbpf = build_rbpf_filter(
-    #     n=N,
-    #     init_mean=INIT_MEAN,
-    #     init_gamma=INIT_GAMMA,
-    #     init_B=INIT_B,
-    #     init_kappa=INIT_KAPPA,
-    #     init_alpha=INIT_ALPHA,
-    #     init_beta=INIT_BETA,
-    #     init_friendly_scale=INIT_FRIENDLY_SCALE,
-    #     num_teams=NUM_TEAMS,
-    # )
-
-    # print("Running filter...")
-    # # Run the filter
-    # key, filter_key = jax.random.split(key)
-    # filtered_states = cuthbert.filtering.filter(rbpf, augmented_results, key=filter_key)
-    # print("Filtering complete.")
-
-    print("Running filter (optimized)...")
-    key, filter_key = jax.random.split(key)
-    filtered_states, gamma_trajectory = run_filter(
-        key=filter_key,
-        results=results,
+    print("Building RBPF filter...")
+    # Build the filter with the data-dependent params
+    rbpf = build_rbpf_filter(
+        n=N,
         init_mean=INIT_MEAN,
         init_gamma=INIT_GAMMA,
         init_B=INIT_B,
@@ -271,8 +173,13 @@ def main():
         init_beta=INIT_BETA,
         init_friendly_scale=INIT_FRIENDLY_SCALE,
         num_teams=NUM_TEAMS,
-        n=N
     )
+
+    print("Running filter...")
+    # Run the filter
+    key, filter_key = jax.random.split(key)
+    result = cuthbert.filtering.filter(rbpf, results, key=filter_key)
+    print("Filtering complete.")
 
     # --- Analyze results ---
     # result.particles.x     -> (T+1, N, NUM_TEAMS, 2)
@@ -280,23 +187,20 @@ def main():
     # result.log_weights     -> (T+1, N)
 
     print(f"\nResult shapes:")
-    print(f"  obeservations:   {len(results.timestamp)}")
-    print(f"  particles.x:     {filtered_states.particles.x.shape}")
-    # print(f"  particles.gamma: {filtered_states.particles.gamma.shape}")
-    print(f"  particles.gamma: {augmented_results.gamma_t.shape}")
-    print(f"  log_weights:     {filtered_states.log_weights.shape}")
-    print(f"  log_normalizing_constant: {filtered_states.log_normalizing_constant.shape}")
+    print(f"  particles.x:     {result.particles.x.shape}")
+    print(f"  particles.gamma: {result.particles.gamma.shape}")
+    print(f"  log_weights:     {result.log_weights.shape}")
+    print(f"  log_normalizing_constant: {result.log_normalizing_constant.shape}")
 
     # Compute weighted mean of the final state
     from graphic import generate_all_plots, weighted_mean
 
-    final_log_w = filtered_states.log_weights[-1]
-    final_x_mean = weighted_mean(filtered_states.particles.x[-1], final_log_w)
-    # Gamma is precomputed (one copy per step, not per particle)
-    final_gamma = gamma_trajectory[-1]  # (NUM_TEAMS, NUM_TEAMS)
+    final_log_w = result.log_weights[-1]
+    final_x_mean = weighted_mean(result.particles.x[-1], final_log_w)
+    final_gamma_mean = weighted_mean(result.particles.gamma[-1], final_log_w)
 
     print(f"\nFinal state (weighted mean) — x shape: {final_x_mean.shape}")
-    print(f"Final gamma — shape: {final_gamma.shape}")
+    print(f"Final gamma (weighted mean) — shape: {final_gamma_mean.shape}")
 
     # Print top 5 teams by attack strength
     final_att = np.array(final_x_mean[:, 0])
@@ -309,21 +213,10 @@ def main():
     # Generate all diagnostic plots
     print("\nGenerating plots...")
     generate_all_plots(
-        filtered_states,
-        gamma_trajectory,
+        result,
         team_id_to_name,
-        output_dir="./outputs/base",
+        output_dir="./rbpf/outputs",
         max_teams=10,
-    )
-
-    # Save results to parquet for analysis and parameter estimation
-    print("\nSaving results to parquet...")
-    from graphic import save_results
-    save_results(
-        filtered_states,
-        gamma_trajectory,
-        team_id_to_name,
-        output_dir="./outputs/base",
     )
 
 if __name__ == "__main__":
