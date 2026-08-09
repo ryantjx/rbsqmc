@@ -200,9 +200,10 @@ def M_step(
 ) -> EMParams:
     """M-step: Update μ₀, Γ₀, α, β. κ and B are fixed.
 
-    Γ₀ uses a fixed inverse-Wishart prior to prevent collapse:
-        Σ_post = (S_0 + N * S_emp) / (ν_0 + N)
-    where S_0 = I_M (fixed prior scale), ν_0 = M + 2 (weak prior).
+    Γ₀ is estimated as the empirical covariance between teams at t=0,
+    following the Kronecker structure Σ₀ = Γ₀ ⊗ B from PROOF_V5 §2.
+    With κ fixed at 1.0, particles maintain proper diversity so the
+    empirical covariance is well-conditioned without a prior.
     """
     all_x = smoothed_states.particles.x  # (T+1, N, M, 2)
     T_plus_1 = all_x.shape[0]
@@ -212,20 +213,15 @@ def M_step(
     # --- 1. Update μ_0: empirical mean of smoothed states at t=0 ---
     new_init_mean = jnp.mean(all_x[0], axis=0)  # (M, 2)
 
-    # --- 2. Update Γ_0: inverse-Wishart posterior ---
-    # Prior: IW(S_0, ν_0) with S_0 = I_M, ν_0 = M + 2
-    # Posterior: Σ_post = (S_0 + N * S_emp) / (ν_0 + N)
+    # --- 2. Update Γ_0: empirical between-team covariance at t=0 ---
+    # From PROOF_V5 §2: Σ₀ = Γ₀ ⊗ B, where Γ₀ is the between-team covariance.
+    # MLE: Γ₀ = (1/K) Σ_k X_k^T X_k / N  (averaged over K=2 dimensions)
     x0_centered = all_x[0] - new_init_mean[None, :, :]  # (N, M, 2)
     gamma_0_sum = jnp.zeros((num_teams, num_teams))
     for k in range(K):
         x0_k = x0_centered[:, :, k]  # (N, M)
         gamma_0_sum += x0_k.T @ x0_k / N_particles
-    gamma_0_empirical = gamma_0_sum / K
-
-    # Fixed inverse-Wishart prior (NOT data-dependent)
-    S_0 = jnp.eye(num_teams)  # Prior scale matrix
-    nu_0 = num_teams + 2     # Prior degrees of freedom (weak)
-    new_init_gamma = (S_0 + N_particles * gamma_0_empirical) / (nu_0 + N_particles)
+    new_init_gamma = gamma_0_sum / K
     new_init_gamma = new_init_gamma + 1e-3 * jnp.eye(num_teams)
 
     # --- 3. B is fixed (not updated) ---
