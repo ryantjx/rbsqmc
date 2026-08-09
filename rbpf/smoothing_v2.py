@@ -1,11 +1,13 @@
-"""EM for RBPF with Kronecker structure — V2: Fixed κ and B, estimate Γ₀, α, β, μ₀.
+"""EM for RBPF with Kronecker structure — V2: Fixed κ, B, Γ₀. Estimate α, β, μ₀.
 
 Fixes the degeneracy issue from smoothing.py by:
   - Fixing κ = 1.0 (OU reversion rate, breaks the κ→0 feedback loop)
   - Fixing B = I₂ (within-team covariance, prevents collapse)
-  - Estimating Γ₀ with a fixed inverse-Wishart prior (not data-dependent)
-  - Estimating α, β via grid search (same as before)
-  - Estimating μ₀ via empirical mean (same as before)
+  - Γ₀ is randomly sampled at initialization (A@A.T + I) and kept fixed
+  - Γ_t for t > 0 is computed deterministically from Γ₀ via compute_gamma_trajectory
+    (PROOF_V5 §3.1, step 1 — Kalman prediction/update equations)
+  - Estimating α, β via grid search
+  - Estimating μ₀ via empirical mean of smoothed particles
 
 Output: JSON files of parameters at each EM epoch.
 """
