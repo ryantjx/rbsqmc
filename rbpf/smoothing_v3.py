@@ -375,7 +375,7 @@ def main():
 
     # Run EM
     final_params, log_marginal_history = run_em(
-        results, init_params, NUM_TEAMS, n_epochs=15, output_dir="./outputs_gpu_v3",
+        results, init_params, NUM_TEAMS, n_epochs=10, output_dir="./outputs_gpu_v3",
     )
 
     print(f"\n{'='*60}")
