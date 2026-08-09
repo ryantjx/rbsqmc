@@ -106,10 +106,19 @@ else
     echo "WARNING: em_params_final.json not found\!"
 fi
 
-echo "[5/5] Tearing down VM..."
+# --- Step 5: Run model_trained_v2.py locally with the trained parameters ---
+echo "[5/6] Running model_trained_v2.py with trained parameters..."
+cd rbpf
+python3 -u model_trained_v2.py --params-path ./outputs_gpu_v2/em_params_final.json --output-dir ./outputs_gpu_v2/trained || \
+    echo "  WARNING: model_trained_v2.py failed"
+cd ..
+
+# --- Step 6: Tear down ---
+echo "[6/6] Tearing down VM..."
 colab stop -s "${SESSION}"
 trap - EXIT
 
 echo "============================================================"
-echo "  DONE — outputs saved to ${LOCAL_OUTPUTS}"
+echo "  DONE — EM outputs saved to ${LOCAL_OUTPUTS}"
+echo "  Filter outputs saved to ${LOCAL_OUTPUTS}/trained/"
 echo "============================================================"

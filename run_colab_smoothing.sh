@@ -11,7 +11,7 @@ set -euo pipefail
 REMOTE_OUTPUTS="/content/rbsqmc/rbpf/outputs_gpu"
 LOCAL_OUTPUTS="./rbpf/outputs_gpu"
 SCRIPT="run_smoothing_gpu.py"
-SESSION="rbsqmc"
+SESSION="${SESSION:-rbsqmc}"
 
 # Production run has 15 epochs — generate the expected file list
 OUTPUT_FILES=(
@@ -39,18 +39,23 @@ echo "  COLAB SMOOTHING GPU — PRODUCTION RUN"
 echo "  N=1000, start_date=2000-01-01, n_epochs=15, teams=WorldCup2026"
 echo "============================================================"
 
+# Ensure the session is stopped even if a step fails
+cleanup() {
+    echo "Cleaning up: stopping Colab session '${SESSION}'..."
+    colab stop -s "${SESSION}" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 # --- Step 1: Run the bootstrap script on a GPU VM ---
 # GPU_TYPE controls the accelerator (default T4 with 16GB)
-# GPU_N optionally overrides particle count (default: use smoothing.py's N=10000)
-# With 48 teams (WorldCup2026 filter), N=10000 fits in T4 16GB VRAM.
-# Override with: GPU_N=5000 GPU_TYPE=T4 ./run_colab_smoothing.sh
+# GPU_N optionally overrides particle count (default: 1000, which fits a T4)
+# With 48 teams (WorldCup2026 filter), N=1000 fits in T4 16GB VRAM.
+# Override with: GPU_N=500 GPU_TYPE=T4 ./run_colab_smoothing.sh
 GPU_TYPE="${GPU_TYPE:-T4}"
+GPU_N="${GPU_N:-1000}"
+
 echo "[1/5] Launching Colab GPU session and running ${SCRIPT} (GPU=${GPU_TYPE})..."
-if [ -n "${GPU_N:-}" ]; then
-    colab run --gpu "${GPU_TYPE}" --keep --timeout 3600 --session "${SESSION}" "${SCRIPT}" "${GPU_N}"
-else
-    colab run --gpu "${GPU_TYPE}" --keep --timeout 3600 --session "${SESSION}" "${SCRIPT}"
-fi
+colab run --gpu "${GPU_TYPE}" --keep --timeout 3600 --session "${SESSION}" "${SCRIPT}" "${GPU_N}"
 
 # --- Step 2: Check active sessions ---
 echo "[2/5] Checking active Colab sessions..."
@@ -114,10 +119,20 @@ else
     echo "WARNING: em_params_final.json not found\!"
 fi
 
-# --- Step 5: Tear down ---
-echo "[5/5] Tearing down VM..."
+# --- Step 5: Run model_trained.py locally with the trained parameters ---
+echo "[5/6] Running model_trained.py with trained parameters..."
+cd rbpf
+python3 -u model_trained.py --params-path ./outputs_gpu/em_params_final.json --output-dir ./outputs_gpu/trained || \
+    echo "  WARNING: model_trained.py failed"
+cd ..
+
+# --- Step 6: Tear down ---
+echo "[6/6] Tearing down VM..."
 colab stop -s "${SESSION}"
+# Disable the trap so it doesn't fire again
+trap - EXIT
 
 echo "============================================================"
-echo "  DONE — outputs saved to ${LOCAL_OUTPUTS}"
+echo "  DONE — EM outputs saved to ${LOCAL_OUTPUTS}"
+echo "  Filter outputs saved to ${LOCAL_OUTPUTS}/trained/"
 echo "============================================================"

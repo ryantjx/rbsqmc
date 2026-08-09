@@ -16,13 +16,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from data import download_results, read_results
+from data import download_results, read_results, WORLDCUP_2026_TEAMS
 from graphic import generate_all_plots, save_results, weighted_mean
-# from model import run_filter, MAX_GOALS, N
+from model import run_filter, compute_gamma_trajectory, MAX_GOALS
 from smoothing import load_params, EMParams
 
 MAX_GOALS = 8
-N = 10000
+N = 50
 
 jax.config.update("jax_platforms", "cpu")
 
@@ -74,13 +74,13 @@ def main():
     #     start_date=args.start_date, end_date=args.end_date, max_goals=MAX_GOALS,
     # )
     data, results, team_id_to_name = read_results(
-        start_date=args.start_date, end_date=args.end_date, max_goals=MAX_GOALS,
+        start_date=args.start_date, end_date=args.end_date, max_goals=MAX_GOALS, teams_only=WORLDCUP_2026_TEAMS,
     )
     NUM_TEAMS = len(team_id_to_name)
     print(f"  {len(results.timestamp)} matches, {NUM_TEAMS} teams")
 
     # --- 2. Load trained parameters ---
-    params_path = args.params_path or find_latest_params("./outputs")
+    params_path = args.params_path or find_latest_params("./outputs_gpu")
     print(f"\nLoading trained parameters from: {params_path}")
     params: EMParams = load_params(params_path)
 
@@ -96,18 +96,21 @@ def main():
     print("\nRunning filter with trained parameters...")
     key = jax.random.PRNGKey(42)
     key, filter_key = jax.random.split(key)
-    filtered_states, gamma_trajectory = run_filter(
+    filtered_states = run_filter(
         key=filter_key,
         results=results,
-        init_mean=params.init_mean,
         init_gamma=params.init_gamma,
-        init_B=params.init_B,
         init_kappa=params.init_kappa,
+        num_teams=NUM_TEAMS,
+        n=N,
+        init_mean=params.init_mean,
+        init_B=params.init_B,
         init_alpha=params.init_alpha,
         init_beta=params.init_beta,
         init_friendly_scale=params.init_friendly_scale,
-        num_teams=NUM_TEAMS,
-        n=N,
+    )
+    gamma_trajectory = compute_gamma_trajectory(
+        results, params.init_gamma, params.init_kappa, NUM_TEAMS,
     )
 
     # --- 4. Report results ---
