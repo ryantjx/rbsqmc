@@ -137,6 +137,18 @@ def main():
         name = team_id_to_name.get(int(tid), f"Team {tid}")
         print(f"  {name:30s}  attack={final_att[tid]:+.4f}  defense={final_x_mean[tid, 1]:+.4f}")
 
+    # Print initial vs final correlation summaries
+    print("\n--- Generating correlation matrices ---")
+    for feat, feat_name in [(0, "Attack"), (1, "Defense")]:
+        for t_idx, t_label in [(0, "initial"), (-1, "final")]:
+            all_x = filtered_states.particles.x
+            x_t = np.array(all_x[t_idx])  # (N, M, 2)
+            vals = x_t[:, :, feat]  # (N, M)
+            corr = np.corrcoef(vals, rowvar=False)
+            mask = ~np.eye(corr.shape[0], dtype=bool)
+            mean_abs_corr = np.mean(np.abs(corr[mask]))
+            print(f"  Mean |corr(off-diag)| {feat_name} ({t_label}): {mean_abs_corr:.4f}")
+
     # --- 5. Generate plots and save results ---
     os.makedirs(args.output_dir, exist_ok=True)
     print(f"\nGenerating plots in {args.output_dir}/...")

@@ -295,6 +295,68 @@ def plot_final_strengths_bar(
     plt.close()
 
 
+def plot_correlation_matrix(
+    result,
+    time_index: int = -1,
+    feature: int = 0,
+    team_id_to_name: dict[int, str] | None = None,
+    max_teams: int = 20,
+    save_path: str | None = None,
+):
+    """Plot Pearson correlation matrix of team strengths across particles at a given time step.
+
+    Computes the correlation between each pair of teams across the N particles,
+    showing how team strengths co-vary in the particle distribution.
+
+    Args:
+        result: ParticleFilterState from cuthbert.filtering.filter.
+            result.particles.x has shape (T+1, N, NUM_TEAMS, 2)
+            result.log_weights has shape (T+1, N)
+        time_index: which time step to visualize (0=initial, -1=final).
+        feature: 0 for attack strength, 1 for defense strength.
+        team_id_to_name: optional team name mapping for axis labels.
+        max_teams: max number of teams to show (truncates large matrices).
+        save_path: if provided, save figure to this path.
+    """
+    all_x = result.particles.x  # (T+1, N, NUM_TEAMS, 2)
+    x_t = np.array(all_x[time_index])  # (N, NUM_TEAMS, 2)
+
+    # Extract feature values: (N, NUM_TEAMS)
+    values = x_t[:, :, feature]
+
+    # Compute Pearson correlation matrix across teams (variables in columns)
+    corr = np.corrcoef(values, rowvar=False)  # (NUM_TEAMS, NUM_TEAMS)
+
+    num_teams = corr.shape[0]
+    n_show = min(max_teams, num_teams)
+    corr_show = corr[:n_show, :n_show]
+
+    fig, ax = plt.subplots(figsize=(max(8, n_show * 0.6), max(6, n_show * 0.6)))
+    im = ax.imshow(corr_show, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
+    plt.colorbar(im, ax=ax, label="Pearson correlation")
+
+    # Labels
+    if team_id_to_name is not None:
+        labels = [team_id_to_name.get(i, str(i)) for i in range(n_show)]
+        ax.set_xticks(range(n_show))
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
+        ax.set_yticks(range(n_show))
+        ax.set_yticklabels(labels, fontsize=7)
+    else:
+        ax.set_xticks(range(n_show))
+        ax.set_yticks(range(n_show))
+
+    feature_name = "Attack" if feature == 0 else "Defense"
+    time_label = "initial" if time_index == 0 else "final"
+    ax.set_title(f"Team {feature_name} Correlation Matrix ({time_label} state, t={time_index})")
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved correlation matrix to {save_path}")
+    plt.close()
+
+
 def generate_all_plots(
     result,
     gamma_trajectory: jax.Array | None,
@@ -348,6 +410,40 @@ def generate_all_plots(
         result, team_id_to_name,
         max_teams=max_teams,
         save_path=f"{output_dir}/final_strengths.png",
+    )
+
+    # Initial and final correlation matrices (attack and defense)
+    plot_correlation_matrix(
+        result,
+        time_index=0,
+        feature=0,
+        team_id_to_name=team_id_to_name,
+        max_teams=max_teams,
+        save_path=f"{output_dir}/correlation_initial_attack.png",
+    )
+    plot_correlation_matrix(
+        result,
+        time_index=0,
+        feature=1,
+        team_id_to_name=team_id_to_name,
+        max_teams=max_teams,
+        save_path=f"{output_dir}/correlation_initial_defense.png",
+    )
+    plot_correlation_matrix(
+        result,
+        time_index=-1,
+        feature=0,
+        team_id_to_name=team_id_to_name,
+        max_teams=max_teams,
+        save_path=f"{output_dir}/correlation_final_attack.png",
+    )
+    plot_correlation_matrix(
+        result,
+        time_index=-1,
+        feature=1,
+        team_id_to_name=team_id_to_name,
+        max_teams=max_teams,
+        save_path=f"{output_dir}/correlation_final_defense.png",
     )
 
     print(f"\nAll plots saved to {output_dir}/")
