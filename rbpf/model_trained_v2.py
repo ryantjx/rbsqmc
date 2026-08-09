@@ -22,9 +22,9 @@ from model import run_filter, compute_gamma_trajectory, MAX_GOALS
 from smoothing_v2 import load_params, EMParams
 
 MAX_GOALS = 8
-N = 50
+N = 1000
 
-jax.config.update("jax_platforms", "cpu")
+jax.config.update("jax_platforms", "cuda")
 
 
 def find_latest_params(output_dir: str) -> str:
