@@ -13,24 +13,9 @@ LOCAL_OUTPUTS="./rbpf/outputs_gpu"
 SCRIPT="run_smoothing_gpu.py"
 SESSION="${SESSION:-rbsqmc}"
 
-# Production run has 15 epochs — generate the expected file list
+# Only download init and final — skip intermediate epochs
 OUTPUT_FILES=(
     em_params_init.json
-    em_params_epoch_0.json
-    em_params_epoch_1.json
-    em_params_epoch_2.json
-    em_params_epoch_3.json
-    em_params_epoch_4.json
-    em_params_epoch_5.json
-    em_params_epoch_6.json
-    em_params_epoch_7.json
-    em_params_epoch_8.json
-    em_params_epoch_9.json
-    em_params_epoch_10.json
-    em_params_epoch_11.json
-    em_params_epoch_12.json
-    em_params_epoch_13.json
-    em_params_epoch_14.json
     em_params_final.json
 )
 
