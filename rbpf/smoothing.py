@@ -34,7 +34,8 @@ from model import (
     build_rbpf_filter, compute_gamma_trajectory, run_filter,
 )
 
-jax.config.update("jax_platforms", "cuda") # Script to run GPU
+# jax_platforms is set in main(), not at module level, so that
+# model_trained.py can import this module on CPU-only machines.
 
 N = 1000
 MAX_GOALS = 8
@@ -375,6 +376,9 @@ def run_em(
 
 
 def main():
+    # Set GPU platform only when running smoothing.py directly
+    jax.config.update("jax_platforms", "cuda")
+
     # data, results, team_id_to_name = download_results(
     #     start_date="2000-01-01", end_date="2025-12-31", max_goals=MAX_GOALS,
     # )
