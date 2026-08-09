@@ -128,7 +128,7 @@ def _joint_log_potential(
     # Q_t = (Γ_0 - φ Γ_0 φ) ⊗ B
     Q_t_gamma = init_gamma - phi_t @ init_gamma @ phi_t.T
     Q_t = jnp.kron(Q_t_gamma, init_B)
-    Q_t_reg = Q_t + 1e-6 * jnp.eye(Q_t.shape[0])
+    Q_t_reg = Q_t + 1e-3 * jnp.eye(Q_t.shape[0])
 
     diff = (state_curr.x - pred_mean).flatten()
     log_det_Q = jnp.log(jnp.linalg.det(Q_t_reg))
@@ -226,23 +226,34 @@ def M_step(
     new_init_mean = jnp.mean(all_x[0], axis=0)  # (M, 2)
 
     # --- 2. Update Γ_0: empirical covariance between teams at t=0 ---
+    # Use shrinkage toward a non-diagonal prior to preserve off-diagonal structure
     x0_centered = all_x[0] - new_init_mean[None, :, :]  # (N, M, 2)
-    # Vectorized: Γ_0 = (1/K) Σ_k X_k^T X_k / N
-    gamma_0_sum = jnp.einsum("nmk,nml->kl", x0_centered, x0_centered)  # wait, wrong dims
     # x0_centered: (N, M, K), we want (M, M) averaged over K
     # Cov over teams for each k: (M, M) = X_k^T X_k / N
     gamma_0_sum = jnp.zeros((num_teams, num_teams))
     for k in range(K):
         x0_k = x0_centered[:, :, k]  # (N, M)
         gamma_0_sum += x0_k.T @ x0_k / N_particles
-    new_init_gamma = gamma_0_sum / K
-    new_init_gamma = new_init_gamma + 1e-6 * jnp.eye(num_teams)
+    gamma_0_empirical = gamma_0_sum / K
+    # Shrinkage: blend empirical with a non-diagonal prior (equicorrelation)
+    # This preserves off-diagonal structure rather than just adding a diagonal floor
+    gamma_diag = jnp.diag(jnp.diag(gamma_0_empirical))
+    gamma_mean = jnp.mean(jnp.diag(gamma_0_empirical))
+    gamma_prior = 0.5 * gamma_diag + 0.5 * gamma_mean * (jnp.ones((num_teams, num_teams)) + jnp.eye(num_teams))
+    shrinkage = 0.1  # 10% prior, 90% empirical
+    new_init_gamma = (1.0 - shrinkage) * gamma_0_empirical + shrinkage * gamma_prior
+    new_init_gamma = new_init_gamma + 1e-3 * jnp.eye(num_teams)
 
     # --- 3. Update B: average within-team covariance ---
     # B = (1/N) Σ_n Cov_within(X_0^n) = (1/N) Σ_n (1/M) Σ_m x_centered[n,m,:] x_centered[n,m,:]^T
     # Vectorized: B = einsum('nmk,nml->kl', x0_centered, x0_centered) / (N * M)
-    new_init_B = jnp.einsum("nmk,nml->kl", x0_centered, x0_centered) / (N_particles * num_teams)
-    new_init_B = new_init_B + 1e-6 * jnp.eye(K)
+    B_empirical = jnp.einsum("nmk,nml->kl", x0_centered, x0_centered) / (N_particles * num_teams)
+    # Shrinkage toward a non-diagonal prior to preserve off-diagonal structure
+    B_diag = jnp.diag(jnp.diag(B_empirical))
+    B_mean = jnp.mean(jnp.diag(B_empirical))
+    B_prior = 0.5 * B_diag + 0.5 * B_mean * (jnp.ones((K, K)) + jnp.eye(K))
+    new_init_B = (1.0 - shrinkage) * B_empirical + shrinkage * B_prior
+    new_init_B = new_init_B + 1e-3 * jnp.eye(K)
 
     # --- 4. Update κ: vectorized grid search over transition likelihood ---
     timestamps = results.timestamp
@@ -264,7 +275,7 @@ def M_step(
         # Q_t = (Γ_0 - φ^2 Γ_0) ⊗ B = (1 - φ^2) Γ_0 ⊗ B = (1 - φ^2) (Γ_0 ⊗ B)
         # Since Γ_0 ⊗ B is fixed, Q_t = (1 - φ_t^2) * Sigma_0
         Sigma_0 = jnp.kron(new_init_gamma, new_init_B)  # (KM, KM)
-        Sigma_0_reg = Sigma_0 + 1e-6 * jnp.eye(Sigma_0.shape[0])
+        Sigma_0_reg = Sigma_0 + 1e-3 * jnp.eye(Sigma_0.shape[0])
         Sigma_0_inv = jnp.linalg.inv(Sigma_0_reg)
         log_det_Sigma_0 = jnp.log(jnp.linalg.det(Sigma_0_reg))
         dim = num_teams * K
@@ -280,7 +291,7 @@ def M_step(
         step_losses = jax.vmap(step_loss)(t_indices, phis)
         return -jnp.sum(step_losses)
 
-    kappa_candidates = jnp.linspace(0.01, 10.0, 30)
+    kappa_candidates = jnp.linspace(0.001, 20.0, 50)
     kappa_losses = jax.vmap(neg_log_trans_kappa)(kappa_candidates)
     new_kappa = float(kappa_candidates[jnp.argmin(kappa_losses)])
 
@@ -309,8 +320,8 @@ def M_step(
 
         return -jax.vmap(step_obs)(t_indices).sum()
 
-    alpha_candidates = jnp.linspace(-2.0, 2.0, 15)
-    beta_candidates = jnp.linspace(-8.0, 0.0, 15)
+    alpha_candidates = jnp.linspace(-5.0, 5.0, 25)
+    beta_candidates = jnp.linspace(-10.0, 2.0, 25)
 
     # Vectorize over both alpha and beta using nested vmap
     def eval_beta(alpha_val):
@@ -396,10 +407,16 @@ def main():
     key = jax.random.PRNGKey(42)
 
     # Initialize parameters
+    # Γ_0: non-diagonal covariance between teams (equicorrelation + noise)
     A = jax.random.normal(key, (NUM_TEAMS, NUM_TEAMS))
     INIT_GAMMA = A @ A.T + 1.0 * jnp.eye(NUM_TEAMS)
-    B = jax.random.normal(key, (2, 2))
+    # B: non-diagonal within-team covariance (attack-defense correlation)
+    key, b_key = jax.random.split(key)
+    B = jax.random.normal(b_key, (2, 2))
     INIT_B = B @ B.T + 1.0 * jnp.eye(2)
+    # Add off-diagonal structure: negative correlation between attack and defense
+    INIT_B = INIT_B.at[0, 1].set(INIT_B[0, 1] - 0.3)
+    INIT_B = INIT_B.at[1, 0].set(INIT_B[1, 0] - 0.3)
 
     init_params = EMParams(
         init_mean=jnp.zeros((NUM_TEAMS, 2)),
