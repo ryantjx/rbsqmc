@@ -118,7 +118,7 @@ def main():
         else:
             log(f"  Warning: {fpath} not found, skipping")
 
-    # --- Step 4: Patch N if specified ---
+    # --- Step 4: Patch N and n_epochs ---
     smoothing_path = os.path.join(RBPF_DIR, "smoothing_v3.py")
     if len(sys.argv) > 1:
         GPU_N = sys.argv[1]
