@@ -198,12 +198,12 @@ def M_step(
     num_teams: int,
     prev_params: EMParams,
 ) -> EMParams:
-    """M-step: Update μ₀, Γ₀, α, β. κ and B are fixed.
+    """M-step: Update μ₀, α, β. κ, B, and Γ₀ are fixed.
 
-    Γ₀ is estimated as the empirical covariance between teams at t=0,
-    following the Kronecker structure Σ₀ = Γ₀ ⊗ B from PROOF_V5 §2.
-    With κ fixed at 1.0, particles maintain proper diversity so the
-    empirical covariance is well-conditioned without a prior.
+    Γ₀ is initialized at the start and propagated forward via
+    compute_gamma_trajectory (PROOF_V5 §3.1, step 1). It is NOT
+    re-estimated empirically from particles — Γ_t is a deterministic
+    function of Γ₀ through the Kalman prediction/update equations.
     """
     all_x = smoothed_states.particles.x  # (T+1, N, M, 2)
     T_plus_1 = all_x.shape[0]
@@ -213,16 +213,9 @@ def M_step(
     # --- 1. Update μ_0: empirical mean of smoothed states at t=0 ---
     new_init_mean = jnp.mean(all_x[0], axis=0)  # (M, 2)
 
-    # --- 2. Update Γ_0: empirical between-team covariance at t=0 ---
-    # From PROOF_V5 §2: Σ₀ = Γ₀ ⊗ B, where Γ₀ is the between-team covariance.
-    # MLE: Γ₀ = (1/K) Σ_k X_k^T X_k / N  (averaged over K=2 dimensions)
-    x0_centered = all_x[0] - new_init_mean[None, :, :]  # (N, M, 2)
-    gamma_0_sum = jnp.zeros((num_teams, num_teams))
-    for k in range(K):
-        x0_k = x0_centered[:, :, k]  # (N, M)
-        gamma_0_sum += x0_k.T @ x0_k / N_particles
-    new_init_gamma = gamma_0_sum / K
-    new_init_gamma = new_init_gamma + 1e-3 * jnp.eye(num_teams)
+    # --- 2. Γ_0 is fixed (initialized at start, not re-estimated) ---
+    # Γ_t for t > 0 is computed via compute_gamma_trajectory from Γ_0
+    new_init_gamma = prev_params.init_gamma
 
     # --- 3. B is fixed (not updated) ---
     new_init_B = FIXED_B
@@ -316,7 +309,7 @@ def run_em(
         print("  M-step: updating parameters...")
         params = M_step(smoothed_states, results, num_teams, params)
         print(f"  Updated α={params.init_alpha:.4f}, β={params.init_beta:.4f}")
-        print(f"  (κ={params.init_kappa:.4f} [fixed], B=I₂ [fixed])")
+        print(f"  (κ={params.init_kappa:.4f} [fixed], B=I₂ [fixed], Γ₀ [fixed])")
 
     # Save final parameters
     save_params(params, f"{output_dir}/em_params_final.json")
