@@ -4,7 +4,9 @@ Implements the Forward Filter Backward Sampling (FFBSi) algorithm from PROOF_V5 
 for parameter estimation via Expectation Maximization.
 
 E-step: Forward filter → backward sample → smoothed trajectory samples X*_{0:T}
-M-step: Maximize Q(θ; q*) w.r.t. θ using smoothed samples → update κ, α, β, B, Γ_0, μ_0
+M-step: Update κ, α, β, μ₀ from smoothed samples.
+        Γ₀ and B are randomly sampled at initialization and kept fixed.
+        Γ_t for t > 0 is computed deterministically from Γ₀ via compute_gamma_trajectory.
 
 Output: JSON files of parameters at each EM epoch.
 """
@@ -225,35 +227,12 @@ def M_step(
     # --- 1. Update μ_0: empirical mean of smoothed states at t=0 ---
     new_init_mean = jnp.mean(all_x[0], axis=0)  # (M, 2)
 
-    # --- 2. Update Γ_0: empirical covariance between teams at t=0 ---
-    # Use shrinkage toward a non-diagonal prior to preserve off-diagonal structure
-    x0_centered = all_x[0] - new_init_mean[None, :, :]  # (N, M, 2)
-    # x0_centered: (N, M, K), we want (M, M) averaged over K
-    # Cov over teams for each k: (M, M) = X_k^T X_k / N
-    gamma_0_sum = jnp.zeros((num_teams, num_teams))
-    for k in range(K):
-        x0_k = x0_centered[:, :, k]  # (N, M)
-        gamma_0_sum += x0_k.T @ x0_k / N_particles
-    gamma_0_empirical = gamma_0_sum / K
-    # Shrinkage: blend empirical with a non-diagonal prior (equicorrelation)
-    # This preserves off-diagonal structure rather than just adding a diagonal floor
-    gamma_diag = jnp.diag(jnp.diag(gamma_0_empirical))
-    gamma_mean = jnp.mean(jnp.diag(gamma_0_empirical))
-    gamma_prior = 0.5 * gamma_diag + 0.5 * gamma_mean * (jnp.ones((num_teams, num_teams)) + jnp.eye(num_teams))
-    shrinkage = 0.1  # 10% prior, 90% empirical
-    new_init_gamma = (1.0 - shrinkage) * gamma_0_empirical + shrinkage * gamma_prior
-    new_init_gamma = new_init_gamma + 1e-3 * jnp.eye(num_teams)
+    # --- 2. Γ_0 is fixed (randomly sampled at init, not re-estimated) ---
+    # Γ_t for t > 0 is computed via compute_gamma_trajectory from Γ_0
+    new_init_gamma = prev_params.init_gamma
 
-    # --- 3. Update B: average within-team covariance ---
-    # B = (1/N) Σ_n Cov_within(X_0^n) = (1/N) Σ_n (1/M) Σ_m x_centered[n,m,:] x_centered[n,m,:]^T
-    # Vectorized: B = einsum('nmk,nml->kl', x0_centered, x0_centered) / (N * M)
-    B_empirical = jnp.einsum("nmk,nml->kl", x0_centered, x0_centered) / (N_particles * num_teams)
-    # Shrinkage toward a non-diagonal prior to preserve off-diagonal structure
-    B_diag = jnp.diag(jnp.diag(B_empirical))
-    B_mean = jnp.mean(jnp.diag(B_empirical))
-    B_prior = 0.5 * B_diag + 0.5 * B_mean * (jnp.ones((K, K)) + jnp.eye(K))
-    new_init_B = (1.0 - shrinkage) * B_empirical + shrinkage * B_prior
-    new_init_B = new_init_B + 1e-3 * jnp.eye(K)
+    # --- 3. B is fixed (randomly sampled at init, not re-estimated) ---
+    new_init_B = prev_params.init_B
 
     # --- 4. Update κ: vectorized grid search over transition likelihood ---
     timestamps = results.timestamp
