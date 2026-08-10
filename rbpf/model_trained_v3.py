@@ -155,6 +155,20 @@ def main():
     # --- 5. Generate plots and save results ---
     os.makedirs(args.output_dir, exist_ok=True)
     print(f"\nGenerating plots in {args.output_dir}/...")
+
+    # Load EM log marginal history if available
+    history_path = os.path.join(os.path.dirname(args.params_path), "em_log_marginal_history.json")
+    if os.path.exists(history_path):
+        with open(history_path, "r") as f:
+            log_marginals = json.load(f)
+        print(f"Loaded EM history ({len(log_marginals)} epochs) from {history_path}")
+        plot_em_convergence(
+            log_marginals,
+            save_path=f"{args.output_dir}/em_convergence.png",
+        )
+    else:
+        print(f"No EM history found at {history_path}, skipping em_convergence.png")
+
     generate_all_plots(
         filtered_states,
         gamma_trajectory,

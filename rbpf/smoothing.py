@@ -331,7 +331,7 @@ def run_em(
     results: FootballResults,
     init_params: EMParams,
     num_teams: int,
-    n_epochs: int = 10,
+    n_epochs: int = 20,
     output_dir: str = "./outputs",
 ) -> tuple[EMParams, list]:
     """Run the EM algorithm for n_epochs.
@@ -367,10 +367,16 @@ def run_em(
         # M-step
         print("  M-step: updating parameters...")
         params = M_step(smoothed_states, results, num_teams, params)
-        print(f"  Updated κ={params.init_kappa:.4f}, α={params.init_alpha:.4f}, β={params.init_beta:.4f}")
+        print(f"  Updated κ={params.init_kappa:.4f}, α={params.init_alpha:.4f}, β={params.init_beta:.4f}, scale={params.init_friendly_scale:.4f}")
 
     # Save final parameters
     save_params(params, f"{output_dir}/em_params_final.json")
+
+    # Save log marginal history for convergence plotting
+    history_path = f"{output_dir}/em_log_marginal_history.json"
+    with open(history_path, "w") as f:
+        json.dump(log_marginal_history, f, indent=2)
+    print(f"Saved log marginal history to {history_path}")
 
     return params, log_marginal_history
 
@@ -416,7 +422,7 @@ def main():
 
     # Run EM
     final_params, log_marginal_history = run_em(
-        results, init_params, NUM_TEAMS, n_epochs=15, output_dir="./outputs",
+        results, init_params, NUM_TEAMS, n_epochs=20, output_dir="./outputs",
     )
 
     print(f"\n{'='*60}")

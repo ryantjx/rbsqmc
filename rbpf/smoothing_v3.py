@@ -1,11 +1,11 @@
 """EM for RBPF with Kronecker structure — V3: Fixed μ₀=0, fixed Γ₀ (small variance),
-fixed B=I₂. Estimate κ, α, β via EM.
+fixed B=I₂. Estimate κ, α, β, friendly_scale via EM.
 
 Fixes the divergence issue from V2 by:
   - Fixing μ₀ = 0 (no empirical mean drift)
   - Fixing Γ₀ with small variance (0.1 * (A@A.T/M + I)) so prior SD ≈ 0.3–0.5
   - Fixing B = I₂ (within-team covariance = identity)
-  - Estimating κ (OU reversion rate), α, β via grid search
+  - Estimating κ (OU reversion rate), α, β, friendly_scale via grid search
   - Γ_t for t > 0 is computed deterministically from Γ₀ via compute_gamma_trajectory
 
 Output: JSON files of parameters at each EM epoch.
@@ -255,8 +255,8 @@ def M_step(
     home_scores = results.home_score
     away_scores = results.away_score
 
-    def neg_log_obs_alpha_beta(alpha_val, beta_val):
-        """Vectorized negative log observation likelihood for a single (α, β)."""
+    def neg_log_obs(alpha_val, beta_val, scale_val):
+        """Vectorized negative log observation likelihood for a single (α, β, scale)."""
         t_indices = jnp.arange(1, min(T_plus_1, 200))
 
         def step_obs(t_idx):
@@ -268,22 +268,26 @@ def M_step(
                 x_i = all_x[t_idx, n, h_id]
                 x_j = all_x[t_idx, n, a_id]
                 return loglik(y, x_i, x_j, alpha=alpha_val, beta=beta_val,
-                              max_goals=MAX_GOALS, scale=prev_params.init_friendly_scale)
+                              max_goals=MAX_GOALS, scale=scale_val)
 
             return jax.vmap(particle_obs)(jnp.arange(N_particles)).sum()
 
         return -jax.vmap(step_obs)(t_indices).sum()
 
-    alpha_candidates = jnp.linspace(-1.0, 3.0, 25)
-    beta_candidates = jnp.linspace(-3.0, 1.0, 25)
+    alpha_candidates = jnp.linspace(-1.0, 3.0, 20)
+    beta_candidates = jnp.linspace(-3.0, 1.0, 20)
+    scale_candidates = jnp.linspace(0.5, 5.0, 15)
 
-    def eval_beta(alpha_val):
-        return jax.vmap(lambda b: neg_log_obs_alpha_beta(alpha_val, b))(beta_candidates)
+    # Grid over (alpha, beta) first, then scale
+    def eval_alpha_beta(alpha_val, beta_val):
+        return jax.vmap(lambda s: neg_log_obs(alpha_val, beta_val, s))(scale_candidates)
 
-    all_losses = jax.vmap(eval_beta)(alpha_candidates)  # (n_alpha, n_beta)
+    all_losses = jax.vmap(lambda a: jax.vmap(lambda b: eval_alpha_beta(a, b))(beta_candidates))(alpha_candidates)
+    # all_losses shape: (n_alpha, n_beta, n_scale)
     best_idx = jnp.unravel_index(jnp.argmin(all_losses), all_losses.shape)
     best_alpha = float(alpha_candidates[best_idx[0]])
     best_beta = float(beta_candidates[best_idx[1]])
+    best_scale = float(scale_candidates[best_idx[2]])
 
     return EMParams(
         init_mean=new_init_mean,
@@ -292,7 +296,7 @@ def M_step(
         init_kappa=new_kappa,
         init_alpha=best_alpha,
         init_beta=best_beta,
-        init_friendly_scale=prev_params.init_friendly_scale,
+        init_friendly_scale=best_scale,
     )
 
 
@@ -304,7 +308,7 @@ def run_em(
     results: FootballResults,
     init_params: EMParams,
     num_teams: int,
-    n_epochs: int = 15,
+    n_epochs: int = 20,
     output_dir: str = "./outputs_gpu_v3",
 ) -> tuple[EMParams, list]:
     """Run the EM algorithm for n_epochs."""
@@ -334,11 +338,17 @@ def run_em(
         # M-step
         print("  M-step: updating parameters...")
         params = M_step(smoothed_states, results, num_teams, params)
-        print(f"  Updated κ={params.init_kappa:.4f}, α={params.init_alpha:.4f}, β={params.init_beta:.4f}")
+        print(f"  Updated κ={params.init_kappa:.4f}, α={params.init_alpha:.4f}, β={params.init_beta:.4f}, scale={params.init_friendly_scale:.4f}")
         print(f"  (μ₀=0 [fixed], B=I₂ [fixed], Γ₀ [fixed])")
 
     # Save final parameters
     save_params(params, f"{output_dir}/em_params_final.json")
+
+    # Save log marginal history for convergence plotting
+    history_path = f"{output_dir}/em_log_marginal_history.json"
+    with open(history_path, "w") as f:
+        json.dump(log_marginal_history, f, indent=2)
+    print(f"Saved log marginal history to {history_path}")
 
     return params, log_marginal_history
 
@@ -375,7 +385,7 @@ def main():
 
     # Run EM
     final_params, log_marginal_history = run_em(
-        results, init_params, NUM_TEAMS, n_epochs=10, output_dir="./outputs_gpu_v3",
+        results, init_params, NUM_TEAMS, n_epochs=20, output_dir="./outputs_gpu_v3",
     )
 
     print(f"\n{'='*60}")

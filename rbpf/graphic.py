@@ -234,6 +234,39 @@ def plot_log_normalizing_constant(
     plt.close()
 
 
+def plot_em_convergence(
+    log_marginals: list[float],
+    save_path: str | None = None,
+):
+    """Plot EM log marginal likelihood convergence across epochs.
+
+    Args:
+        log_marginals: list of log marginal likelihoods, one per EM epoch.
+        save_path: if provided, save figure to this path.
+    """
+    epochs = np.arange(1, len(log_marginals) + 1)
+    log_marginals = np.array(log_marginals)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(epochs, log_marginals, "o-", color="darkgreen", alpha=0.8, linewidth=2)
+    best_idx = int(np.argmax(log_marginals))
+    ax.plot(epochs[best_idx], log_marginals[best_idx], "r*", markersize=15,
+            label=f"Best: epoch {epochs[best_idx]} = {log_marginals[best_idx]:.2f}")
+    ax.axhline(log_marginals[0], color="gray", linestyle="--", alpha=0.4,
+               label=f"Initial: {log_marginals[0]:.2f}")
+    ax.set_xlabel("EM Epoch")
+    ax.set_ylabel("Log Marginal Likelihood")
+    ax.set_title("EM Convergence (log marginal likelihood vs epoch)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved EM convergence plot to {save_path}")
+    plt.close()
+
+
 def plot_final_strengths_bar(
     result,
     team_id_to_name: dict[int, str],
