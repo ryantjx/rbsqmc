@@ -214,11 +214,9 @@ def _constrain(params: EMParams) -> EMParams:
         beta=params.beta,
     )
 
-
 def M_step(
     smoothed_states: cuthbertlib.types.ArrayTree,
     model_inputs: RBPFFootballResults,
-    num_teams: int,
     prev_params: EMParams,
     learning_rate: float,
     n_gradient_steps: int
@@ -300,7 +298,6 @@ def M_step(
     best_loss = None
     best_carry = carry
     best_step = -1
-    last_loss = None
     patience = max(10, n_gradient_steps // 5)
     no_improve_counter = 0
 
@@ -322,7 +319,6 @@ def M_step(
         else:
             no_improve_counter += 1
 
-        last_loss = loss_val
         if step % 10 == 0 or step == n_gradient_steps - 1:
             print(f"      M-step [{step:3d}/{n_gradient_steps}] loss={loss_val:.4f}")
 
@@ -398,7 +394,6 @@ def run_EM(
         params = M_step(
             smoothed_states=smoothed_states, 
             model_inputs=augmented_results, 
-            num_teams=num_teams,
             prev_params=params, 
             learning_rate=learning_rate, n_gradient_steps=n_gradient_steps
         )
