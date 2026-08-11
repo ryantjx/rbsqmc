@@ -88,7 +88,7 @@ $$p(x_t \mid y_{1:t}) \approx \sum_{i=1}^{N} w_t^{(i)} \mathcal{N} \left(\begin{
 
 ## 4 Rao-Blackwellized Particle Filter Smoothing
 
-At terminal time $T$, the forward filter approximates a weighted Gaussian mixture $p(X_T \mid y_{1:T}) \approx \sum_{i=1}^{N} w_T^{(i)} \mathcal{N}(\mu_T^{(i)}, \Sigma_T^{(i)})$. We can apply the Forward Filtering Backward Sampling (FFBSi) to obtain the the smoothing distribution $p(X_{0:T} \mid y_{1:T})$.
+At terminal time $T$, the forward filter approximates a weighted Gaussian mixture $p(X_T \mid y_{1:T}) \approx \sum_{i=1}^{N} w_T^{(i)} \mathcal{N}(\mu_T^{(i)}, \Sigma_T^{(i)})$. We can apply the Forward Filtering Backward Simulation (FFBSi) to obtain the the smoothing distribution $p(X_{0:T} \mid y_{1:T})$.
 
 ### 4.1 Algorithm
 
