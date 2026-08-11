@@ -179,11 +179,17 @@ def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFo
         # Q_t = (Gamma_0 - phi_t @ Gamma_0 @ phi_t.T) ⊗ B,  phi_t = phi * I_M
         Q_gamma = params.gamma_0 - phi**2 * params.gamma_0
         Q_gamma = 0.5 * (Q_gamma + Q_gamma.T)  # ensure symmetry
+        # Clip to keep Q_gamma positive-(semi)definite: (1-phi^2)>=0.
+        Q_gamma = Q_gamma + 1e-8 * jnp.eye(num_teams)
         Q_full = jnp.kron(Q_gamma, params.B)  # (2M, 2M)
 
         diff_flat = diff.reshape(-1)  # (2M,)
         quad = diff_flat @ jnp.linalg.solve(Q_full, diff_flat)
-        return -0.5 * quad - 0.5 * jnp.log(jnp.linalg.det(Q_full)) - 0.5 * dim * jnp.log(2 * jnp.pi)
+        # Use slogdet for a numerically stable log-determinant: the raw det()
+        # underflows to 0.0 in float32 for these high-dimensional matrices,
+        # making log(det) = -inf. sign is +1 for PSD Q.
+        sign, log_det = jnp.linalg.slogdet(Q_full)
+        return -0.5 * quad - 0.5 * log_det - 0.5 * dim * jnp.log(2 * jnp.pi)
 
     transition_losses = jax.vmap(transition_step)(transition_indices, phis)
     sum_transition_loss = -jnp.sum(transition_losses)
