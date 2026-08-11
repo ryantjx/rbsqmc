@@ -103,9 +103,11 @@ TRAINED_PARAMS="${PARAMS_PATH:-${LOCAL_OUTPUTS}/em_params_final.json}"
 if [ -f "$TRAINED_PARAMS" ]; then
     echo "  Trained params: ${TRAINED_PARAMS}"
     echo "  Graphic output: ${GRAPHIC_OUTDIR}"
-    python3 -u "${HERE}/model_trained.py" \
+    # Run through the project venv (uv) so `jax`/project deps are available;
+    # bare `python3` on macOS lacks them.
+    ( cd "${REPO_ROOT}" && uv run python -u "${HERE}/model_trained.py" \
         --params-path "${TRAINED_PARAMS}" \
-        --output-dir "${GRAPHIC_OUTDIR}" || \
+        --output-dir "${GRAPHIC_OUTDIR}" ) || \
         echo "  WARNING: model_trained.py failed"
     echo "  Graphics written under ${GRAPHIC_OUTDIR}/"
 else

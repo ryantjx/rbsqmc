@@ -225,16 +225,54 @@ def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
     return 0.5 * (x + x.T)
 
 
+# Minimum eigenvalue floor for the projected covariances gamma_0 and B.
+#
+# gamma_0/B are used to build transition covariances Q = scale * (gamma_0 ⊗ B)
+# and smoother pred/Sigma matrices, which are inverted (solve) and whose
+# log-determinants are taken. A pure PSD projection (clip eigvals to 0) would
+# leave them singular, so Q could still be non-invertible and log_det -> -inf.
+# Flooring the eigenvalues keeps them strictly PD (full-rank), guaranteeing Q
+# is invertible and log_det stays finite. Empirically the M-step drives
+# gamma_0 indefinite (min eig ~ -0.44), so this floor is load-bearing.
+_EIGEN_FLOOR = 1e-4
+
+# Lower bound for the OU mean-reversion rate kappa.
+#
+# kappa -> 0 makes phi = exp(-kappa*dt) -> 1, so Q = (1 - phi^2)*gamma_0 -> 0
+# (a degenerate transition covariance). That sends log_det(Q) -> -inf and the
+# transition loss explodes (observed as the 1e7-1e8 loss spikes each epoch).
+# Flooring kappa away from zero keeps Q meaningfully non-singular. The default
+# init is kappa=0.0039; a floor of 1e-3 keeps the model in the well-conditioned
+# regime while still allowing slow mean reversion.
+_KAPPA_MIN = 1e-3
+
+
+def _project_psd(x: jnp.ndarray, floor: float = _EIGEN_FLOOR) -> jnp.ndarray:
+    """Project a symmetric matrix onto the positive-definite cone.
+
+    Eigen-decompose, clamp eigenvalues to be >= ``floor`` (> 0), and rebuild.
+    Guarantees a full-rank, strictly PD matrix whose log-determinant and solve
+    are well defined.
+    """
+    x = _symmetrize(x)
+    eigvals, eigvecs = jnp.linalg.eigh(x)
+    eigvals = jnp.maximum(eigvals, floor)
+    return (eigvecs * eigvals) @ eigvecs.T
+
+
 def _constrain(params: EMParams) -> EMParams:
     """Apply validity constraints so parameters stay in their support.
 
-    - kappa >= 0 (OU mean-reversion rate).
+    - kappa >= _KAPPA_MIN (OU mean-reversion rate; keeps the transition
+      covariance non-degenerate).
     - alpha, beta unconstrained real.
-    - gamma_0, B symmetrised (and kept positive-definite via projection below).
+    - gamma_0, B projected onto the positive-definite cone (full-rank, so the
+      transition covariance Q and the smoother covariances stay invertible and
+      their log-determinants finite).
     """
-    kappa = jnp.maximum(params.kappa, 1e-6)
-    gamma_0 = _symmetrize(params.gamma_0)
-    B = _symmetrize(params.B)
+    kappa = jnp.maximum(params.kappa, _KAPPA_MIN)
+    gamma_0 = _project_psd(params.gamma_0)
+    B = _project_psd(params.B)
     return EMParams(
         mean_0=params.mean_0,
         gamma_0=gamma_0,
