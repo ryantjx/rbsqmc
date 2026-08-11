@@ -24,6 +24,28 @@ jax.config.update(
 MAX_GOALS = 8
 N = 100
 
+
+def _sample_psd_gaussian(
+    key: jax.Array,
+    mean: jax.Array,
+    covariance: jax.Array,
+) -> jax.Array:
+    """Sample from a PSD Gaussian, preserving exact zero-variance directions.
+
+    The RBPF smoothing covariances (Gamma ⊗ B) are positive-semidefinite, not
+    positive-definite: observed teams have exact zero covariance per
+    ALGORITHM.md §4.1.1. `jax.random.multivariate_normal` (Cholesky-based)
+    returns NaN on such singular matrices. Here we eigendecompose, clip tiny
+    eigenvalues to zero, and sample noise only in the nonzero-variance
+    directions — observed (zero-variance) teams stay exactly at their mean.
+    """
+    covariance = 0.5 * (covariance + covariance.T)
+    eigvals, eigvecs = jnp.linalg.eigh(covariance)
+    eigvals = jnp.clip(eigvals, 0.0)
+    noise = jax.random.normal(key, mean.shape)
+    return mean + eigvecs @ (jnp.sqrt(eigvals) * noise)
+
+
 def smoother_rts(
     filtered_states: cuthbertlib.types.ArrayTree,
     model_inputs: RBPFFootballResults,
@@ -44,9 +66,12 @@ def smoother_rts(
     I_T = jax.random.categorical(cat_key, log_w_T)  # scalar
 
     gamma_T = model_inputs.gamma_t[-1]  # (M, M)  -- NOT particles.gamma
+    # gamma_T is PSD with exact-zero rows for observed teams (ALGORITHM.md
+    # §4.1.1). Use the PSD-aware sampler so observed teams stay at their mean
+    # instead of jittering (which would give them artificial variance).
     Sigma_T = jnp.kron(gamma_T, params.B)  # (2M, 2M)
     mu_T = filtered_states.particles.x[-1, I_T]  # (M, 2)
-    X_T_STAR = jax.random.multivariate_normal(
+    X_T_STAR = _sample_psd_gaussian(
         sample_key, mu_T.flatten(), Sigma_T
     ).reshape(num_teams, K)  # (M, 2)
 
@@ -89,7 +114,7 @@ def smoother_rts(
         Gamma_RTS = 0.5 * (Gamma_RTS + Gamma_RTS.T)  # Ensure symmetry
         Sigma_RTS = jnp.kron(Gamma_RTS, params.B)  # (2M, 2M)
 
-        X_t_star = jax.random.multivariate_normal(
+        X_t_star = _sample_psd_gaussian(
             sample_key, mu_RTS.flatten(), Sigma_RTS
         ).reshape(num_teams, K)  # (M, 2)
         return (X_t_star, key), X_t_star
