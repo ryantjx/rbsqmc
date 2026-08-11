@@ -165,6 +165,8 @@ def bootstrap():
     Only meaningful on a fresh Colab VM. On a local checkout (repo already
     present) this is effectively a no-op except for dependency install.
     """
+    global CONFIG, OUTPUT_DIR  # reassigned after the repo is cloned
+
     log("=" * 60)
     log("SMOOTHING RUNNER — BOOTSTRAP")
     log("=" * 60)
@@ -211,7 +213,6 @@ def bootstrap():
     # Reload the config now that the repo (and its config JSON) is on disk,
     # so the values that were committed to the repo take precedence over the
     # in-script defaults used during the initial (config-less) import.
-    global CONFIG, OUTPUT_DIR
     CONFIG = _load_config()
     OUTPUT_DIR = os.path.join(_repo_root(), CONFIG["output_dir"])
     log(f"Configuration reloaded from {CONFIG_PATH}")
