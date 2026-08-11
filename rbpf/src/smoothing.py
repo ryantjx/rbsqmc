@@ -90,15 +90,23 @@ def smoother_rts(
         dt = timestamp_tplus1 - timestamp_prev_tplus1
         phi = jnp.exp(-params.kappa * dt) * jnp.eye(num_teams)  # (M, M)
         pred_mean = params.mean_0 + phi @ (particles_t - params.mean_0)  # (N, M, 2)
-        pred_Sigma = jnp.kron(gamma_pred_t1, params.B)  # (2M, 2M)
+
+        # pred_Sigma = kron(gamma_pred_t1, B) is PSD but can be singular /
+        # slightly indefinite in float32 (gamma_pred_t1 has near-zero and tiny
+        # negative eigenvalues for unobserved / same-day teams). A Cholesky-based
+        # solve or raw log-det would produce inf/nan. Use slogdet for a stable
+        # log-det and a small PSD clamp before the solve.
+        gamma_pred_reg = gamma_pred_t1 + 1e-8 * jnp.eye(num_teams)
+        pred_Sigma = jnp.kron(gamma_pred_reg, params.B)  # (2M, 2M)
 
         deltas = (X_next_star - pred_mean).reshape(n_particles, -1)  # (N, 2M)
         quad = jnp.sum(
             deltas * jnp.linalg.solve(pred_Sigma, deltas.T).T, axis=-1
         )  # (N,)
+        sign, log_det = jnp.linalg.slogdet(pred_Sigma)  # stable log-det
         log_transition = (
             -0.5 * quad
-            - 0.5 * jnp.log(jnp.linalg.det(pred_Sigma))
+            - 0.5 * log_det
             - 0.5 * dim * jnp.log(2 * jnp.pi)
         )  # (N,)
         log_backward_weights = log_w_t + log_transition  # (N,)
@@ -209,11 +217,7 @@ def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFo
         diff = smoothed_states[observation_index] - pred_mean  # (M, K)
 
         # Q_t = (Gamma_0 - phi_t @ Gamma_0 @ phi_t.T) ⊗ B,  phi_t = phi * I_M
-        # (1 - phi^2) >= 0 always (phi = exp(-kappa dt) <= 1). When phi = 1
-        # (dt = 0, two matches on the same day), the transition noise Q = 0:
-        # the transition is deterministic (X_t = X_{t-1}) and its log-density is
-        # 0 — there is no stochastic cost to pay. Returning 0 avoids the
-        # solve()/slogdet() inf/nan from inverting a singular Q.
+        # check if the phi is close to 1.0. If phi is close to 1.0, this means that there is no time difference.,
         scale = 1.0 - phi**2
         deterministic = scale <= 1e-8
 
