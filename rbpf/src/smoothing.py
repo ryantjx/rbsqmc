@@ -38,6 +38,8 @@ def _sample_psd_gaussian(
     returns NaN on such singular matrices. Here we eigendecompose, clip tiny
     eigenvalues to zero, and sample noise only in the nonzero-variance
     directions — observed (zero-variance) teams stay exactly at their mean.
+
+    We are sampling from a covariance matrix that has 0 for some covariances.
     """
     covariance = 0.5 * (covariance + covariance.T)
     eigvals, eigvecs = jnp.linalg.eigh(covariance)
@@ -202,10 +204,14 @@ def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFo
         diff = smoothed_states[observation_index] - pred_mean  # (M, K)
 
         # Q_t = (Gamma_0 - phi_t @ Gamma_0 @ phi_t.T) ⊗ B,  phi_t = phi * I_M
-        Q_gamma = params.gamma_0 - phi**2 * params.gamma_0
+        # (1 - phi^2) >= 0 always (phi = exp(-kappa dt) <= 1). It is exactly 0
+        # when phi = 1 (dt = 0, consecutive same-timestamp matches), which makes
+        # Q singular and solve()/slogdet() return inf/nan. Clamp the scale to a
+        # small positive floor as a float32 underflow guard — this is NOT an
+        # added structural covariance (Q_gamma is PD wherever phi < 1).
+        scale = jnp.clip(1.0 - phi**2, 1e-6, None)
+        Q_gamma = scale * params.gamma_0
         Q_gamma = 0.5 * (Q_gamma + Q_gamma.T)  # ensure symmetry
-        # Clip to keep Q_gamma positive-(semi)definite: (1-phi^2)>=0.
-        Q_gamma = Q_gamma + 1e-8 * jnp.eye(num_teams)
         Q_full = jnp.kron(Q_gamma, params.B)  # (2M, 2M)
 
         diff_flat = diff.reshape(-1)  # (2M,)
