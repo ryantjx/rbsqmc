@@ -530,7 +530,7 @@ def main():
     # )
     # print("Smoothed states shape:", smoothed_states.shape)
     try:
-        final_params, log_marginal_likelihoods = run_EM(
+        final_params, log_marginal_likelihoods, em_diagnostics = run_EM(
             model_inputs=model_inputs,
             init_params=params,
             num_teams=NUM_TEAMS,
