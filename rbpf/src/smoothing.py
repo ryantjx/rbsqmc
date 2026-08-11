@@ -301,6 +301,11 @@ def M_step(
       3. run the full gradient budget (no premature early-stop) while tracking
          the best params by a *relative* improvement threshold,
       4. project the result back onto the valid (symmetric / non-neg) support.
+
+    Returns:
+        tuple[EMParams, float, float]: (final_params, loss_start, loss_best).
+        loss_start is the objective evaluated at ``prev_params`` (start of the
+        M-step) and loss_best is the best objective achieved during the loop.
     """
     # --- JIT-compiled value and gradient (over the 5 learned fields) ---
     def _loss_and_grad(carry):
@@ -366,12 +371,17 @@ def M_step(
     best_loss = None
     best_carry = carry
     best_step = -1
+    loss_start = None  # objective at prev_params (start of the M-step)
     patience = max(10, n_gradient_steps // 5)
     no_improve_counter = 0
 
     for step in range(n_gradient_steps):
         loss, grads = value_and_grad_fn(carry)
         loss_val = float(loss)
+
+        # First evaluation is the objective at the starting params.
+        if loss_start is None:
+            loss_start = loss_val
 
         updates, opt_state = optimizer.update(grads, opt_state, carry)
         carry = optax.apply_updates(carry, updates)
@@ -412,7 +422,7 @@ def M_step(
     print(f"      M-step done: loss {best_loss:.4f} -> best at step {best_step}, "
           f"kappa={float(final.kappa):.5f} alpha={float(final.alpha):.5f} "
           f"beta={float(final.beta):.5f}")
-    return final
+    return final, loss_start, best_loss
 
 def run_EM(
     model_inputs: FootballResults,
@@ -423,7 +433,7 @@ def run_EM(
     n_gradient_steps: int = 10,
     learning_rate: float = 1e-3,
     key: jax.Array = jax.random.PRNGKey(42)
-) -> tuple[EMParams, jnp.ndarray]:
+) -> tuple[EMParams, jnp.ndarray, dict]:
     key = jax.random.PRNGKey(42)
     params = init_params
     
@@ -443,7 +453,9 @@ def run_EM(
     )
 
     log_likelihood_history = []
-    
+    mstep_start_history = []
+    mstep_end_history = []
+
     for epoch in tqdm(range(n_epochs)):
         key, e_key = jax.random.split(key)
         # 1. run E step to get expected sufficient statistics
@@ -459,12 +471,16 @@ def run_EM(
         # 2. run M step to update parameters
         print("    M-step: Updating parameters...")
         # assign the updated parameters to params for the next iteration
-        params = M_step(
+        params, loss_start, loss_best = M_step(
             smoothed_states=smoothed_states, 
             model_inputs=augmented_results, 
             prev_params=params, 
             learning_rate=learning_rate, n_gradient_steps=n_gradient_steps
         )
+        # Track the M-step objective (loss = -log L) at the start and at the
+        # best point reached within this epoch's gradient loop.
+        mstep_start_history.append(loss_start)
+        mstep_end_history.append(loss_best)
 
     print("EM completed. Final parameters:")
     print("  kappa:", params.kappa)
@@ -474,7 +490,12 @@ def run_EM(
     print("  gamma_0:", params.gamma_0.shape)
     print("  mean_0:", params.mean_0.shape)
 
-    return params, jnp.array(log_likelihood_history)
+    # Return log-marginal (E-step) plus the M-step objective diagnostics.
+    em_diagnostics = {
+        "mstep_loss_start": jnp.array(mstep_start_history),
+        "mstep_loss_end": jnp.array(mstep_end_history),
+    }
+    return params, jnp.array(log_likelihood_history), em_diagnostics
 
 def main():
     data, model_inputs, team_id_to_name = get_results(

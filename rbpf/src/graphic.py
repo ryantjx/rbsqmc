@@ -398,6 +398,69 @@ def plot_log_likelihood_history(
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
+def plot_mstep_diagnostics(
+    loss_start: list[float],
+    loss_end: list[float],
+    log_marginal_history: list[float] | None = None,
+    output_path: str = os.path.join(OUTPUT_DIR, "mstep_diagnostics.png"),
+) -> None:
+    """Plot the M-step objective at the start and end of each epoch.
+
+    The M-step minimizes ``loss = -log L`` (the negative log-likelihood of the
+    smoothed states under the current parameters). For each EM epoch this shows
+    the objective at the *start* of the M-step (i.e. evaluated at the previous
+    epoch's returned params) and at the *best point reached* during that epoch's
+    gradient loop, plus the within-epoch improvement.
+
+    Args:
+        loss_start: M-step objective evaluated at the start of each epoch.
+        loss_end: best M-step objective reached during each epoch.
+        log_marginal_history: optional per-epoch E-step log marginal likelihood
+            (drawn on a twin axis, since it is a different scale).
+        output_path: where to save the figure.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    epochs = np.arange(1, len(loss_start) + 1)
+    loss_start = np.asarray(loss_start, dtype=float)
+    loss_end = np.asarray(loss_end, dtype=float)
+    changes = loss_end - loss_start  # negative => M-step improved the objective
+
+    fig, ax_value = plt.subplots(figsize=(9, 6))
+    ax_value.plot(epochs, loss_start, "o--", color="tab:red",
+                  label="M-step loss (start)")
+    ax_value.plot(epochs, loss_end, "o-", color="tab:blue",
+                  label="M-step loss (best)")
+    ax_value.set_xlabel("EM epoch")
+    ax_value.set_ylabel("M-step objective (-log L)")
+    ax_value.grid(True, alpha=0.3)
+    ax_value.legend(loc="best")
+
+    # Overlay E-step log marginal likelihood on a twin axis if provided.
+    if log_marginal_history is not None and len(log_marginal_history) == len(epochs):
+        ax_log = ax_value.twinx()
+        ax_log.plot(epochs, np.asarray(log_marginal_history), "s-", color="tab:green",
+                    linewidth=1.2, markersize=4, label="E-step log marginal L")
+        ax_log.set_ylabel("Log marginal likelihood", color="tab:green")
+        ax_log.tick_params(axis="y", labelcolor="tab:green")
+        ax_log.legend(loc="lower left")
+
+    # Annotate the within-epoch change on the loss curve.
+    for ep, chg in zip(epochs, changes):
+        ax_value.annotate(
+            f"{chg:.0f}", (ep, loss_end[ep - 1]),
+            textcoords="offset points", xytext=(0, 8),
+            ha="center", fontsize=8,
+        )
+
+    ax_value.set_title("M-step objective per epoch (start vs best)")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_path):
     """Generate all plots and save them to the outputs/graphic directory."""
     os.makedirs(save_path, exist_ok=True)

@@ -257,7 +257,7 @@ def run_em(n_particles: int, start_date: str):
     print(f"Running EM (N={n_particles}, n_epochs={CONFIG['n_epochs']}, "
           f"date=[{start_date}, {end_date}])")
 
-    final_params, log_marginal_history = run_EM(
+    final_params, log_marginal_history, em_diagnostics = run_EM(
         model_inputs=model_inputs,
         init_params=params,
         num_teams=num_teams,
@@ -272,6 +272,30 @@ def run_em(n_particles: int, start_date: str):
         json.dump(params_to_dict(final_params), f, indent=2)
     with open(os.path.join(OUTPUT_DIR, "em_log_marginal_history.json"), "w") as f:
         json.dump(np.asarray(log_marginal_history).tolist(), f, indent=2)
+
+    # Save M-step diagnostics (start/end objective per epoch) and a plot.
+    mstep_start = np.asarray(em_diagnostics["mstep_loss_start"]).tolist()
+    mstep_end = np.asarray(em_diagnostics["mstep_loss_end"]).tolist()
+    with open(os.path.join(OUTPUT_DIR, "em_mstep_diagnostics.json"), "w") as f:
+        json.dump(
+            {
+                "mstep_loss_start": mstep_start,
+                "mstep_loss_end": mstep_end,
+            },
+            f, indent=2,
+        )
+    try:
+        from rbpf.src.graphic import plot_mstep_diagnostics
+        plot_mstep_diagnostics(
+            mstep_start,
+            mstep_end,
+            log_marginal_history=log_marginal_history,
+            output_path=os.path.join(OUTPUT_DIR, "mstep_diagnostics.png"),
+        )
+        print("Saved M-step diagnostics plot to",
+              os.path.join(OUTPUT_DIR, "mstep_diagnostics.png"))
+    except Exception as e:  # non-fatal: plotting should not kill the run
+        print("WARNING: could not save M-step diagnostics plot:", e)
 
     print("EM completed. Final parameters:")
     print("  kappa:", final_params.kappa)

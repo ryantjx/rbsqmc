@@ -36,6 +36,7 @@ OUTPUT_FILES=(
     em_params_init.json
     em_params_final.json
     em_log_marginal_history.json
+    em_mstep_diagnostics.json
 )
 
 GPU_TYPE="${GPU_TYPE:-$(read_config gpu_type)}"
