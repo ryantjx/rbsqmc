@@ -1,6 +1,7 @@
 jax
 numpy
 scipy
+optax
 polars
 pandas
 matplotlib
@@ -10,3 +11,6 @@ jaxlib
 numba
 pytest
 cuthbert
+ipykernel
+pyarrow
+tqdm

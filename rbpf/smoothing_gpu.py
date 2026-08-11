@@ -1,0 +1,264 @@
+"""Run the RBPF EM on a GPU/TPU accelerator, locally or on Colab.
+
+This single script combines:
+  * the Colab bootstrap (clone repo, install deps, verify accelerator), and
+  * the EM core (forward-filter + RTS smoothing + M-step).
+
+It reuses the EM machinery from ``rbpf/src/smoothing.py`` (unchanged parameter
+set: estimates ``gamma_0``, ``B``, ``kappa``, ``alpha``, ``beta``; ``mean_0``
+fixed). Runtime configuration (N, epochs, dates, teams, hardware) is read from
+``smoothing_gpu_config.json``.
+
+On Colab the repo is cloned/updated and the ``rbpf`` package is made importable
+*after* the bootstrap, which is why ``rbpf`` imports happen lazily inside the EM
+function rather than at module top level.
+
+Usage:
+    # Local (repo already present):
+    python smoothing_gpu.py [GPU_N] [START_DATE]
+
+    # Colab (auto-detected via /content, or force with --colab):
+    colab run --gpu T4 --keep smoothing_gpu.py [GPU_N] [START_DATE]
+    colab run --tpu v5e1 --keep smoothing_gpu.py [GPU_N] [START_DATE]
+
+Writes (into ``rbpf/outputs_gpu``):
+  - em_params_init.json
+  - em_params_final.json
+  - em_log_marginal_history.json
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+
+# ---------------------------------------------------------------------------
+# Shared configuration (single source of truth)
+# ---------------------------------------------------------------------------
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO_ROOT = os.path.dirname(_HERE)
+# Ensure the repo root is importable even when this file is run directly as a
+# script (in which case sys.path[0] is the script's own directory, not the root).
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+CONFIG_PATH = os.path.join(_HERE, "smoothing_gpu_config.json")
+with open(CONFIG_PATH, "r") as _f:
+    CONFIG = json.load(_f)
+
+REPO_URL = str(CONFIG["repo_url"])
+REPO_DIR = "/content/rbsqmc"
+RBPF_DIR = os.path.join(REPO_DIR, "rbpf")
+OUTPUT_DIR = os.path.join(_REPO_ROOT, CONFIG["output_dir"])
+
+DEPS = [
+    "jax", "jaxlib", "numpy", "scipy", "polars", "pandas",
+    "matplotlib", "seaborn", "altair", "numba", "tqdm", "cuthbert", "optax",
+]
+
+
+# ---------------------------------------------------------------------------
+# Logging / subprocess helpers
+# ---------------------------------------------------------------------------
+def log(msg: str):
+    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+
+
+def run(cmd, **kwargs):
+    log(f"Running: {' '.join(cmd) if isinstance(cmd, list) else cmd}")
+    result = subprocess.run(cmd, **kwargs)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Command failed (exit {result.returncode}): "
+            f"{' '.join(cmd) if isinstance(cmd, list) else cmd}"
+        )
+    return result
+
+
+def run_streaming(cmd):
+    log(f"Running: {' '.join(cmd) if isinstance(cmd, list) else cmd}")
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    for line in proc.stdout:
+        print(line, end="", flush=True)
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Command failed (exit {proc.returncode}): "
+            f"{' '.join(cmd) if isinstance(cmd, list) else cmd}"
+        )
+
+
+def is_colab() -> bool:
+    """True when running on a Colab VM (or /content exists)."""
+    return os.path.exists("/content") or "--colab" in sys.argv
+
+
+def bootstrap():
+    """Clone/update the repo, install deps, and cd into the rbpf package dir.
+
+    Only meaningful on a fresh Colab VM. On a local checkout (repo already
+    present) this is effectively a no-op except for dependency install.
+    """
+    log("=" * 60)
+    log("SMOOTHING RUNNER — BOOTSTRAP")
+    log("=" * 60)
+
+    if os.path.exists(REPO_DIR):
+        log(f"Repo already exists at {REPO_DIR}, pulling latest...")
+        run(["git", "-C", REPO_DIR, "pull", "--rebase"], check=False)
+    else:
+        log(f"Cloning {REPO_URL} → {REPO_DIR}")
+        run(["git", "clone", REPO_URL, REPO_DIR])
+
+    log("Installing Python dependencies...")
+    run([sys.executable, "-m", "pip", "install", "-q", *DEPS])
+
+    log("Verifying JAX accelerator availability...")
+    run([sys.executable, "-c",
+         "import jax; print('Devices:', jax.devices()); "
+         "print('Platform:', jax.default_backend())"])
+
+    os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+    os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+    log("Set XLA_PYTHON_CLIENT_PREALLOCATE=false, ALLOCATOR=platform")
+
+    if os.path.exists(RBPF_DIR):
+        os.chdir(RBPF_DIR)
+    else:
+        os.chdir(_HERE)
+    log(f"Working directory: {os.getcwd()}")
+
+
+# ---------------------------------------------------------------------------
+# EM core (imports rbpf lazily so it works on a freshly-cloned Colab VM)
+# ---------------------------------------------------------------------------
+def run_em(n_particles: int, start_date: str):
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    from rbpf.src.data import get_results, ACTIVE_TEAMS, WORLDCUP_2026_TEAMS
+    from rbpf.src.helpers import default_init_params, params_to_dict
+    from rbpf.src.smoothing import MAX_GOALS, run_EM
+
+    _TEAM_SETS = {
+        "ACTIVE_TEAMS": ACTIVE_TEAMS,
+        "WORLDCUP_2026_TEAMS": WORLDCUP_2026_TEAMS,
+    }
+    teams = _TEAM_SETS[CONFIG["teams"]]
+    end_date = str(CONFIG["end_date"])
+
+    print(f"JAX backend: {jax.default_backend()}")
+    print(f"JAX devices: {jax.devices()}")
+
+    data, model_inputs, team_id_to_name = get_results(
+        start_date=start_date,
+        end_date=end_date,
+        max_goals=MAX_GOALS,
+        teams_only=teams,
+    )
+    num_teams = len(team_id_to_name)
+    key = jax.random.PRNGKey(42)
+    params = default_init_params(num_teams, team_id_to_name=team_id_to_name)
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    with open(os.path.join(OUTPUT_DIR, "em_params_init.json"), "w") as f:
+        json.dump(params_to_dict(params), f, indent=2)
+
+    print(f"Running EM (N={n_particles}, n_epochs={CONFIG['n_epochs']}, "
+          f"date=[{start_date}, {end_date}])")
+
+    final_params, log_marginal_history = run_EM(
+        model_inputs=model_inputs,
+        init_params=params,
+        num_teams=num_teams,
+        n_particles=n_particles,
+        n_epochs=int(CONFIG["n_epochs"]),
+        n_gradient_steps=int(CONFIG["n_gradient_steps"]),
+        learning_rate=float(CONFIG["learning_rate"]),
+        key=key,
+    )
+
+    with open(os.path.join(OUTPUT_DIR, "em_params_final.json"), "w") as f:
+        json.dump(params_to_dict(final_params), f, indent=2)
+    with open(os.path.join(OUTPUT_DIR, "em_log_marginal_history.json"), "w") as f:
+        json.dump(np.asarray(log_marginal_history).tolist(), f, indent=2)
+
+    print("EM completed. Final parameters:")
+    print("  kappa:", final_params.kappa)
+    print("  alpha:", final_params.alpha)
+    print("  beta:", final_params.beta)
+    print("  B:", final_params.B)
+    print("  gamma_0:", final_params.gamma_0.shape)
+    print("  mean_0:", final_params.mean_0.shape)
+    print(f"Log marginal history: {np.asarray(log_marginal_history).tolist()}")
+
+    print_summary()
+
+
+def print_summary():
+    """Print a summary of the EM output files (params + history)."""
+    log("Fetching results summary...")
+    final_path = os.path.join(OUTPUT_DIR, "em_params_final.json")
+    if os.path.exists(final_path):
+        with open(final_path, "r") as f:
+            params = json.load(f)
+        log("Final EM parameters:")
+        log(f"  kappa  = {params.get('kappa', 'N/A')} [ESTIMATED]")
+        log(f"  alpha  = {params.get('alpha', 'N/A')} [ESTIMATED]")
+        log(f"  beta   = {params.get('beta', 'N/A')} [ESTIMATED]")
+        log(f"  B      = {params.get('B', 'N/A')} [ESTIMATED]")
+        log(f"  gamma_0 shape = {len(params.get('gamma_0', []))}x"
+            f"{len(params.get('gamma_0', [[]])[0]) if params.get('gamma_0') else 'N/A'} [ESTIMATED]")
+        log(f"  mean_0 shape = {len(params.get('mean_0', []))}x"
+            f"{len(params.get('mean_0', [[]])[0]) if params.get('mean_0') else 'N/A'} [FIXED]")
+    else:
+        log(f"Warning: {final_path} not found")
+
+    hist_path = os.path.join(OUTPUT_DIR, "em_log_marginal_history.json")
+    if os.path.exists(hist_path):
+        with open(hist_path, "r") as f:
+            history = json.load(f)
+        log(f"Log marginal history: {history}")
+    else:
+        log(f"Warning: {hist_path} not found")
+
+    log("Output files:")
+    if os.path.isdir(OUTPUT_DIR):
+        for fname in sorted(os.listdir(OUTPUT_DIR)):
+            fpath = os.path.join(OUTPUT_DIR, fname)
+            size = os.path.getsize(fpath)
+            log(f"  {fname} ({size:,} bytes)")
+    else:
+        log(f"  Output directory {OUTPUT_DIR} does not exist")
+
+
+def main():
+    # Strip the --colab flag before positional-arg parsing.
+    args = [a for a in sys.argv[1:] if a != "--colab"]
+    n_particles = int(args[0]) if args and args[0].isdigit() else int(CONFIG["N"])
+    start_date = (
+        args[1] if len(args) > 1 else str(CONFIG["start_date"])
+    )
+
+    log("=" * 60)
+    log("SMOOTHING RUNNER — STARTING")
+    log("  Reuses smoothing.py EM (gamma_0, B, kappa, alpha, beta; mean_0 fixed).")
+    log("=" * 60)
+
+    if is_colab():
+        bootstrap()
+
+    run_em(n_particles=n_particles, start_date=start_date)
+
+    log("=" * 60)
+    log("DONE")
+    log("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
+

@@ -1,0 +1,16 @@
+{
+  "N": 1000,
+  "n_epochs": 5,
+  "n_gradient_steps": 5,
+  "learning_rate": 0.01,
+  "start_date": "1950-01-01",
+  "end_date": "2025-12-31",
+  "teams": "ACTIVE_TEAMS",
+  "max_goals": 8,
+  "output_dir": "rbpf/outputs_gpu",
+  "hardware": "gpu",
+  "gpu_type": "T4",
+  "tpu_type": "v5e1",
+  "colab_timeout": 3600,
+  "repo_url": "https://github.com/ryantjx/rbsqmc.git"
+}

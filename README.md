@@ -22,29 +22,9 @@ Sequential Monte Carlo (SMC) and Quasi-Monte Carlo (QMC) methods suffer from the
 
 ## Repository Structure
 
-```
-src/
-├── data/           # Data files and datasets
-├── models/         # Model implementations
-└── scripts/
-    ├── hilbert_sort/    # Hilbert curve sorting implementations
-    │   ├── hilbert_sort.py       # Core Hilbert sort algorithm
-    │   ├── hilbert_particles.py  # Particle sorting utilities
-    │   ├── compare_hilbertsort.py # Performance comparisons
-    │   └── HILBERT_SORT.md        # Documentation
-    └── qmc/             # Quasi-Monte Carlo implementations
-        ├── qmc.py              # Core QMC algorithms
-        ├── sobol.py            # Sobol sequence generator
-        ├── halton.py           # Halton sequence generator
-        └── SCIPY.md            # Documentation
-
-tests/              # Unit tests for QMC methods
-├── test_halton.py
-└── test_sobol.py
-
-DISSERTATION.md     # Full dissertation documentation
-requirements.txt    # Python dependencies
-```
+- `rbpf_1` - old specification of the model. wrong implementation, but proof is correct.
+- `rbpf_2` - Smoothing using grid search, not efficient at all.
+- `rbpf_3` - Smoothing using gradient-based optimization.
 
 ## Documentation
 
