@@ -9,7 +9,7 @@
   "max_goals": 8,
   "output_dir": "rbpf/outputs_gpu",
   "hardware": "gpu",
-  "gpu_type": "T4",
+  "gpu_type": "L4",
   "tpu_type": "v6e1",
   "high_ram": true,
   "colab_timeout": 3600,
