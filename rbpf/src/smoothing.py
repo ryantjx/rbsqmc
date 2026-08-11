@@ -27,24 +27,21 @@ jax.config.update(
 
 MAX_GOALS = 8
 N = 100
-# Number of independent smoothed trajectories sampled in the E-step for MCEM.
-# Averaging the complete-data log-likelihood over these reduces the Monte Carlo
-# noise of the 1-sample estimate (which was the root cause of the M-step being
-# "stuck at step 0").
-N_TRAJECTORIES = 20
 
 
-def _smoother_rts_single(
+def smoother_rts(
     filtered_states: cuthbertlib.types.ArrayTree,
     model_inputs: RBPFFootballResults,
     params: EMParams,
     num_teams: int,
     key: jax.Array
 ):
-    """Sample ONE smoothed trajectory via FFBSi (RTS backward sampling)."""
+    """
+    Rauch-Tung-Striebel (RTS) smoother for the RBPF model.
+    """
     n_particles = filtered_states.particles.x.shape[1]
     K = filtered_states.particles.x.shape[3]  # 2 (attack/defence)
-    dim = num_teams * K  # total state dimension
+    # dim = num_teams * K  # total state dimension
 
     # 1. Sample Terminal States
     key, cat_key, sample_key = jax.random.split(key, 3)
@@ -88,6 +85,7 @@ def _smoother_rts_single(
             deltas * jnp.linalg.solve(pred_Sigma, deltas.T).T, axis=-1
         )  # (N,)
         sign, log_det = jnp.linalg.slogdet(pred_Sigma)  # stable log-det
+        dim = K * K
         log_transition = (
             -0.5 * quad
             - 0.5 * log_det
@@ -137,47 +135,21 @@ def _smoother_rts_single(
     )  # (T, M, 2)
     return smoothed_states
 
-
-def smoother_rts(
-    filtered_states: cuthbertlib.types.ArrayTree,
-    model_inputs: RBPFFootballResults,
-    params: EMParams,
-    num_teams: int,
-    key: jax.Array,
-    n_trajectories: int = N_TRAJECTORIES,
-):
-    """Sample M independent smoothed trajectories in parallel (FFBSi).
-
-    Vmaps the single-trajectory backward sampler over ``n_trajectories`` keys,
-    producing ``(M, T, num_teams, 2)``. This is the E-step for Monte Carlo EM:
-    the M-step averages the complete-data log-likelihood over these trajectories
-    instead of using a single (noisy, biased) one.
-    """
-    keys = jax.random.split(key, n_trajectories)
-    return jax.vmap(
-        lambda k: _smoother_rts_single(
-            filtered_states, model_inputs, params, num_teams, k
-        )
-    )(keys)  # (M, T, num_teams, 2)
-
-
 def E_step(
     params: EMParams,
     model_inputs: RBPFFootballResults,
     num_teams: int,
     n_particles: int,
-    key: jax.Array,
-    n_trajectories: int = N_TRAJECTORIES,
+    key: jax.Array
 ):
     """
-    E-step: Forward Filter Backward Sampling (FFBSi) with M trajectories.
+    E-step: Forward Filter Backward Sampling (FFBSi)
     """
     key, filter_key, smoother_key = jax.random.split(key, 3)
     print(f"Running E-step: Forward Filter Backward Sampling (FFBSi)")
-    print(f"  num_teams = {num_teams}, n_particles = {n_particles}, "
-          f"n_trajectories = {n_trajectories}")
+    print(f"  num_teams = {num_teams}, n_particles = {n_particles}")
     print(f"  Start time: {model_inputs.timestamp[0]}, End time: {model_inputs.timestamp[-1]}")
-
+    
     filtered_states, _ = run_filter(
         key=filter_key,
         model_inputs=model_inputs,
@@ -190,83 +162,64 @@ def E_step(
         model_inputs=model_inputs,
         params=params,
         num_teams=num_teams,
-        key=smoother_key,
-        n_trajectories=n_trajectories,
+        key=smoother_key
     )
     return filtered_states, smoothed_states, filtered_states.log_normalizing_constant[-1]
 
-
-def _complete_log_likelihood(
-    params: EMParams,
-    X: jnp.ndarray,  # (T, num_teams, 2) -- one smoothed trajectory
-    model_inputs: RBPFFootballResults,
-) -> jax.Array:
-    """log p(y, X) for a single trajectory X (complete-data log-likelihood)."""
-    n_observations = X.shape[0]
-    num_teams = X.shape[1]
-    K = X.shape[2]  # 2 (attack/defence)
+def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFootballResults):
+    n_observations = smoothed_states.shape[0]
+    num_teams = smoothed_states.shape[1]
+    K = smoothed_states.shape[2]  # 2 (attack/defence)
     dim = num_teams * K  # total state dimension
 
     observation_indices = jnp.arange(n_observations)
     transition_indices = jnp.arange(1, n_observations)
 
-    # Observation log-likelihood: sum_t log p(y_t | x_t)
+    # Observation Loss: -sum_t log p(y_t | x_t)   (bivariate Poisson)
     def obs_step(observation_index):
         return loglik(
             y=jnp.array([model_inputs.home_score[observation_index], model_inputs.away_score[observation_index]]),
-            x_i=X[observation_index, model_inputs.home_team_id[observation_index]],
-            x_j=X[observation_index, model_inputs.away_team_id[observation_index]],
+            x_i=smoothed_states[observation_index, model_inputs.home_team_id[observation_index]],
+            x_j=smoothed_states[observation_index, model_inputs.away_team_id[observation_index]],
             alpha=params.alpha,
             beta=params.beta,
             max_goals=MAX_GOALS,
             scale=1.0
         )
-    obs_ll = jnp.sum(jax.vmap(obs_step)(observation_indices))
+    obs_losses = jax.vmap(obs_step)(observation_indices)
+    sum_observation_loss = -jnp.sum(obs_losses)
 
-    # Transition log-likelihood: sum_t log p(x_t | x_{t-1})  (OU, Kronecker cov)
+    # Transition Loss: -sum_t log p(x_t | x_{t-1})  (OU process, Kronecker covariance)
     dts = model_inputs.timestamp[transition_indices] - model_inputs.timestamp_prev[transition_indices]
     phis = jnp.exp(-params.kappa * dts)  # scalar phi_t = exp(-kappa*dt), I_M implied
 
     def transition_step(observation_index, phi):
-        pred_mean = params.mean_0 + phi * (X[observation_index - 1] - params.mean_0)  # (M, K)
-        diff = X[observation_index] - pred_mean  # (M, K)
+        # mu_{t|t-1} = mu_0 + Phi_t (x_{t-1} - mu_0),  Phi_t = phi_t * I_M  in team space
+        pred_mean = params.mean_0 + phi * (smoothed_states[observation_index - 1] - params.mean_0)  # (M, K)
+        diff = smoothed_states[observation_index] - pred_mean  # (M, K)
 
+        # Q_t = (Gamma_0 - phi_t @ Gamma_0 @ phi_t.T) ⊗ B,  phi_t = phi * I_M
+        # check if the phi is close to 1.0. If phi is close to 1.0, this means that there is no time difference.,
         scale = 1.0 - phi**2
         deterministic = scale <= 1e-8
 
+        # Full Gaussian density for the stochastic (phi < 1) case.
         Q_gamma = jnp.maximum(scale, 1e-8) * params.gamma_0
         Q_gamma = 0.5 * (Q_gamma + Q_gamma.T)  # ensure symmetry
         Q_full = jnp.kron(Q_gamma, params.B)  # (2M, 2M)
 
         diff_flat = diff.reshape(-1)  # (2M,)
         quad = diff_flat @ jnp.linalg.solve(Q_full, diff_flat)
+        # slogdet is numerically stable (raw det() underflows to 0 in float32).
         sign, log_det = jnp.linalg.slogdet(Q_full)
         log_density = -0.5 * quad - 0.5 * log_det - 0.5 * dim * jnp.log(2 * jnp.pi)
 
         return jnp.where(deterministic, 0.0, log_density)
 
-    transition_ll = jnp.sum(jax.vmap(transition_step)(transition_indices, phis))
+    transition_losses = jax.vmap(transition_step)(transition_indices, phis)
+    sum_transition_loss = -jnp.sum(transition_losses)
 
-    return obs_ll + transition_ll
-
-
-def loss_fn(
-    params: EMParams,
-    smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
-    model_inputs: RBPFFootballResults,
-):
-    """MCEM objective: -average over M trajectories of log p(y, X^*).
-
-    This is a proper Monte Carlo estimate of the EM objective
-    Q(theta) = E_{p(X|y,theta_old)}[log p(y, X | theta)], averaged over the
-    M smoothed trajectories from the E-step. Averaging reduces the noise of the
-    1-sample estimate that previously made the M-step "stuck at step 0".
-    """
-    per_traj = jax.vmap(
-        lambda X: _complete_log_likelihood(params, X, model_inputs)
-    )(smoothed_trajectories)  # (M,)
-    return -jnp.mean(per_traj)
-
+    return sum_observation_loss + sum_transition_loss
 
 def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
     """Symmetrise a square matrix (for PSD-constrained params like gamma_0, B)."""
@@ -371,24 +324,32 @@ def _constrain(params: EMParams) -> EMParams:
         beta=params.beta,
     )
 
-
 def M_step(
-    smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
+    smoothed_states: cuthbertlib.types.ArrayTree,
     model_inputs: RBPFFootballResults,
     prev_params: EMParams,
     learning_rate: float,
-    n_gradient_steps: int,
+    n_gradient_steps: int
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
 
-    The objective is the MCEM loss: -average over the M smoothed trajectories
-    of log p(y, X^*). Averaging over trajectories reduces the Monte Carlo noise
-    that made the 1-sample version "stuck at step 0".
+    The loss is a sum over ~O(10^4) matches, so its magnitude is huge and a
+    single global learning rate either under- or over-shoots the different
+    parameter blocks (alpha/beta vs gamma_0/B/kappa live on very different
+    scales). We therefore:
+      1. use per-parameter learning rates via ``multi_transform``,
+      2. decay the LR with a cosine schedule over ``n_gradient_steps``,
+      3. run the full gradient budget (no premature early-stop) while tracking
+         the best params by a *relative* improvement threshold,
+      4. project the result back onto the valid (symmetric / non-neg) support.
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
-        loss_best, loss_trace).
+        loss_best, loss_trace). loss_start is the objective evaluated at
+        ``prev_params`` (start of the M-step), loss_best is the best objective
+        achieved during the loop, and loss_trace is the objective at every
+        gradient step.
     """
     # --- JIT-compiled value and gradient (over the 5 learned fields) ---
     num_teams = prev_params.gamma_0.shape[0]
@@ -405,7 +366,7 @@ def M_step(
                 alpha=carry["alpha"],
                 beta=carry["beta"],
             ),
-            smoothed_trajectories,
+            smoothed_states,
             model_inputs,
         )
 
@@ -429,9 +390,9 @@ def M_step(
     base = learning_rate
     # transition loss dominates compared to observation loss. scale gamma_0/B/kappa down to avoid overshooting.
     lr_mapping = {
-        "L": base * 0.03,  # scale down for L (gamma_0) to avoid overshooting
-        "B": base * 0.03,  # scale down for B to avoid overshooting
-        "kappa": base * 0.03,  # scale down for kappa to avoid overshooting
+        "L": base * 0.03, # scale down for L (gamma_0) to avoid overshooting
+        "B": base * 0.03, # scale down for B to avoid overshooting
+        "kappa": base * 0.03, # scale down for kappa to avoid overshooting
         "alpha": base * 1.0,
         "beta": base * 1.0,
     }
@@ -517,7 +478,6 @@ def M_step(
           f"beta={float(final.beta):.5f}")
     return final, loss_start, best_loss, loss_trace
 
-
 def run_EM(
     model_inputs: FootballResults,
     init_params: EMParams,
@@ -526,17 +486,16 @@ def run_EM(
     n_epochs: int = 10,
     n_gradient_steps: int = 10,
     learning_rate: float = 1e-3,
-    n_trajectories: int = N_TRAJECTORIES,
     key: jax.Array = jax.random.PRNGKey(42)
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     key = jax.random.PRNGKey(42)
     params = init_params
-
+    
     # initialize gamma trajectory
     gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
-        model_inputs=model_inputs,
-        gamma_0=params.gamma_0,
-        kappa=params.kappa,
+        model_inputs=model_inputs, 
+        gamma_0=params.gamma_0, 
+        kappa=params.kappa, 
         num_teams=num_teams
     )
 
@@ -554,25 +513,24 @@ def run_EM(
 
     for epoch in tqdm(range(n_epochs)):
         key, e_key = jax.random.split(key)
-        # 1. run E step to get M smoothed trajectories
+        # 1. run E step to get expected sufficient statistics
         print("    E-step: Running filtering and backward sampling...")
-        _, smoothed_trajectories, log_marginal = E_step(
-            params=params,
-            model_inputs=augmented_results,
+        _, smoothed_states, log_marginal = E_step(
+            params=params, 
+            model_inputs=augmented_results, 
             num_teams=num_teams,
             n_particles=n_particles,
-            key=e_key,
-            n_trajectories=n_trajectories,
+            key=e_key
         )
         log_likelihood_history.append(log_marginal)
-        # 2. run M step to update parameters (MCEM over M trajectories)
+        # 2. run M step to update parameters
         print("    M-step: Updating parameters...")
+        # assign the updated parameters to params for the next iteration
         params, loss_start, loss_best, loss_trace = M_step(
-            smoothed_trajectories=smoothed_trajectories,
-            model_inputs=augmented_results,
-            prev_params=params,
-            learning_rate=learning_rate,
-            n_gradient_steps=n_gradient_steps,
+            smoothed_states=smoothed_states, 
+            model_inputs=augmented_results, 
+            prev_params=params, 
+            learning_rate=learning_rate, n_gradient_steps=n_gradient_steps
         )
         # Track the M-step objective (loss = -log L) at the start, the best
         # point reached within this epoch, and the full per-step trajectory.
@@ -597,18 +555,38 @@ def run_EM(
     }
     return params, jnp.array(log_likelihood_history), em_diagnostics
 
-
 def main():
     data, model_inputs, team_id_to_name = get_results(
-        start_date="1950-01-01",
-        end_date="2025-12-31",
+        start_date="1950-01-01", 
+        end_date="2025-12-31", 
         max_goals=MAX_GOALS,
-        teams_only=WORLDCUP_2026_TEAMS,  # ACTIVE_TEAMS
+        teams_only=WORLDCUP_2026_TEAMS, # ACTIVE_TEAMS
     )
     NUM_TEAMS = len(team_id_to_name)
     key = jax.random.PRNGKey(42)
     params = default_init_params(NUM_TEAMS, team_id_to_name=team_id_to_name)
 
+    # gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
+    #     model_inputs=model_inputs, 
+    #     gamma_0=params.gamma_0, 
+    #     kappa=params.kappa, 
+    #     num_teams=NUM_TEAMS
+    # )
+    # augmented_results = generate_augmented_data(
+    #     model_inputs=model_inputs,
+    #     gamma_updated=gamma_updated,
+    #     gamma_pred=gamma_pred,
+    #     kalman_gain=kalman_gain
+    # )
+    
+    # smoothed_states = E_step(
+    #     params=params,
+    #     model_inputs=augmented_results,
+    #     num_teams=NUM_TEAMS,
+    #     n_particles=10,
+    #     key=key
+    # )
+    # print("Smoothed states shape:", smoothed_states.shape)
     try:
         final_params, log_marginal_likelihoods, em_diagnostics = run_EM(
             model_inputs=model_inputs,
@@ -634,7 +612,6 @@ def main():
 
     # plot log marginal likelihoods
     plot_log_likelihood_history(log_marginal_likelihoods.tolist(), output_path=output_path + "/log_marginal_likelihoods.png")
-
 
 if __name__ == "__main__":
     main()
