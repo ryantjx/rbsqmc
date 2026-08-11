@@ -273,14 +273,21 @@ def run_em(n_particles: int, start_date: str):
     with open(os.path.join(OUTPUT_DIR, "em_log_marginal_history.json"), "w") as f:
         json.dump(np.asarray(log_marginal_history).tolist(), f, indent=2)
 
-    # Save M-step diagnostics (start/end objective per epoch) and a plot.
+    # Save M-step diagnostics (start/end objective per epoch, plus the full
+    # per-gradient-step loss trajectory for every epoch) and a plot.
     mstep_start = np.asarray(em_diagnostics["mstep_loss_start"]).tolist()
     mstep_end = np.asarray(em_diagnostics["mstep_loss_end"]).tolist()
+    # Each entry of mstep_loss_trace is a list of loss values (one per gradient
+    # step). Early-stopped epochs may be shorter than n_gradient_steps.
+    mstep_trace = [
+        np.asarray(trace).tolist() for trace in em_diagnostics["mstep_loss_trace"]
+    ]
     with open(os.path.join(OUTPUT_DIR, "em_mstep_diagnostics.json"), "w") as f:
         json.dump(
             {
                 "mstep_loss_start": mstep_start,
                 "mstep_loss_end": mstep_end,
+                "mstep_loss_trace": mstep_trace,
             },
             f, indent=2,
         )

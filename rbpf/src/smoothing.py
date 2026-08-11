@@ -186,7 +186,7 @@ def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFo
             scale=1.0
         )
     obs_losses = jax.vmap(obs_step)(observation_indices)
-    sum_observation_loss = -jnp.sum(obs_losses)
+    avg_observation_loss = -jnp.sum(obs_losses) / n_observations
 
     # Transition Loss: -sum_t log p(x_t | x_{t-1})  (OU process, Kronecker covariance)
     dts = model_inputs.timestamp[transition_indices] - model_inputs.timestamp_prev[transition_indices]
@@ -216,9 +216,11 @@ def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFo
         return jnp.where(deterministic, 0.0, log_density)
 
     transition_losses = jax.vmap(transition_step)(transition_indices, phis)
-    sum_transition_loss = -jnp.sum(transition_losses)
+    # n_transitions = number of consecutive-step transitions = n_observations - 1
+    n_transitions = n_observations - 1
+    avg_transition_loss = -jnp.sum(transition_losses) / n_transitions
 
-    return sum_observation_loss + sum_transition_loss
+    return avg_observation_loss + avg_transition_loss
 
 def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
     """Symmetrise a square matrix (for PSD-constrained params like gamma_0, B)."""
@@ -344,9 +346,11 @@ def M_step(
       4. project the result back onto the valid (symmetric / non-neg) support.
 
     Returns:
-        tuple[EMParams, float, float]: (final_params, loss_start, loss_best).
-        loss_start is the objective evaluated at ``prev_params`` (start of the
-        M-step) and loss_best is the best objective achieved during the loop.
+        tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
+        loss_best, loss_trace). loss_start is the objective evaluated at
+        ``prev_params`` (start of the M-step), loss_best is the best objective
+        achieved during the loop, and loss_trace is the objective at every
+        gradient step.
     """
     # --- JIT-compiled value and gradient (over the 5 learned fields) ---
     num_teams = prev_params.gamma_0.shape[0]
@@ -419,12 +423,14 @@ def M_step(
     best_carry = carry
     best_step = -1
     loss_start = None  # objective at prev_params (start of the M-step)
+    loss_trace = []    # objective at every gradient step (for diagnostics)
     patience = max(10, n_gradient_steps // 5)
     no_improve_counter = 0
 
     for step in range(n_gradient_steps):
         loss, grads = value_and_grad_fn(carry)
         loss_val = float(loss)
+        loss_trace.append(loss_val)
 
         # First evaluation is the objective at the starting params.
         if loss_start is None:
@@ -470,7 +476,7 @@ def M_step(
     print(f"      M-step done: loss {best_loss:.4f} -> best at step {best_step}, "
           f"kappa={float(final.kappa):.5f} alpha={float(final.alpha):.5f} "
           f"beta={float(final.beta):.5f}")
-    return final, loss_start, best_loss
+    return final, loss_start, best_loss, loss_trace
 
 def run_EM(
     model_inputs: FootballResults,
@@ -503,6 +509,7 @@ def run_EM(
     log_likelihood_history = []
     mstep_start_history = []
     mstep_end_history = []
+    mstep_loss_traces = []  # full loss trajectory per epoch (every gradient step)
 
     for epoch in tqdm(range(n_epochs)):
         key, e_key = jax.random.split(key)
@@ -519,16 +526,17 @@ def run_EM(
         # 2. run M step to update parameters
         print("    M-step: Updating parameters...")
         # assign the updated parameters to params for the next iteration
-        params, loss_start, loss_best = M_step(
+        params, loss_start, loss_best, loss_trace = M_step(
             smoothed_states=smoothed_states, 
             model_inputs=augmented_results, 
             prev_params=params, 
             learning_rate=learning_rate, n_gradient_steps=n_gradient_steps
         )
-        # Track the M-step objective (loss = -log L) at the start and at the
-        # best point reached within this epoch's gradient loop.
+        # Track the M-step objective (loss = -log L) at the start, the best
+        # point reached within this epoch, and the full per-step trajectory.
         mstep_start_history.append(loss_start)
         mstep_end_history.append(loss_best)
+        mstep_loss_traces.append(loss_trace)
 
     print("EM completed. Final parameters:")
     print("  kappa:", params.kappa)
@@ -538,10 +546,12 @@ def run_EM(
     print("  gamma_0:", params.gamma_0.shape)
     print("  mean_0:", params.mean_0.shape)
 
-    # Return log-marginal (E-step) plus the M-step objective diagnostics.
+    # Return log-marginal (E-step) plus the M-step objective diagnostics,
+    # including the full per-gradient-step loss trajectory for every epoch.
     em_diagnostics = {
         "mstep_loss_start": jnp.array(mstep_start_history),
         "mstep_loss_end": jnp.array(mstep_end_history),
+        "mstep_loss_trace": mstep_loss_traces,  # list of per-epoch loss lists
     }
     return params, jnp.array(log_likelihood_history), em_diagnostics
 
