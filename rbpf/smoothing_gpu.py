@@ -265,6 +265,7 @@ def run_em(n_particles: int, start_date: str):
         n_epochs=int(CONFIG["n_epochs"]),
         n_gradient_steps=int(CONFIG["n_gradient_steps"]),
         learning_rate=float(CONFIG["learning_rate"]),
+        transition_weight=float(CONFIG.get("transition_weight", 0.03)),
         key=key,
     )
 

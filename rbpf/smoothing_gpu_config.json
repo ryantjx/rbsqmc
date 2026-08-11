@@ -3,6 +3,7 @@
   "n_epochs": 5,
   "n_gradient_steps": 50,
   "learning_rate": 0.01,
+  "transition_weight": 0.03,
   "start_date": "1900-01-01",
   "end_date": "2025-12-31",
   "teams": "WORLDCUP_2026_TEAMS",
