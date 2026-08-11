@@ -444,9 +444,9 @@ def M_step(
     base = learning_rate
     # transition loss dominates compared to observation loss. scale gamma_0/B/kappa down to avoid overshooting.
     lr_mapping = {
-        "L": base * 1,  # scale down for L (gamma_0) to avoid overshooting
-        "B": base * 1,  # scale down for B to avoid overshooting
-        "kappa": base * 1,  # scale down for kappa to avoid overshooting
+        "L": base * 0.03,  # scale down for L (gamma_0) to avoid overshooting
+        "B": base * 0.03,  # scale down for B to avoid overshooting
+        "kappa": base * 0.03,  # scale down for kappa to avoid overshooting
         "alpha": base * 1.0,
         "beta": base * 1.0,
     }
