@@ -190,6 +190,31 @@ def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFo
 
     return sum_observation_loss + sum_transition_loss
 
+def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
+    """Symmetrise a square matrix (for PSD-constrained params like gamma_0, B)."""
+    return 0.5 * (x + x.T)
+
+
+def _constrain(params: EMParams) -> EMParams:
+    """Apply validity constraints so parameters stay in their support.
+
+    - kappa >= 0 (OU mean-reversion rate).
+    - alpha, beta unconstrained real.
+    - gamma_0, B symmetrised (and kept positive-definite via projection below).
+    """
+    kappa = jnp.maximum(params.kappa, 1e-6)
+    gamma_0 = _symmetrize(params.gamma_0)
+    B = _symmetrize(params.B)
+    return EMParams(
+        mean_0=params.mean_0,
+        gamma_0=gamma_0,
+        B=B,
+        kappa=kappa,
+        alpha=params.alpha,
+        beta=params.beta,
+    )
+
+
 def M_step(
     smoothed_states: cuthbertlib.types.ArrayTree,
     model_inputs: RBPFFootballResults,
@@ -197,75 +222,133 @@ def M_step(
     prev_params: EMParams,
     learning_rate: float,
     n_gradient_steps: int
-):  
+):
     """
-    M-step: Update parameters using ADAM gradient descent.
+    M-step: Update parameters via scale-aware ADAM with a cosine schedule.
+
+    The loss is a sum over ~O(10^4) matches, so its magnitude is huge and a
+    single global learning rate either under- or over-shoots the different
+    parameter blocks (alpha/beta vs gamma_0/B/kappa live on very different
+    scales). We therefore:
+      1. use per-parameter learning rates via ``multi_transform``,
+      2. decay the LR with a cosine schedule over ``n_gradient_steps``,
+      3. run the full gradient budget (no premature early-stop) while tracking
+         the best params by a *relative* improvement threshold,
+      4. project the result back onto the valid (symmetric / non-neg) support.
     """
-    # --- JIT-compiled value and gradient ---
-    value_and_grad_fn = jax.jit(
-        jax.value_and_grad(loss_fn, argnums=0)
+    # --- JIT-compiled value and gradient (over the 5 learned fields) ---
+    def _loss_and_grad(carry):
+        return loss_fn(
+            EMParams(
+                mean_0=prev_params.mean_0,
+                gamma_0=carry["gamma_0"],
+                B=carry["B"],
+                kappa=carry["kappa"],
+                alpha=carry["alpha"],
+                beta=carry["beta"],
+            ),
+            smoothed_states,
+            model_inputs,
+        )
+
+    value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
+
+    # Initial parameter blocks (dict so optax.multi_transform labels align).
+    carry = {
+        "gamma_0": prev_params.gamma_0,
+        "B": prev_params.B,
+        "kappa": prev_params.kappa,
+        "alpha": prev_params.alpha,
+        "beta": prev_params.beta,
+    }
+
+    # --- Per-parameter learning rates (scale-aware) ---
+    # gamma_0 and B are O(1) matrices; kappa/alpha/beta are scalars on
+    # different scales. alpha/beta dominate through the observation term, so
+    # give them the base LR; gamma_0/B/kappa use smaller multipliers.
+    base = learning_rate
+    lr_mapping = {
+        "gamma_0": base * 0.5,
+        "B": base * 0.5,
+        "kappa": base * 1.0,
+        "alpha": base * 1.0,
+        "beta": base * 1.0,
+    }
+    transforms = {
+        "gamma_0": optax.adam(lr_mapping["gamma_0"]),
+        "B": optax.adam(lr_mapping["B"]),
+        "kappa": optax.adam(lr_mapping["kappa"]),
+        "alpha": optax.adam(lr_mapping["alpha"]),
+        "beta": optax.adam(lr_mapping["beta"]),
+    }
+    param_labels = {
+        "gamma_0": "gamma_0",
+        "B": "B",
+        "kappa": "kappa",
+        "alpha": "alpha",
+        "beta": "beta",
+    }
+    optimizer = optax.chain(
+        optax.multi_transform(transforms, param_labels),
+        optax.scale_by_schedule(
+            optax.cosine_decay_schedule(-1.0, n_gradient_steps)
+        ),
     )
-    # --- Initialize optimizer ---
-    optimizer = optax.adam(learning_rate)
-    params = (
-        prev_params.gamma_0,
-        prev_params.B,
-        prev_params.kappa,
-        prev_params.alpha,
-        prev_params.beta,
-    )
-    opt_state = optimizer.init(params)
+    opt_state = optimizer.init(carry)
 
     # --- Gradient descent loop ---
-    best_loss = jnp.inf
-    best_params = params
+    best_loss = None
+    best_carry = carry
+    best_step = -1
+    last_loss = None
+    patience = max(10, n_gradient_steps // 5)
     no_improve_counter = 0
 
     for step in range(n_gradient_steps):
-        loss, grads = value_and_grad_fn(
-            EMParams(
-                mean_0=prev_params.mean_0,
-                gamma_0=params[0],
-                B=params[1],
-                kappa=params[2],
-                alpha=params[3],
-                beta=params[4],
-            ),
-            smoothed_states,
-            model_inputs
-        )
-        # grads is an EMParams NamedTuple; optimise the learned fields.
-        grad_tuple = (
-            grads.gamma_0,
-            grads.B,
-            grads.kappa,
-            grads.alpha,
-            grads.beta,
-        )
-        updates, opt_state = optimizer.update(grad_tuple, opt_state)
-        params = optax.apply_updates(params, updates)
-
+        loss, grads = value_and_grad_fn(carry)
         loss_val = float(loss)
 
-        if loss < best_loss:
-            best_loss = loss
-            best_params = params
+        updates, opt_state = optimizer.update(grads, opt_state, carry)
+        carry = optax.apply_updates(carry, updates)
+
+        # Track best by relative improvement (loss is ~1e4, so absolute tol
+        # would never fire; use a relative threshold).
+        improved = (best_loss is None) or (loss_val < best_loss * (1 - 1e-4))
+        if improved:
+            best_loss = loss_val
+            best_carry = carry
+            best_step = step
             no_improve_counter = 0
         else:
             no_improve_counter += 1
-        
-        if no_improve_counter >= 5:
-            print(f"Early stopping at step {step} due to no improvement in loss.")
+
+        last_loss = loss_val
+        if step % 10 == 0 or step == n_gradient_steps - 1:
+            print(f"      M-step [{step:3d}/{n_gradient_steps}] loss={loss_val:.4f}")
+
+        # Only early-stop once we've had some movement; require the loss to
+        # actually be improving relative to the best seen so far.
+        if no_improve_counter >= patience and best_step >= 5:
+            print(f"      M-step early stop at step {step} (no relative improvement "
+                  f"for {patience} steps); best at step {best_step}.")
             break
 
-    return EMParams(
-        gamma_0=best_params[0],
-        B=best_params[1],
-        kappa=best_params[2],
-        alpha=best_params[3],
-        beta=best_params[4],
-        mean_0=prev_params.mean_0,  # mean_0 is fixed
-    )
+    if best_loss is None:
+        best_carry = carry
+
+    # Project back onto the valid support.
+    final = _constrain(EMParams(
+        mean_0=prev_params.mean_0,
+        gamma_0=best_carry["gamma_0"],
+        B=best_carry["B"],
+        kappa=best_carry["kappa"],
+        alpha=best_carry["alpha"],
+        beta=best_carry["beta"],
+    ))
+    print(f"      M-step done: loss {best_loss:.4f} -> best at step {best_step}, "
+          f"kappa={float(final.kappa):.5f} alpha={float(final.alpha):.5f} "
+          f"beta={float(final.beta):.5f}")
+    return final
 
 def run_EM(
     model_inputs: FootballResults,
