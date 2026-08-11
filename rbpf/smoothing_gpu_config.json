@@ -1,11 +1,11 @@
 {
-  "N": 1000,
+  "N": 1500,
   "n_epochs": 15,
   "n_gradient_steps": 50,
   "learning_rate": 0.01,
   "start_date": "2000-01-01",
   "end_date": "2025-12-31",
-  "teams": "WORLDCUP_2026_TEAMS",
+  "teams": "ACTIVE_TEAMS",
   "max_goals": 8,
   "output_dir": "rbpf/outputs_gpu",
   "hardware": "gpu",
