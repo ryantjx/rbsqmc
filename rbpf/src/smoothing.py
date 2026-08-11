@@ -260,6 +260,43 @@ def _project_psd(x: jnp.ndarray, floor: float = _EIGEN_FLOOR) -> jnp.ndarray:
     return (eigvecs * eigvals) @ eigvecs.T
 
 
+def _gamma0_from_cholesky(L: jnp.ndarray, num_teams: int) -> jnp.ndarray:
+    """Build a PD gamma_0 = L L^T from an unconstrained M x M factor.
+
+    ``L`` is a free matrix. We take its lower triangle, keep the diagonal
+    positive via ``softplus``, zero the strictly-upper triangle, and form
+    ``gamma_0 = L L^T``. Because L is full-rank lower-triangular with positive
+    diagonal, gamma_0 is positive-definite by construction and the map from the
+    free entries of L to gamma_0 is smooth and surjective onto the PD cone.
+    """
+    L_low = jnp.tril(L)
+    diag = jax.nn.softplus(jnp.diag(L_low))  # > 0, strictly
+    L_low = L_low.at[jnp.diag_indices(num_teams)].set(diag)
+    return L_low @ L_low.T
+
+
+def _cholesky_from_gamma0(gamma_0: jnp.ndarray, num_teams: int) -> jnp.ndarray:
+    """Inverse map: a free M x M factor encoding the PD matrix gamma_0.
+
+    ``L`` is a lower-triangular Cholesky factor of the PD ``gamma_0`` with a
+    softplus-wrapped diagonal, padded to a full M x M free array (upper triangle
+    is arbitrary/zero and ignored by ``_gamma0_from_cholesky``). This is the
+    starting point for the M-step optimizer.
+    """
+    L = jnp.linalg.cholesky(gamma_0)  # lower-triangular, positive diagonal
+    diag = L[jnp.diag_indices(num_teams)]
+    L_free = jnp.zeros_like(gamma_0)
+    L_free = L_free.at[jnp.tril_indices(num_teams)].set(
+        L[jnp.tril_indices(num_teams)]
+    )
+    # invert softplus on the diagonal so reconstructing gamma_0 recovers it:
+    # softplus(x) = diag  =>  x = log(exp(diag) - 1)
+    L_free = L_free.at[jnp.diag_indices(num_teams)].set(
+        jnp.log(jnp.exp(diag) - 1.0 + 1e-10)
+    )
+    return L_free
+
+
 def _constrain(params: EMParams) -> EMParams:
     """Apply validity constraints so parameters stay in their support.
 
@@ -269,6 +306,10 @@ def _constrain(params: EMParams) -> EMParams:
     - gamma_0, B projected onto the positive-definite cone (full-rank, so the
       transition covariance Q and the smoother covariances stay invertible and
       their log-determinants finite).
+
+    Note: during the M-step gamma_0 is Cholesky-parameterized (so it stays PD
+    automatically); this projection is retained as a safety net for params
+    constructed outside the optimizer (e.g. hand-loaded values).
     """
     kappa = jnp.maximum(params.kappa, _KAPPA_MIN)
     gamma_0 = _project_psd(params.gamma_0)
@@ -308,11 +349,15 @@ def M_step(
         M-step) and loss_best is the best objective achieved during the loop.
     """
     # --- JIT-compiled value and gradient (over the 5 learned fields) ---
+    num_teams = prev_params.gamma_0.shape[0]
+
     def _loss_and_grad(carry):
+        # Reconstruct a PD gamma_0 = L L^T from the free factor L.
+        gamma_0 = _gamma0_from_cholesky(carry["L"], num_teams)
         return loss_fn(
             EMParams(
                 mean_0=prev_params.mean_0,
-                gamma_0=carry["gamma_0"],
+                gamma_0=gamma_0,
                 B=carry["B"],
                 kappa=carry["kappa"],
                 alpha=carry["alpha"],
@@ -325,8 +370,10 @@ def M_step(
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
 
     # Initial parameter blocks (dict so optax.multi_transform labels align).
+    # gamma_0 is represented by a free Cholesky factor L (PD by construction);
+    # this is what the optimizer moves. B/kappa/alpha/beta are as before.
     carry = {
-        "gamma_0": prev_params.gamma_0,
+        "L": _cholesky_from_gamma0(prev_params.gamma_0, num_teams),
         "B": prev_params.B,
         "kappa": prev_params.kappa,
         "alpha": prev_params.alpha,
@@ -334,26 +381,26 @@ def M_step(
     }
 
     # --- Per-parameter learning rates (scale-aware) ---
-    # gamma_0 and B are O(1) matrices; kappa/alpha/beta are scalars on
+    # gamma_0 (via L) and B are O(1) matrices; kappa/alpha/beta are scalars on
     # different scales. alpha/beta dominate through the observation term, so
     # give them the base LR; gamma_0/B/kappa use smaller multipliers.
     base = learning_rate
     lr_mapping = {
-        "gamma_0": base * 0.5,
+        "L": base * 0.5,
         "B": base * 0.5,
         "kappa": base * 1.0,
         "alpha": base * 1.0,
         "beta": base * 1.0,
     }
     transforms = {
-        "gamma_0": optax.adam(lr_mapping["gamma_0"]),
+        "L": optax.adam(lr_mapping["L"]),
         "B": optax.adam(lr_mapping["B"]),
         "kappa": optax.adam(lr_mapping["kappa"]),
         "alpha": optax.adam(lr_mapping["alpha"]),
         "beta": optax.adam(lr_mapping["beta"]),
     }
     param_labels = {
-        "gamma_0": "gamma_0",
+        "L": "L",
         "B": "B",
         "kappa": "kappa",
         "alpha": "alpha",
@@ -410,10 +457,11 @@ def M_step(
     if best_loss is None:
         best_carry = carry
 
-    # Project back onto the valid support.
+    # Reconstruct gamma_0 from the best free factor L and project onto support.
+    best_gamma_0 = _gamma0_from_cholesky(best_carry["L"], num_teams)
     final = _constrain(EMParams(
         mean_0=prev_params.mean_0,
-        gamma_0=best_carry["gamma_0"],
+        gamma_0=best_gamma_0,
         B=best_carry["B"],
         kappa=best_carry["kappa"],
         alpha=best_carry["alpha"],
