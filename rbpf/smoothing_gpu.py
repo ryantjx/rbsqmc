@@ -188,6 +188,15 @@ def bootstrap():
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
     log("Set XLA_PYTHON_CLIENT_PREALLOCATE=false, ALLOCATOR=platform")
 
+    # Let rbpf/src modules (which default to cpu) use the requested accelerator.
+    # GPU -> cuda, TPU -> tpu. Only set if the caller didn't already choose one.
+    if "RBSQMC_PLATFORM" not in os.environ:
+        if CONFIG["hardware"] == "tpu":
+            os.environ["RBSQMC_PLATFORM"] = "tpu"
+        else:
+            os.environ["RBSQMC_PLATFORM"] = "cuda"
+    log(f"RBSQMC_PLATFORM={os.environ.get('RBSQMC_PLATFORM')}")
+
     if os.path.exists(RBPF_DIR):
         os.chdir(RBPF_DIR)
         # Make the cloned repo importable (``import rbpf`` needs the repo root,

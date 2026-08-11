@@ -8,14 +8,18 @@ from rbpf.src.helpers import default_init_params, generate_augmented_data, param
 from rbpf.src.model import run_filter, compute_gamma_trajectory
 from rbpf.src.bivariate_poisson import loglik
 
-from tqdm import tqdm
-import json
-from rbpf.src.graphic import plot_log_likelihood_history
 import os
+import json
 import cuthbertlib
 import optax
+from tqdm import tqdm
+from rbpf.src.graphic import plot_log_likelihood_history
 
-jax.config.update("jax_platforms", "cpu")
+# Default to CPU locally, but allow the GPU pipeline to force a device via
+# the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).
+jax.config.update(
+    "jax_platforms", os.environ.get("RBSQMC_PLATFORM", "cpu")
+)
 
 MAX_GOALS = 8
 N = 100

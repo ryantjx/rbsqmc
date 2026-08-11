@@ -1,3 +1,4 @@
+import os
 import jax
 import jax.numpy as jnp
 import cuthbert
@@ -9,7 +10,11 @@ from rbpf.src.data import get_results, FootballResults
 from rbpf.src.helpers import default_init_params
 from rbpf.src.utils import RBPFState, RBPFFootballResults, EMParams
 
-jax.config.update("jax_platforms", "cpu")
+# Default to CPU locally, but allow the GPU pipeline to force a device via
+# the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).
+jax.config.update(
+    "jax_platforms", os.environ.get("RBSQMC_PLATFORM", "cpu")
+)
 
 N = 10
 MAX_GOALS = 8
