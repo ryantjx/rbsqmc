@@ -4,7 +4,7 @@ import numpy as np
 from rbpf.src.data import get_results, WORLDCUP_2026_TEAMS
 from rbpf.src.helpers import default_init_params, generate_augmented_data
 from rbpf.src.model import compute_gamma_trajectory
-from rbpf.src.smoothing import E_step, loss_fn, _constrain, MAX_GOALS
+from rbpf.src.smoothing_1traj_old import E_step, loss_fn, _constrain, MAX_GOALS
 from rbpf.src.bivariate_poisson import loglik
 
 def decompose_loss(params, smoothed, mi):
