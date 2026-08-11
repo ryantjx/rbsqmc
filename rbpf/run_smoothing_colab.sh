@@ -56,6 +56,9 @@ echo "============================================================"
 echo "  COLAB SMOOTHING GPU — PRODUCTION RUN"
 echo "  Reuses smoothing.py EM (gamma_0, B, kappa, alpha, beta; mean_0 fixed)."
 echo "  ${ACCEL_LABEL}, N=${GPU_N}, start_date=$(read_config start_date), n_epochs=$(read_config n_epochs), teams=$(read_config teams)"
+if [ "$(read_config high_ram)" = "true" ]; then
+    echo "  High-RAM: ENABLED (note: set in the Colab UI — the CLI exposes no --high-ram flag)"
+fi
 echo "============================================================"
 
 cleanup() {
