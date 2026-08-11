@@ -37,7 +37,7 @@ def smoother_rts(
     key: jax.Array
 ):
     """
-    Rauch-Tung-Striebel (RTS) smoother for the RBPF model.
+    Rauch-Tung-Stiel (RTS) smoother for the RBPF model.
     """
     n_particles = filtered_states.particles.x.shape[1]
     K = filtered_states.particles.x.shape[3]  # 2 (attack/defence)
@@ -134,6 +134,7 @@ def smoother_rts(
     )  # (T, M, 2)
     return smoothed_states
 
+
 def E_step(
     params: EMParams,
     model_inputs: RBPFFootballResults,
@@ -148,7 +149,7 @@ def E_step(
     print(f"Running E-step: Forward Filter Backward Sampling (FFBSi)")
     print(f"  num_teams = {num_teams}, n_particles = {n_particles}")
     print(f"  Start time: {model_inputs.timestamp[0]}, End time: {model_inputs.timestamp[-1]}")
-    
+
     filtered_states, _ = run_filter(
         key=filter_key,
         model_inputs=model_inputs,
@@ -165,60 +166,43 @@ def E_step(
     )
     return filtered_states, smoothed_states, filtered_states.log_normalizing_constant[-1]
 
-def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFootballResults):
-    n_observations = smoothed_states.shape[0]
-    num_teams = smoothed_states.shape[1]
-    K = smoothed_states.shape[2]  # 2 (attack/defence)
-    dim = num_teams * K  # total state dimension
 
-    observation_indices = jnp.arange(n_observations)
-    transition_indices = jnp.arange(1, n_observations)
+def marginal_loss_fn(
+    params: EMParams,
+    model_inputs: FootballResults,
+    num_teams: int,
+    n_particles: int,
+    key: jax.Array,
+) -> jax.Array:
+    """M-step objective = -log p(y | theta), the true marginal likelihood.
 
-    # Observation Loss: -sum_t log p(y_t | x_t)   (bivariate Poisson)
-    def obs_step(observation_index):
-        return loglik(
-            y=jnp.array([model_inputs.home_score[observation_index], model_inputs.away_score[observation_index]]),
-            x_i=smoothed_states[observation_index, model_inputs.home_team_id[observation_index]],
-            x_j=smoothed_states[observation_index, model_inputs.away_team_id[observation_index]],
-            alpha=params.alpha,
-            beta=params.beta,
-            max_goals=MAX_GOALS,
-            scale=1.0
-        )
-    obs_losses = jax.vmap(obs_step)(observation_indices)
-    sum_observation_loss = -jnp.sum(obs_losses)
+    This is the statistically correct EM objective. It runs the particle
+    filter and returns the negative of its log-normalizing constant (an
+    estimate of log p(y)). Because gamma_0/kappa are being optimized, the
+    gamma trajectory is recomputed for the current params.
 
-    # Transition Loss: -sum_t log p(x_t | x_{t-1})  (OU process, Kronecker covariance)
-    dts = model_inputs.timestamp[transition_indices] - model_inputs.timestamp_prev[transition_indices]
-    phis = jnp.exp(-params.kappa * dts)  # scalar phi_t = exp(-kappa*dt), I_M implied
+    ``key`` must be fixed across the M-step gradient loop so the same particle
+    randomness is used for every gradient step (the standard differentiable
+    particle-filter trick); this makes the gradient well-defined.
+    """
+    # 1. Recompute the gamma trajectory for the current gamma_0, kappa.
+    gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
+        model_inputs, params.gamma_0, params.kappa, num_teams
+    )
+    aug = generate_augmented_data(
+        model_inputs, gamma_updated, gamma_pred, kalman_gain
+    )
 
-    def transition_step(observation_index, phi):
-        # mu_{t|t-1} = mu_0 + Phi_t (x_{t-1} - mu_0),  Phi_t = phi_t * I_M  in team space
-        pred_mean = params.mean_0 + phi * (smoothed_states[observation_index - 1] - params.mean_0)  # (M, K)
-        diff = smoothed_states[observation_index] - pred_mean  # (M, K)
+    # 2. Run the filter; its log_normalizing_constant estimates log p(y).
+    filtered, _ = run_filter(
+        key=key,
+        model_inputs=aug,
+        params=params,
+        num_teams=num_teams,
+        n_particles=n_particles,
+    )
+    return -filtered.log_normalizing_constant[-1]  # minimize -log p(y)
 
-        # Q_t = (Gamma_0 - phi_t @ Gamma_0 @ phi_t.T) ⊗ B,  phi_t = phi * I_M
-        # check if the phi is close to 1.0. If phi is close to 1.0, this means that there is no time difference.,
-        scale = 1.0 - phi**2
-        deterministic = scale <= 1e-8
-
-        # Full Gaussian density for the stochastic (phi < 1) case.
-        Q_gamma = jnp.maximum(scale, 1e-8) * params.gamma_0
-        Q_gamma = 0.5 * (Q_gamma + Q_gamma.T)  # ensure symmetry
-        Q_full = jnp.kron(Q_gamma, params.B)  # (2M, 2M)
-
-        diff_flat = diff.reshape(-1)  # (2M,)
-        quad = diff_flat @ jnp.linalg.solve(Q_full, diff_flat)
-        # slogdet is numerically stable (raw det() underflows to 0 in float32).
-        sign, log_det = jnp.linalg.slogdet(Q_full)
-        log_density = -0.5 * quad - 0.5 * log_det - 0.5 * dim * jnp.log(2 * jnp.pi)
-
-        return jnp.where(deterministic, 0.0, log_density)
-
-    transition_losses = jax.vmap(transition_step)(transition_indices, phis)
-    sum_transition_loss = -jnp.sum(transition_losses)
-
-    return sum_observation_loss + sum_transition_loss
 
 def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
     """Symmetrise a square matrix (for PSD-constrained params like gamma_0, B)."""
@@ -323,25 +307,25 @@ def _constrain(params: EMParams) -> EMParams:
         beta=params.beta,
     )
 
+
 def M_step(
-    smoothed_states: cuthbertlib.types.ArrayTree,
-    model_inputs: RBPFFootballResults,
+    model_inputs: FootballResults,
     prev_params: EMParams,
+    num_teams: int,
+    n_particles: int,
+    key: jax.Array,
     learning_rate: float,
-    n_gradient_steps: int
+    n_gradient_steps: int,
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
 
-    The loss is a sum over ~O(10^4) matches, so its magnitude is huge and a
-    single global learning rate either under- or over-shoots the different
-    parameter blocks (alpha/beta vs gamma_0/B/kappa live on very different
-    scales). We therefore:
-      1. use per-parameter learning rates via ``multi_transform``,
-      2. decay the LR with a cosine schedule over ``n_gradient_steps``,
-      3. run the full gradient budget (no premature early-stop) while tracking
-         the best params by a *relative* improvement threshold,
-      4. project the result back onto the valid (symmetric / non-neg) support.
+    The objective is the true marginal log-likelihood ``-log p(y | theta)``
+    (the filter's log-normalizing constant), so maximizing it is genuine EM and
+    the E-step log-marginal is guaranteed to improve.
+
+    ``key`` is fixed across the gradient loop so the particle-filter randomness
+    is the same for every gradient step (differentiable particle filter).
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
@@ -351,22 +335,19 @@ def M_step(
         gradient step.
     """
     # --- JIT-compiled value and gradient (over the 5 learned fields) ---
-    num_teams = prev_params.gamma_0.shape[0]
-
     def _loss_and_grad(carry):
         # Reconstruct a PD gamma_0 = L L^T from the free factor L.
         gamma_0 = _gamma0_from_cholesky(carry["L"], num_teams)
-        return loss_fn(
-            EMParams(
-                mean_0=prev_params.mean_0,
-                gamma_0=gamma_0,
-                B=carry["B"],
-                kappa=carry["kappa"],
-                alpha=carry["alpha"],
-                beta=carry["beta"],
-            ),
-            smoothed_states,
-            model_inputs,
+        params = EMParams(
+            mean_0=prev_params.mean_0,
+            gamma_0=gamma_0,
+            B=carry["B"],
+            kappa=carry["kappa"],
+            alpha=carry["alpha"],
+            beta=carry["beta"],
+        )
+        return marginal_loss_fn(
+            params, model_inputs, num_teams, n_particles, key
         )
 
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
@@ -387,11 +368,10 @@ def M_step(
     # different scales. alpha/beta dominate through the observation term, so
     # give them the base LR; gamma_0/B/kappa use smaller multipliers.
     base = learning_rate
-    # transition loss dominates compared to observation loss. scale gamma_0/B/kappa down to avoid overshooting.
     lr_mapping = {
-        "L": base * 0.03, # scale down for L (gamma_0) to avoid overshooting
-        "B": base * 0.03, # scale down for B to avoid overshooting
-        "kappa": base * 0.03, # scale down for kappa to avoid overshooting
+        "L": base * 0.5,
+        "B": base * 0.5,
+        "kappa": base * 1.0,
         "alpha": base * 1.0,
         "beta": base * 1.0,
     }
@@ -477,6 +457,7 @@ def M_step(
           f"beta={float(final.beta):.5f}")
     return final, loss_start, best_loss, loss_trace
 
+
 def run_EM(
     model_inputs: FootballResults,
     init_params: EMParams,
@@ -489,12 +470,12 @@ def run_EM(
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     key = jax.random.PRNGKey(42)
     params = init_params
-    
+
     # initialize gamma trajectory
     gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
-        model_inputs=model_inputs, 
-        gamma_0=params.gamma_0, 
-        kappa=params.kappa, 
+        model_inputs=model_inputs,
+        gamma_0=params.gamma_0,
+        kappa=params.kappa,
         num_teams=num_teams
     )
 
@@ -511,25 +492,27 @@ def run_EM(
     mstep_loss_traces = []  # full loss trajectory per epoch (every gradient step)
 
     for epoch in tqdm(range(n_epochs)):
-        key, e_key = jax.random.split(key)
+        key, e_key, m_key = jax.random.split(key, 3)
         # 1. run E step to get expected sufficient statistics
         print("    E-step: Running filtering and backward sampling...")
         _, smoothed_states, log_marginal = E_step(
-            params=params, 
-            model_inputs=augmented_results, 
+            params=params,
+            model_inputs=augmented_results,
             num_teams=num_teams,
             n_particles=n_particles,
             key=e_key
         )
         log_likelihood_history.append(log_marginal)
-        # 2. run M step to update parameters
+        # 2. run M step to update parameters (maximize -log p(y) via the filter)
         print("    M-step: Updating parameters...")
-        # assign the updated parameters to params for the next iteration
         params, loss_start, loss_best, loss_trace = M_step(
-            smoothed_states=smoothed_states, 
-            model_inputs=augmented_results, 
-            prev_params=params, 
-            learning_rate=learning_rate, n_gradient_steps=n_gradient_steps
+            model_inputs=model_inputs,
+            prev_params=params,
+            num_teams=num_teams,
+            n_particles=n_particles,
+            key=m_key,
+            learning_rate=learning_rate,
+            n_gradient_steps=n_gradient_steps,
         )
         # Track the M-step objective (loss = -log L) at the start, the best
         # point reached within this epoch, and the full per-step trajectory.
@@ -554,38 +537,18 @@ def run_EM(
     }
     return params, jnp.array(log_likelihood_history), em_diagnostics
 
+
 def main():
     data, model_inputs, team_id_to_name = get_results(
-        start_date="1950-01-01", 
-        end_date="2025-12-31", 
+        start_date="1950-01-01",
+        end_date="2025-12-31",
         max_goals=MAX_GOALS,
-        teams_only=WORLDCUP_2026_TEAMS, # ACTIVE_TEAMS
+        teams_only=WORLDCUP_2026_TEAMS,  # ACTIVE_TEAMS
     )
     NUM_TEAMS = len(team_id_to_name)
     key = jax.random.PRNGKey(42)
     params = default_init_params(NUM_TEAMS, team_id_to_name=team_id_to_name)
 
-    # gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
-    #     model_inputs=model_inputs, 
-    #     gamma_0=params.gamma_0, 
-    #     kappa=params.kappa, 
-    #     num_teams=NUM_TEAMS
-    # )
-    # augmented_results = generate_augmented_data(
-    #     model_inputs=model_inputs,
-    #     gamma_updated=gamma_updated,
-    #     gamma_pred=gamma_pred,
-    #     kalman_gain=kalman_gain
-    # )
-    
-    # smoothed_states = E_step(
-    #     params=params,
-    #     model_inputs=augmented_results,
-    #     num_teams=NUM_TEAMS,
-    #     n_particles=10,
-    #     key=key
-    # )
-    # print("Smoothed states shape:", smoothed_states.shape)
     try:
         final_params, log_marginal_likelihoods, em_diagnostics = run_EM(
             model_inputs=model_inputs,
@@ -611,6 +574,7 @@ def main():
 
     # plot log marginal likelihoods
     plot_log_likelihood_history(log_marginal_likelihoods.tolist(), output_path=output_path + "/log_marginal_likelihoods.png")
+
 
 if __name__ == "__main__":
     main()
