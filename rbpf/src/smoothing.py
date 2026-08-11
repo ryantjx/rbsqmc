@@ -170,7 +170,8 @@ def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFo
     n_observations = smoothed_states.shape[0]
     num_teams = smoothed_states.shape[1]
     K = smoothed_states.shape[2]  # 2 (attack/defence)
-    dim = num_teams * K  # total state dimension
+    # dim = num_teams * K  # total state dimension
+    dim = 2 * K
 
     observation_indices = jnp.arange(n_observations)
     transition_indices = jnp.arange(1, n_observations)
