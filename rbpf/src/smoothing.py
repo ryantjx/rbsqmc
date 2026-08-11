@@ -165,8 +165,7 @@ def E_step(
     )
     return filtered_states, smoothed_states, filtered_states.log_normalizing_constant[-1]
 
-def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFootballResults,
-            transition_weight: float = 1.0):
+def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFootballResults):
     n_observations = smoothed_states.shape[0]
     num_teams = smoothed_states.shape[1]
     K = smoothed_states.shape[2]  # 2 (attack/defence)
@@ -219,11 +218,7 @@ def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFo
     transition_losses = jax.vmap(transition_step)(transition_indices, phis)
     sum_transition_loss = -jnp.sum(transition_losses)
 
-    # transition_weight scales the transition term to match the observation
-    # term's magnitude. It is a hyperparameter (not optimized): tuning it lets
-    # the observation likelihood drive the M-step gradient instead of being
-    # swamped by the (much larger) Gaussian transition density.
-    return sum_observation_loss + transition_weight * sum_transition_loss
+    return sum_observation_loss + sum_transition_loss
 
 def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
     """Symmetrise a square matrix (for PSD-constrained params like gamma_0, B)."""
@@ -333,8 +328,7 @@ def M_step(
     model_inputs: RBPFFootballResults,
     prev_params: EMParams,
     learning_rate: float,
-    n_gradient_steps: int,
-    transition_weight: float = 1.0
+    n_gradient_steps: int
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
@@ -348,9 +342,6 @@ def M_step(
       3. run the full gradient budget (no premature early-stop) while tracking
          the best params by a *relative* improvement threshold,
       4. project the result back onto the valid (symmetric / non-neg) support.
-
-    ``transition_weight`` scales the transition loss term (a hyperparameter,
-    not optimized) so the observation term can drive the gradient.
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
@@ -376,7 +367,6 @@ def M_step(
             ),
             smoothed_states,
             model_inputs,
-            transition_weight=transition_weight,
         )
 
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
@@ -397,10 +387,11 @@ def M_step(
     # different scales. alpha/beta dominate through the observation term, so
     # give them the base LR; gamma_0/B/kappa use smaller multipliers.
     base = learning_rate
+    # transition loss dominates compared to observation loss. scale gamma_0/B/kappa down to avoid overshooting.
     lr_mapping = {
-        "L": base * 0.5,
-        "B": base * 0.5,
-        "kappa": base * 1.0,
+        "L": base * 0.03, # scale down for L (gamma_0) to avoid overshooting
+        "B": base * 0.03, # scale down for B to avoid overshooting
+        "kappa": base * 0.03, # scale down for kappa to avoid overshooting
         "alpha": base * 1.0,
         "beta": base * 1.0,
     }
@@ -494,12 +485,10 @@ def run_EM(
     n_epochs: int = 10,
     n_gradient_steps: int = 10,
     learning_rate: float = 1e-3,
-    transition_weight: float = 1.0,
     key: jax.Array = jax.random.PRNGKey(42)
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     key = jax.random.PRNGKey(42)
     params = init_params
-    transition_weight = float(transition_weight)
     
     # initialize gamma trajectory
     gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
@@ -540,8 +529,7 @@ def run_EM(
             smoothed_states=smoothed_states, 
             model_inputs=augmented_results, 
             prev_params=params, 
-            learning_rate=learning_rate, n_gradient_steps=n_gradient_steps,
-            transition_weight=transition_weight
+            learning_rate=learning_rate, n_gradient_steps=n_gradient_steps
         )
         # Track the M-step objective (loss = -log L) at the start, the best
         # point reached within this epoch, and the full per-step trajectory.
