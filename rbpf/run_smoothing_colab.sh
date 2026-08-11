@@ -27,7 +27,8 @@ print(c.get('$1', ''))
 # config output_dir is repo-root-relative (e.g. "rbpf/outputs_gpu").
 REMOTE_OUTPUTS="/content/rbsqmc/$(read_config output_dir)"
 LOCAL_OUTPUTS="${REPO_ROOT}/$(read_config output_dir)"
-SCRIPT="smoothing_gpu.py"
+# Full path to the script so `colab run` can upload it regardless of cwd.
+SCRIPT="${HERE}/smoothing_gpu.py"
 SESSION="${SESSION:-rbsqmc-gpu}"
 
 # Download init, final, and log marginal history
