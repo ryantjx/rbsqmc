@@ -15,9 +15,16 @@ Defaults:
 
 import argparse
 import os
+import sys
 
 import jax
 import jax.numpy as jnp
+
+# Ensure the repo root is importable even when this file is run directly as a
+# script (in which case sys.path[0] is the script's own directory, not the root).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from rbpf.src.data import get_results, WORLDCUP_2026_TEAMS
 from rbpf.src.helpers import load_params, generate_augmented_data
