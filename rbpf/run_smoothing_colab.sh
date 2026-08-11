@@ -83,39 +83,8 @@ echo "--- Output files ---"
 ls -lh "${LOCAL_OUTPUTS}"/ 2>/dev/null || echo "  No output files found"
 echo ""
 
-FINAL="${LOCAL_OUTPUTS}/em_params_final.json"
-if [ -f "$FINAL" ]; then
-    echo "--- Final parameters ---"
-    python3 -c "
-import json
-with open('$FINAL') as fh:
-    p = json.load(fh)
-print(f\"  kappa = {p['kappa']} [ESTIMATED]\")
-print(f\"  alpha = {p['alpha']} [ESTIMATED]\")
-print(f\"  beta = {p['beta']} [ESTIMATED]\")
-print(f\"  B shape = {len(p['B'])}x{len(p['B'][0])} [ESTIMATED]\")
-print(f\"  gamma_0 shape = {len(p['gamma_0'])}x{len(p['gamma_0'][0])} [ESTIMATED]\")
-print(f\"  mean_0 shape = {len(p['mean_0'])}x{len(p['mean_0'][0])} [FIXED]\")
-"
-    echo ""
-else
-    echo "WARNING: em_params_final.json not found!"
-fi
-
-HIST="${LOCAL_OUTPUTS}/em_log_marginal_history.json"
-if [ -f "$HIST" ]; then
-    echo "--- Log marginal history ---"
-    python3 -c "
-import json
-with open('$HIST') as fh:
-    h = json.load(fh)
-print(f'  epochs: {len(h)}')
-print(f'  values: {h}')
-"
-    echo ""
-else
-    echo "WARNING: em_log_marginal_history.json not found!"
-fi
+# NOTE: final parameters + log-marginal history are already printed on the VM
+# by smoothing_gpu.py's print_summary(), so they are not repeated here.
 
 echo "[5/5] Running filter with trained params and producing graphics..."
 
