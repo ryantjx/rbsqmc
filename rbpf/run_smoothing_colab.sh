@@ -88,7 +88,9 @@ echo ""
 
 echo "[5/5] Running filter with trained params and producing graphics..."
 
-GRAPHIC_OUTDIR="${GRAPHIC_OUTDIR:-${REPO_ROOT}/rbpf/outputs/smoothed}"
+# Graphics go into the same outputs_gpu dir, under a `trained/` subfolder
+# (matching the archive convention), so all pipeline outputs stay together.
+GRAPHIC_OUTDIR="${GRAPHIC_OUTDIR:-${LOCAL_OUTPUTS}/trained}"
 
 # The Colab runner writes em_params_final.json into the GPU output dir. Use it
 # as the trained params unless the caller overrides PARAMS_PATH.
@@ -106,4 +108,30 @@ else
     echo "  WARNING: ${TRAINED_PARAMS} not found; skipping filter/graphics step"
 fi
 
-echo "[5/5] Done. Outputs saved under ${LOCAL_OUTPUTS}/"
+# --- Final status report ---
+echo ""
+echo "============================================================"
+echo "  PIPELINE COMPLETE — STATUS"
+echo "============================================================"
+echo "  Session:        ${SESSION} (${ACCEL_LABEL})"
+echo "  EM params:      ${LOCAL_OUTPUTS}/em_params_{init,final}.json"
+echo "  Log marginal:   ${LOCAL_OUTPUTS}/em_log_marginal_history.json"
+echo ""
+echo "  EM output files:"
+for f in "${OUTPUT_FILES[@]}"; do
+    if [ -f "${LOCAL_OUTPUTS}/${f}" ]; then
+        echo "    [OK]   ${f}"
+    else
+        echo "    [MISS] ${f}"
+    fi
+done
+echo ""
+echo "  Graphics:"
+if [ -d "${GRAPHIC_OUTDIR}" ]; then
+    for img in "${GRAPHIC_OUTDIR}"/*.png; do
+        [ -f "$img" ] && echo "    [OK]   $(basename "${img}")"
+    done
+else
+    echo "    [MISS] no graphics in ${GRAPHIC_OUTDIR}"
+fi
+echo "============================================================"

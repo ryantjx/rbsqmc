@@ -42,13 +42,60 @@ _REPO_ROOT = os.path.dirname(_HERE)
 # script (in which case sys.path[0] is the script's own directory, not the root).
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-CONFIG_PATH = os.path.join(_HERE, "smoothing_gpu_config.json")
-with open(CONFIG_PATH, "r") as _f:
-    CONFIG = json.load(_f)
 
-REPO_URL = str(CONFIG["repo_url"])
 REPO_DIR = "/content/rbsqmc"
 RBPF_DIR = os.path.join(REPO_DIR, "rbpf")
+
+# Defaults so the module imports even when the config file is absent (which is
+# the case on a fresh Colab VM, where `colab run` uploads only this script).
+_DEFAULT_CONFIG = {
+    "N": 1000,
+    "n_epochs": 5,
+    "n_gradient_steps": 5,
+    "learning_rate": 0.01,
+    "start_date": "1950-01-01",
+    "end_date": "2025-12-31",
+    "teams": "ACTIVE_TEAMS",
+    "max_goals": 8,
+    "output_dir": "rbpf/outputs_gpu",
+    "hardware": "gpu",
+    "gpu_type": "T4",
+    "tpu_type": "v5e1",
+    "colab_timeout": 3600,
+    "repo_url": "https://github.com/ryantjx/rbsqmc.git",
+}
+CONFIG_PATH = os.path.join(_HERE, "smoothing_gpu_config.json")
+
+
+def _candidate_config_paths() -> list[str]:
+    """Locations to look for the config file, in priority order.
+
+    ``_HERE`` is the directory of this uploaded script (used locally). After
+    ``bootstrap`` clones the repo on Colab, the config also lives at
+    ``RBPF_DIR``; checking both lets us pick up the committed config.
+    """
+    paths = [CONFIG_PATH]
+    if os.path.abspath(RBPF_DIR) != os.path.abspath(_HERE):
+        paths.append(os.path.join(RBPF_DIR, "smoothing_gpu_config.json"))
+    return paths
+
+
+def _load_config() -> dict:
+    """Load the config JSON, falling back to defaults if it is unavailable.
+
+    On a fresh Colab VM the config file is not present until the repo has been
+    cloned (in ``bootstrap``), so we must tolerate it being missing here and
+    re-load it once the repo is on disk.
+    """
+    for path in _candidate_config_paths():
+        if os.path.exists(path):
+            with open(path, "r") as _f:
+                return json.load(_f)
+    return dict(_DEFAULT_CONFIG)
+
+
+CONFIG = _load_config()
+REPO_URL = str(CONFIG["repo_url"])
 OUTPUT_DIR = os.path.join(_REPO_ROOT, CONFIG["output_dir"])
 
 DEPS = [
@@ -130,6 +177,14 @@ def bootstrap():
     else:
         os.chdir(_HERE)
     log(f"Working directory: {os.getcwd()}")
+
+    # Reload the config now that the repo (and its config JSON) is on disk,
+    # so the values that were committed to the repo take precedence over the
+    # in-script defaults used during the initial (config-less) import.
+    global CONFIG, OUTPUT_DIR
+    CONFIG = _load_config()
+    OUTPUT_DIR = os.path.join(_REPO_ROOT, CONFIG["output_dir"])
+    log(f"Configuration reloaded from {CONFIG_PATH}")
 
 
 # ---------------------------------------------------------------------------

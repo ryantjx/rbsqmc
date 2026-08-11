@@ -38,6 +38,10 @@ ENV/
 
 # Data files
 *.npz
+
+# Generated pipeline outputs
+rbpf/outputs_gpu/
+rbpf/outputs/smoothed/
 *.npy
 *.pkl
 *.h5
