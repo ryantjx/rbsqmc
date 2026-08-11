@@ -116,9 +116,14 @@ def smoother_rts(
         Gamma_RTS = 0.5 * (Gamma_RTS + Gamma_RTS.T)  # Ensure symmetry
         Sigma_RTS = jnp.kron(Gamma_RTS, params.B)  # (2M, 2M)
 
-        X_t_star = _sample_psd_gaussian(
+        # Deterministic transition when dt = 0 (phi = I, Q = 0): the state is
+        # preserved, so X_t^* = X_{t+1}^* with no sampling (consistent with the
+        # zero-stochastic-cost handling in loss_fn's transition_step).
+        deterministic = dt == 0.0
+        X_t_sampled = _sample_psd_gaussian(
             sample_key, mu_RTS.flatten(), Sigma_RTS
         ).reshape(num_teams, K)  # (M, 2)
+        X_t_star = jnp.where(deterministic, X_next_star, X_t_sampled)
         return (X_t_star, key), X_t_star
 
     xs_particles = filtered_states.particles.x[:-1]       # (T-1, N, M, K)
@@ -204,23 +209,26 @@ def loss_fn(params: EMParams, smoothed_states: jnp.ndarray, model_inputs: RBPFFo
         diff = smoothed_states[observation_index] - pred_mean  # (M, K)
 
         # Q_t = (Gamma_0 - phi_t @ Gamma_0 @ phi_t.T) ⊗ B,  phi_t = phi * I_M
-        # (1 - phi^2) >= 0 always (phi = exp(-kappa dt) <= 1). It is exactly 0
-        # when phi = 1 (dt = 0, consecutive same-timestamp matches), which makes
-        # Q singular and solve()/slogdet() return inf/nan. Clamp the scale to a
-        # small positive floor as a float32 underflow guard — this is NOT an
-        # added structural covariance (Q_gamma is PD wherever phi < 1).
-        scale = jnp.clip(1.0 - phi**2, 1e-6, None)
-        Q_gamma = scale * params.gamma_0
+        # (1 - phi^2) >= 0 always (phi = exp(-kappa dt) <= 1). When phi = 1
+        # (dt = 0, two matches on the same day), the transition noise Q = 0:
+        # the transition is deterministic (X_t = X_{t-1}) and its log-density is
+        # 0 — there is no stochastic cost to pay. Returning 0 avoids the
+        # solve()/slogdet() inf/nan from inverting a singular Q.
+        scale = 1.0 - phi**2
+        deterministic = scale <= 1e-8
+
+        # Full Gaussian density for the stochastic (phi < 1) case.
+        Q_gamma = jnp.maximum(scale, 1e-8) * params.gamma_0
         Q_gamma = 0.5 * (Q_gamma + Q_gamma.T)  # ensure symmetry
         Q_full = jnp.kron(Q_gamma, params.B)  # (2M, 2M)
 
         diff_flat = diff.reshape(-1)  # (2M,)
         quad = diff_flat @ jnp.linalg.solve(Q_full, diff_flat)
-        # Use slogdet for a numerically stable log-determinant: the raw det()
-        # underflows to 0.0 in float32 for these high-dimensional matrices,
-        # making log(det) = -inf. sign is +1 for PSD Q.
+        # slogdet is numerically stable (raw det() underflows to 0 in float32).
         sign, log_det = jnp.linalg.slogdet(Q_full)
-        return -0.5 * quad - 0.5 * log_det - 0.5 * dim * jnp.log(2 * jnp.pi)
+        log_density = -0.5 * quad - 0.5 * log_det - 0.5 * dim * jnp.log(2 * jnp.pi)
+
+        return jnp.where(deterministic, 0.0, log_density)
 
     transition_losses = jax.vmap(transition_step)(transition_indices, phis)
     sum_transition_loss = -jnp.sum(transition_losses)
