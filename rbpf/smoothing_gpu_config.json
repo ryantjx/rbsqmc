@@ -1,5 +1,5 @@
 {
-  "N": 500,
+  "N": 200,
   "n_epochs": 15,
   "n_gradient_steps": 50,
   "learning_rate": 0.01,
@@ -9,7 +9,7 @@
   "max_goals": 8,
   "output_dir": "rbpf/outputs_gpu",
   "hardware": "gpu",
-  "gpu_type": "A100",
+  "gpu_type": "T4",
   "tpu_type": "v6e1",
   "high_ram": true,
   "colab_timeout": 3600,
