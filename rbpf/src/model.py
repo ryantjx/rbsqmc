@@ -26,6 +26,27 @@ def init_sample(
 ) -> RBPFState:
     return RBPFState(x=init_mean)
 
+
+def _sample_psd_gaussian(
+    key: jax.Array,
+    mean: jax.Array,
+    covariance: jax.Array,
+) -> jax.Array:
+    """Sample from a PSD Gaussian, preserving exact zero-variance directions.
+
+    The RBPF covariances (Gamma \u2297 B) are positive-semidefinite, not
+    positive-definite: observed teams have exact zero covariance per
+    ALGORITHM.md \u00a74.1.1. `jax.random.multivariate_normal` (Cholesky-based)
+    returns NaN on such singular matrices. Here we eigendecompose, clip tiny
+    eigenvalues to zero, and sample noise only in the nonzero-variance
+    directions \u2014 observed (zero-variance) teams stay exactly at their mean.
+    """
+    covariance = 0.5 * (covariance + covariance.T)
+    eigvals, eigvecs = jnp.linalg.eigh(covariance)
+    eigvals = jnp.clip(eigvals, 0.0)
+    noise = jax.random.normal(key, mean.shape)
+    return mean + eigvecs @ (jnp.sqrt(eigvals) * noise)
+
 def propagate_sample(
         key: jax.Array, 
         state: RBPFState, 
@@ -45,13 +66,13 @@ def propagate_sample(
     # 2. Sample for observed teams
     mu_E = pred_mean[obs_indices]                              # (2, 2)
     gamma_EE = pred_gamma[jnp.ix_(obs_indices, obs_indices)]   # (2, 2)
-    # Add jitter to prevent singular gamma_EE when dt=0 and teams were observed
-    # in the previous step (zeroed rows make gamma_EE singular)
-    gamma_EE = gamma_EE + 1e-6 * jnp.eye(gamma_EE.shape[0])
     Sigma_EE = jnp.kron(gamma_EE, B)                      # (4, 4)
 
     key, subkey = jax.random.split(key)
-    x_E_flat = jax.random.multivariate_normal(subkey, mu_E.flatten(), Sigma_EE)
+    # PSD-aware sampler: handles singular gamma_EE (dt=0 consecutive matches
+    # where a team's posterior covariance was zeroed) without jitter. Zero-
+    # variance directions stay exactly at the mean.
+    x_E_flat = _sample_psd_gaussian(subkey, mu_E.flatten(), Sigma_EE)
     x_E = x_E_flat.reshape(mu_E.shape)                         # (2, 2)
 
     # 3. Kalman update for ALL teams (vmap-safe, no setdiff1d)

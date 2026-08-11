@@ -5,7 +5,11 @@ import numpy as np
 from rbpf.src.utils import RBPFFootballResults, EMParams, FootballResults
 from rbpf.src.data import WORLDCUP_2026_TEAMS, get_results, ACTIVE_TEAMS
 from rbpf.src.helpers import default_init_params, generate_augmented_data, params_to_dict
-from rbpf.src.model import run_filter, compute_gamma_trajectory
+from rbpf.src.model import (
+    run_filter,
+    compute_gamma_trajectory,
+    _sample_psd_gaussian,
+)
 from rbpf.src.bivariate_poisson import loglik
 
 import os
@@ -23,29 +27,6 @@ jax.config.update(
 
 MAX_GOALS = 8
 N = 100
-
-
-def _sample_psd_gaussian(
-    key: jax.Array,
-    mean: jax.Array,
-    covariance: jax.Array,
-) -> jax.Array:
-    """Sample from a PSD Gaussian, preserving exact zero-variance directions.
-
-    The RBPF smoothing covariances (Gamma ⊗ B) are positive-semidefinite, not
-    positive-definite: observed teams have exact zero covariance per
-    ALGORITHM.md §4.1.1. `jax.random.multivariate_normal` (Cholesky-based)
-    returns NaN on such singular matrices. Here we eigendecompose, clip tiny
-    eigenvalues to zero, and sample noise only in the nonzero-variance
-    directions — observed (zero-variance) teams stay exactly at their mean.
-
-    We are sampling from a covariance matrix that has 0 for some covariances.
-    """
-    covariance = 0.5 * (covariance + covariance.T)
-    eigvals, eigvecs = jnp.linalg.eigh(covariance)
-    eigvals = jnp.clip(eigvals, 0.0)
-    noise = jax.random.normal(key, mean.shape)
-    return mean + eigvecs @ (jnp.sqrt(eigvals) * noise)
 
 
 def smoother_rts(
