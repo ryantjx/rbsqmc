@@ -36,7 +36,9 @@ import time
 # ---------------------------------------------------------------------------
 # Shared configuration (single source of truth)
 # ---------------------------------------------------------------------------
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# ``colab run`` executes this file as notebook cells, where ``__file__`` is
+# undefined. Fall back to the current working directory in that case.
+_HERE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 _REPO_ROOT = os.path.dirname(_HERE)
 # Ensure the repo root is importable even when this file is run directly as a
 # script (in which case sys.path[0] is the script's own directory, not the root).
@@ -96,7 +98,21 @@ def _load_config() -> dict:
 
 CONFIG = _load_config()
 REPO_URL = str(CONFIG["repo_url"])
-OUTPUT_DIR = os.path.join(_REPO_ROOT, CONFIG["output_dir"])
+
+
+def _repo_root() -> str:
+    """Repository root for the current environment.
+
+    Locally ``_REPO_ROOT`` is the parent of this script's directory. On a Colab
+    VM the repo is cloned to ``REPO_DIR`` (``/content/rbsqmc``) and the working
+    directory is moved there during ``bootstrap``, so that is the true root.
+    """
+    if os.path.exists(os.path.join(REPO_DIR, "rbpf")):
+        return REPO_DIR
+    return _REPO_ROOT
+
+
+OUTPUT_DIR = os.path.join(_repo_root(), CONFIG["output_dir"])
 
 DEPS = [
     "jax", "jaxlib", "numpy", "scipy", "polars", "pandas",
@@ -174,6 +190,11 @@ def bootstrap():
 
     if os.path.exists(RBPF_DIR):
         os.chdir(RBPF_DIR)
+        # Make the cloned repo importable (``import rbpf`` needs the repo root,
+        # which is REPO_DIR on Colab, not the notebook's /content).
+        for p in (REPO_DIR, RBPF_DIR):
+            if p not in sys.path:
+                sys.path.insert(0, p)
     else:
         os.chdir(_HERE)
     log(f"Working directory: {os.getcwd()}")
@@ -183,7 +204,7 @@ def bootstrap():
     # in-script defaults used during the initial (config-less) import.
     global CONFIG, OUTPUT_DIR
     CONFIG = _load_config()
-    OUTPUT_DIR = os.path.join(_REPO_ROOT, CONFIG["output_dir"])
+    OUTPUT_DIR = os.path.join(_repo_root(), CONFIG["output_dir"])
     log(f"Configuration reloaded from {CONFIG_PATH}")
 
 
