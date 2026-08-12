@@ -152,7 +152,15 @@ def main():
     team_names = [team_id_to_name[i] for i in range(NUM_TEAMS)]
     np.save(os.path.join(args.output_dir, "team_names.npy"), np.array(team_names))
 
+    # --- Export final filter states to CSV (team_name, attack, defence) ---
+    csv_path = os.path.join(args.output_dir, "final_filter_states.csv")
+    with open(csv_path, "w") as f:
+        f.write("team_name,attack,defence\n")
+        for name, a, d in zip(team_names, final_mean[:, 0], final_mean[:, 1]):
+            f.write(f"{name},{a:.6f},{d:.6f}\n")
+
     print(f"Saved final filter states and correlation matrix under {args.output_dir}/")
+    print(f"Saved CSV: {csv_path}")
     print(f"Graphics saved under {args.output_dir}/")
 
 
