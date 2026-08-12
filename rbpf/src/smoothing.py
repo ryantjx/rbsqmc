@@ -1,3 +1,5 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -31,7 +33,7 @@ N = 100
 # Averaging the complete-data log-likelihood over these reduces the Monte Carlo
 # noise of the 1-sample estimate (which was the root cause of the M-step being
 # "stuck at step 0").
-N_TRAJECTORIES = 30
+N_TRAJECTORIES = 10
 
 
 def _smoother_rts_single(
@@ -60,6 +62,11 @@ def _smoother_rts_single(
     X_T_STAR = _sample_psd_gaussian(
         sample_key, mu_T.flatten(), Sigma_T
     ).reshape(num_teams, K)  # (M, 2)
+
+    # Derive a fresh key for the backward pass so the terminal draw and the
+    # backward trajectory are not correlated (reusing sample_key would make the
+    # first backward split depend on the already-consumed terminal key).
+    key, backward_key = jax.random.split(key)
 
     # 2. Backward Sampling
     def backward_sampling(carry, xs):
@@ -111,11 +118,18 @@ def _smoother_rts_single(
         # Deterministic transition when dt = 0 (phi = I, Q = 0): the state is
         # preserved, so X_t^* = X_{t+1}^* with no sampling (consistent with the
         # zero-stochastic-cost handling in loss_fn's transition_step).
+        # Use lax.cond so the sampling branch (which inverts Sigma_RTS) is only
+        # executed when dt > 0 -- jnp.where would compute BOTH branches and can
+        # produce NaN from a singular Sigma_RTS even when the result is discarded.
         deterministic = dt == 0.0
-        X_t_sampled = _sample_psd_gaussian(
-            sample_key, mu_RTS.flatten(), Sigma_RTS
-        ).reshape(num_teams, K)  # (M, 2)
-        X_t_star = jnp.where(deterministic, X_next_star, X_t_sampled)
+        X_t_star = jax.lax.cond(
+            deterministic,
+            lambda _: X_next_star,  # dt == 0: preserve the state exactly
+            lambda _: _sample_psd_gaussian(
+                sample_key, mu_RTS.flatten(), Sigma_RTS
+            ).reshape(num_teams, K),  # dt > 0: sample from the RTS posterior
+            operand=sample_key,
+        )
         return (X_t_star, key), X_t_star
 
     xs_particles = filtered_states.particles.x[:-1]       # (T-1, N, M, K)
@@ -126,7 +140,7 @@ def _smoother_rts_single(
     xs_timestamp_prev_tplus1 = model_inputs.timestamp_prev[1:]  # (T-1,)
     _, smoothed_rest = jax.lax.scan(
         f=backward_sampling,
-        init=(X_T_STAR, sample_key),
+        init=(X_T_STAR, backward_key),
         xs=(xs_particles, xs_log_weights, xs_gamma_t, xs_gamma_pred_tplus1,
             xs_timestamp_tplus1, xs_timestamp_prev_tplus1),
         reverse=True
@@ -137,7 +151,7 @@ def _smoother_rts_single(
     )  # (T, M, 2)
     return smoothed_states
 
-
+@partial(jax.jit, static_argnames=("n_trajectories",))
 def smoother_rts(
     filtered_states: cuthbertlib.types.ArrayTree,
     model_inputs: RBPFFootballResults,
@@ -164,7 +178,7 @@ def smoother_rts(
 
 def E_step(
     params: EMParams,
-    model_inputs: RBPFFootballResults,
+    model_inputs: FootballResults,
     num_teams: int,
     n_particles: int,
     key: jax.Array,
@@ -179,6 +193,21 @@ def E_step(
           f"n_trajectories = {n_trajectories}")
     print(f"  Start time: {model_inputs.timestamp[0]}, End time: {model_inputs.timestamp[-1]}")
 
+    # initialize gamma trajectory
+    gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
+        model_inputs=model_inputs,
+        gamma_0=params.gamma_0,
+        kappa=params.kappa,
+        num_teams=num_teams
+    )
+
+    augmented_results = generate_augmented_data(
+        model_inputs=model_inputs,
+        gamma_updated=gamma_updated,
+        gamma_pred=gamma_pred,
+        kalman_gain=kalman_gain
+    )
+
     filtered_states, _ = run_filter(
         key=filter_key,
         model_inputs=model_inputs,
@@ -188,13 +217,13 @@ def E_step(
     )
     smoothed_states = smoother_rts(
         filtered_states=filtered_states,
-        model_inputs=model_inputs,
+        model_inputs=augmented_results,
         params=params,
         num_teams=num_teams,
         key=smoother_key,
         n_trajectories=n_trajectories,
     )
-    return filtered_states, smoothed_states, filtered_states.log_normalizing_constant[-1]
+    return filtered_states, smoothed_states, filtered_states.log_normalizing_constant[-1], augmented_results
 
 
 def _complete_log_likelihood(
@@ -233,6 +262,7 @@ def _complete_log_likelihood(
     # Transition log-likelihood: sum_t log p(x_t | x_{t-1})  (OU, Kronecker cov)
     dts = model_inputs.timestamp[transition_indices] - model_inputs.timestamp_prev[transition_indices]
     phis = jnp.exp(-params.kappa * dts)  # scalar phi_t = exp(-kappa*dt), I_M implied
+    dim = num_teams * K  # FULL state dimension (was dim_obs = 2*K)
 
     def transition_step(observation_index, phi):
         pred_mean = params.mean_0 + phi * (X[observation_index - 1] - params.mean_0)  # (M, K)
@@ -241,29 +271,21 @@ def _complete_log_likelihood(
         scale = 1.0 - phi**2
         deterministic = scale <= 1e-8
 
-        # Observed teams only: home and away.
-        obs_idx = jnp.array([
-            model_inputs.home_team_id[observation_index],
-            model_inputs.away_team_id[observation_index],
-        ])
+        # Full transition covariance: Q = scale * (gamma_0 ⊗ B)  (M*K, M*K)
+        Q_gamma = jnp.maximum(scale, 1e-8) * params.gamma_0
+        Q_gamma = 0.5 * (Q_gamma + Q_gamma.T)  # ensure symmetry
+        Q = jnp.kron(Q_gamma, params.B)  # (M*K, M*K)
 
-        # 4x4 transition covariance for the two observed teams:
-        # Q_obs = scale * (gamma_0[obs, obs] ⊗ B)
-        Q_gamma_obs = jnp.maximum(scale, 1e-8) * params.gamma_0[jnp.ix_(obs_idx, obs_idx)]
-        Q_gamma_obs = 0.5 * (Q_gamma_obs + Q_gamma_obs.T)  # ensure symmetry
-        Q_obs = jnp.kron(Q_gamma_obs, params.B)  # (4, 4)
-
-        diff_obs = diff[obs_idx].reshape(-1)  # (4,)
-        quad = diff_obs @ jnp.linalg.solve(Q_obs, diff_obs)
-        sign, log_det = jnp.linalg.slogdet(Q_obs)
-        log_density = -0.5 * quad - 0.5 * log_det - 0.5 * dim_obs * jnp.log(2 * jnp.pi)
+        diff_flat = diff.reshape(-1)  # (M*K,)
+        quad = diff_flat @ jnp.linalg.solve(Q, diff_flat)
+        sign, log_det = jnp.linalg.slogdet(Q)
+        log_density = -0.5 * quad - 0.5 * log_det - 0.5 * dim * jnp.log(2 * jnp.pi)
 
         return jnp.where(deterministic, 0.0, log_density)
 
     transition_ll = jnp.sum(jax.vmap(transition_step)(transition_indices, phis))
 
     return obs_ll + transition_ll
-
 
 def loss_fn(
     params: EMParams,
@@ -444,9 +466,9 @@ def M_step(
     base = learning_rate
     # transition loss dominates compared to observation loss. scale gamma_0/B/kappa down to avoid overshooting.
     lr_mapping = {
-        "L": base * 0.03,  # scale down for L (gamma_0) to avoid overshooting
-        "B": base * 0.03,  # scale down for B to avoid overshooting
-        "kappa": base * 0.03,  # scale down for kappa to avoid overshooting
+        "L": base * 1,  # scale down for L (gamma_0) to avoid overshooting
+        "B": base * 1,  # scale down for B to avoid overshooting
+        "kappa": base * 1,  # scale down for kappa to avoid overshooting
         "alpha": base * 1.0,
         "beta": base * 1.0,
     }
@@ -467,55 +489,39 @@ def M_step(
     optimizer = optax.chain(
         optax.multi_transform(transforms, param_labels),
         optax.scale_by_schedule(
-            optax.cosine_decay_schedule(-1.0, n_gradient_steps)
+            optax.cosine_decay_schedule(1.0, n_gradient_steps)
         ),
     )
     opt_state = optimizer.init(carry)
 
-    # --- Gradient descent loop ---
-    best_loss = None
-    best_carry = carry
-    best_step = -1
-    loss_start = None  # objective at prev_params (start of the M-step)
-    loss_trace = []    # objective at every gradient step (for diagnostics)
-    patience = max(10, n_gradient_steps // 5)
-    no_improve_counter = 0
-
-    for step in range(n_gradient_steps):
-        loss, grads = value_and_grad_fn(carry)
-        loss_val = float(loss)
-        loss_trace.append(loss_val)
-
-        # First evaluation is the objective at the starting params.
-        if loss_start is None:
-            loss_start = loss_val
-
-        updates, opt_state = optimizer.update(grads, opt_state, carry)
-        carry = optax.apply_updates(carry, updates)
+    # --- JIT-compiled gradient-descent loop (single lax.scan) ---
+    # The whole M-step optimization runs inside one jit via lax.scan, so there
+    # is no Python-level loop. The scan carries the optimizer state, the current
+    # params, the best params seen so far, and the best loss. Trade-off vs. the
+    # old Python loop: scan runs all n_gradient_steps (no early break), but it
+    # tracks the best point and the full loss trace.
+    def _step(carry, step):
+        opt_state, params_carry, best_carry, best_loss = carry
+        loss, grads = value_and_grad_fn(params_carry)
+        updates, opt_state = optimizer.update(grads, opt_state, params_carry)
+        params_carry = optax.apply_updates(params_carry, updates)
 
         # Track best by relative improvement (loss is ~1e4, so absolute tol
         # would never fire; use a relative threshold).
-        improved = (best_loss is None) or (loss_val < best_loss * (1 - 1e-4))
-        if improved:
-            best_loss = loss_val
-            best_carry = carry
-            best_step = step
-            no_improve_counter = 0
-        else:
-            no_improve_counter += 1
+        improved = loss < best_loss * (1 - 1e-4)
+        best_carry = jax.tree.map(
+            lambda b, p: jnp.where(improved, p, b), best_carry, params_carry
+        )
+        best_loss = jnp.where(improved, loss, best_loss)
+        return (opt_state, params_carry, best_carry, best_loss), loss
 
-        if step % 10 == 0 or step == n_gradient_steps - 1:
-            print(f"      M-step [{step:3d}/{n_gradient_steps}] loss={loss_val:.4f}")
-
-        # Only early-stop once we've had some movement; require the loss to
-        # actually be improving relative to the best seen so far.
-        if no_improve_counter >= patience and best_step >= 5:
-            print(f"      M-step early stop at step {step} (no relative improvement "
-                  f"for {patience} steps); best at step {best_step}.")
-            break
-
-    if best_loss is None:
-        best_carry = carry
+    init_carry = (opt_state, carry, carry, jnp.inf)
+    (_, _, best_carry, best_loss), loss_trace = jax.lax.scan(
+        _step, init_carry, jnp.arange(n_gradient_steps)
+    )
+    loss_trace = jnp.asarray(loss_trace)  # (n_gradient_steps,)
+    loss_start = loss_trace[0]            # objective at prev_params
+    loss_best = best_loss                 # best objective over the M-step
 
     # Reconstruct gamma_0 from the best free factor L and project onto support.
     best_gamma_0 = _gamma0_from_cholesky(best_carry["L"], num_teams)
@@ -527,10 +533,11 @@ def M_step(
         alpha=best_carry["alpha"],
         beta=best_carry["beta"],
     ))
-    print(f"      M-step done: loss {best_loss:.4f} -> best at step {best_step}, "
+    best_step = int(jnp.argmin(loss_trace))
+    print(f"      M-step done: loss {float(loss_best):.4f} -> best at step {best_step}, "
           f"kappa={float(final.kappa):.5f} alpha={float(final.alpha):.5f} "
           f"beta={float(final.beta):.5f}")
-    return final, loss_start, best_loss, loss_trace
+    return final, float(loss_start), float(loss_best), loss_trace
 
 
 def run_EM(
@@ -544,23 +551,7 @@ def run_EM(
     n_trajectories: int = N_TRAJECTORIES,
     key: jax.Array = jax.random.PRNGKey(42)
 ) -> tuple[EMParams, jnp.ndarray, dict]:
-    key = jax.random.PRNGKey(42)
     params = init_params
-
-    # initialize gamma trajectory
-    gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
-        model_inputs=model_inputs,
-        gamma_0=params.gamma_0,
-        kappa=params.kappa,
-        num_teams=num_teams
-    )
-
-    augmented_results = generate_augmented_data(
-        model_inputs=model_inputs,
-        gamma_updated=gamma_updated,
-        gamma_pred=gamma_pred,
-        kalman_gain=kalman_gain
-    )
 
     log_likelihood_history = []
     mstep_start_history = []
@@ -571,9 +562,9 @@ def run_EM(
         key, e_key = jax.random.split(key)
         # 1. run E step to get M smoothed trajectories
         print("    E-step: Running filtering and backward sampling...")
-        _, smoothed_trajectories, log_marginal = E_step(
+        _, smoothed_trajectories, log_marginal, augmented_results = E_step(
             params=params,
-            model_inputs=augmented_results,
+            model_inputs=model_inputs,
             num_teams=num_teams,
             n_particles=n_particles,
             key=e_key,

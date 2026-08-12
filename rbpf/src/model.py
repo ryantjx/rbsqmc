@@ -124,6 +124,7 @@ def build_rbpf_filter(
     )
     return rbpf
 
+@partial(jax.jit, static_argnames=("num_teams",))
 def compute_gamma_trajectory(
         model_inputs: FootballResults, 
         gamma_0: jnp.ndarray, 

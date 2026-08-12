@@ -128,6 +128,8 @@ The conditions for the Kronecker product structure to be preserved in the backwa
 2. $\Gamma_{t+1 \mid t}^{(i)} \in \mathbb{R}^{M \times M}$ must be positive definite (hence invertible).
 3. $B \in \mathbb{R}^{K \times K}$ must be positive definite (hence invertible).
 
+## 5 Parameter Estimation - Expectation-Maximization (EM)
+
 ## Appendix
 
 ### 3.1 Kronecker Product Properties
