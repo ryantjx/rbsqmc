@@ -28,9 +28,8 @@ class RBPFFootballResults(NamedTuple):
 class EMParams(NamedTuple):
     """All parameters that EM optimizes."""
     mean_0: jax.Array      # (M, 2)
-    gamma_0: jax.Array
+    gamma_0: jax.Array     # (M, M)
     B: jax.Array         # (2, 2)
-    Q: jax.Array         # (2, 2)
     kappa: float
     alpha: float
     beta: float

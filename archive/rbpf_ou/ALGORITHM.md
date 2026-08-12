@@ -130,6 +130,18 @@ The conditions for the Kronecker product structure to be preserved in the backwa
 
 ## 5 Parameter Estimation - Expectation-Maximization (EM)
 
+E-step follows from `## 4.1 Algorithm`.
+
+$$
+\begin{aligned}
+\ell (\theta) 
+&= \log p(y \mid \theta) \\
+&= \log p(X_0 \mid \theta) + \sum_{t=1}^{T} \log p(X_t \mid X_{t-1}, \theta) + \sum_{t=1}^{T} \log p(y_t \mid X_t^{\mathcal{O}}, \theta) \\
+\end{aligned}
+$$
+
+where $\theta = \{\Gamma_0, B, \kappa, \alpha, \beta\}$ is the set of parameters to be estimated. The M-step maximizes the expected log-likelihood with respect to $\theta$. By keeping $\mu_0^{i} = (0, 0)$, we assume that all teams revert back to the same level over time.
+
 ## Appendix
 
 ### 3.1 Kronecker Product Properties
@@ -151,7 +163,7 @@ West, M. and Harrison, J. (1997) Bayesian Forecasting and Dynamic Models (Spring
 
 ------------------------------------------------------------
 
-## 4 Simulation Study
+<!-- ## 4 Simulation Study
 
 We evaluate the RB-PF with Kronecker structure on a simulated dataset. Latent states are generated from a correlated OU-process on $F = 10$ dimensions with $P = 2$ dimensions for the latent states involved in an observation, and $P = 2$ for the likelihood function.
 
@@ -165,7 +177,7 @@ where $Q_t = \Sigma_0 - \Phi_t \Sigma_0 \Phi_t^\top$ and $\Phi_t = \phi_t \otime
 
 $$G_t(y_t \mid x_t^{i}, x_t^{j}) = \frac{1}{2 \pi \sqrt{|R|}} \exp\left(-\frac{1}{2} (y_t - \mu)^\top R^{-1} (y_t - \mu)\right)$$
 
-where $\mu = [x_t^{1, i} - x_t^{2, j}, x_t^{1, j} - x_t^{2, i}]^\top$ and $R$ is the observation noise covariance.
+where $\mu = [x_t^{1, i} - x_t^{2, j}, x_t^{1, j} - x_t^{2, i}]^\top$ and $R$ is the observation noise covariance. -->
 
 <!-- In this case, we use a bivariate poisson likelihood function for the observed data $y_t \in \mathbb{R}^2$:
 
