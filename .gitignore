@@ -41,6 +41,7 @@ ENV/
 
 # Generated pipeline outputs
 rbpf/outputs_gpu/
+rbpf/test/outputs_gpu/
 rbpf/outputs/smoothed/
 *.npy
 *.pkl
