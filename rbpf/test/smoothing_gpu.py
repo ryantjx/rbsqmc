@@ -279,7 +279,6 @@ def run_em(n_particles: int, start_date: str):
         n_epochs=int(CONFIG["n_epochs"]),
         n_gradient_steps=int(CONFIG["n_gradient_steps"]),
         learning_rate=float(CONFIG["learning_rate"]),
-        gamma_q_prior=float(CONFIG.get("gamma_q_prior", 0.0)),
         key=key,
     )
 
