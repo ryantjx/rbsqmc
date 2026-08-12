@@ -73,13 +73,16 @@ CONFIG_PATH = os.path.join(_HERE, "smoothing_gpu_config.json")
 def _candidate_config_paths() -> list[str]:
     """Locations to look for the config file, in priority order.
 
-    ``_HERE`` is the directory of this uploaded script (used locally). After
-    ``bootstrap`` clones the repo on Colab, the config also lives at
-    ``TEST_DIR``; checking both lets us pick up the committed config.
+    On Colab, ``colab run`` uploads this script to ``/content/`` and may leave a
+    *stale* ``/content/smoothing_gpu_config.json`` from a previous run. The
+    committed config in the cloned repo (``TEST_DIR``) is authoritative, so it
+    is checked FIRST. ``CONFIG_PATH`` (the uploaded script's directory) is only
+    a fallback for local runs where the repo config is not present.
     """
-    paths = [CONFIG_PATH]
+    paths = []
     if os.path.abspath(TEST_DIR) != os.path.abspath(_HERE):
         paths.append(os.path.join(TEST_DIR, "smoothing_gpu_config.json"))
+    paths.append(CONFIG_PATH)
     return paths
 
 
