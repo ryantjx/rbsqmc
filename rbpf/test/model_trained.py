@@ -13,6 +13,7 @@ Defaults:
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -38,8 +39,20 @@ from rbpf.test.src.graphic import (
 
 jax.config.update("jax_platforms", "cpu")
 
-N = 200
 MAX_GOALS = 8
+
+# Read the training config so the filter uses the SAME data range and particle
+# count as the EM run (otherwise the graphics are generated on a different
+# time horizon, which changes the rankings).
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "smoothing_gpu_config.json")
+if os.path.exists(_CONFIG_PATH):
+    with open(_CONFIG_PATH) as _f:
+        _CONFIG = json.load(_f)
+else:
+    _CONFIG = {}
+N = int(_CONFIG.get("N", 200))
+START_DATE = str(_CONFIG.get("start_date", "1950-01-01"))
+END_DATE = str(_CONFIG.get("end_date", "2026-01-01"))
 
 
 def main():
@@ -59,8 +72,8 @@ def main():
     args = parser.parse_args()
 
     data, model_inputs, team_id_to_name = get_results(
-        start_date="1950-01-01",
-        end_date="2026-01-01",
+        start_date=START_DATE,
+        end_date=END_DATE,
         max_goals=MAX_GOALS,
         teams_only=WORLDCUP_2026_TEAMS,
     )
