@@ -125,7 +125,7 @@ def default_init_params(
         mean_0=jnp.zeros((num_teams, 2)),
         gamma_0=gamma_0,
         B=B,
-        kappa=0.0039,
+        kappa=0.01,
         alpha=0.2,
         beta=-4.0,
     )
