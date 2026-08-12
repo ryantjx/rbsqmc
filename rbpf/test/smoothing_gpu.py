@@ -171,8 +171,12 @@ def bootstrap():
     log("=" * 60)
 
     if os.path.exists(REPO_DIR):
-        log(f"Repo already exists at {REPO_DIR}, pulling latest...")
-        run(["git", "-C", REPO_DIR, "pull", "--rebase"], check=False)
+        log(f"Repo already exists at {REPO_DIR}, resetting to origin/main...")
+        # Force-reset to the latest remote commit so the committed config
+        # (dates, teams, GPU) always takes effect, even if a previous run left
+        # local changes or a stale checkout on the VM.
+        run(["git", "-C", REPO_DIR, "fetch", "origin"], check=False)
+        run(["git", "-C", REPO_DIR, "reset", "--hard", "origin/main"], check=False)
     else:
         log(f"Cloning {REPO_URL} → {REPO_DIR}")
         run(["git", "clone", REPO_URL, REPO_DIR])
@@ -209,6 +213,18 @@ def bootstrap():
     else:
         os.chdir(_HERE)
     log(f"Working directory: {os.getcwd()}")
+
+    # Remove any stale uploaded config at /content so the committed repo config
+    # (which is authoritative) is always used.
+    stale = os.path.join(_HERE, "smoothing_gpu_config.json")
+    if os.path.exists(stale) and os.path.abspath(stale) != os.path.abspath(
+        os.path.join(TEST_DIR, "smoothing_gpu_config.json")
+    ):
+        try:
+            os.remove(stale)
+            log(f"Removed stale uploaded config: {stale}")
+        except OSError as e:
+            log(f"WARNING: could not remove stale config {stale}: {e}")
 
     # Reload the config now that the repo (and its config JSON) is on disk.
     CONFIG = _load_config()
