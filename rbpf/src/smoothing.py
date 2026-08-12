@@ -262,7 +262,6 @@ def _complete_log_likelihood(
     # Transition log-likelihood: sum_t log p(x_t | x_{t-1})  (OU, Kronecker cov)
     dts = model_inputs.timestamp[transition_indices] - model_inputs.timestamp_prev[transition_indices]
     phis = jnp.exp(-params.kappa * dts)  # scalar phi_t = exp(-kappa*dt), I_M implied
-    dim = num_teams * K  # FULL state dimension (was dim_obs = 2*K)
 
     def transition_step(observation_index, phi):
         pred_mean = params.mean_0 + phi * (X[observation_index - 1] - params.mean_0)  # (M, K)
@@ -271,15 +270,22 @@ def _complete_log_likelihood(
         scale = 1.0 - phi**2
         deterministic = scale <= 1e-8
 
-        # Full transition covariance: Q = scale * (gamma_0 ⊗ B)  (M*K, M*K)
-        Q_gamma = jnp.maximum(scale, 1e-8) * params.gamma_0
-        Q_gamma = 0.5 * (Q_gamma + Q_gamma.T)  # ensure symmetry
-        Q = jnp.kron(Q_gamma, params.B)  # (M*K, M*K)
+        # Observed teams only: home and away.
+        obs_idx = jnp.array([
+            model_inputs.home_team_id[observation_index],
+            model_inputs.away_team_id[observation_index],
+        ])
 
-        diff_flat = diff.reshape(-1)  # (M*K,)
-        quad = diff_flat @ jnp.linalg.solve(Q, diff_flat)
-        sign, log_det = jnp.linalg.slogdet(Q)
-        log_density = -0.5 * quad - 0.5 * log_det - 0.5 * dim * jnp.log(2 * jnp.pi)
+        # 4x4 transition covariance for the two observed teams:
+        # Q_obs = scale * (gamma_0[obs, obs] ⊗ B)
+        Q_gamma_obs = jnp.maximum(scale, 1e-8) * params.gamma_0[jnp.ix_(obs_idx, obs_idx)]
+        Q_gamma_obs = 0.5 * (Q_gamma_obs + Q_gamma_obs.T)  # ensure symmetry
+        Q_obs = jnp.kron(Q_gamma_obs, params.B)  # (4, 4)
+
+        diff_obs = diff[obs_idx].reshape(-1)  # (4,)
+        quad = diff_obs @ jnp.linalg.solve(Q_obs, diff_obs)
+        sign, log_det = jnp.linalg.slogdet(Q_obs)
+        log_density = -0.5 * quad - 0.5 * log_det - 0.5 * dim_obs * jnp.log(2 * jnp.pi)
 
         return jnp.where(deterministic, 0.0, log_density)
 
