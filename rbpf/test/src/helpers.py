@@ -136,11 +136,15 @@ def default_init_params(
 
     # Transition covariance factors: Q = gamma_Q (x) B_Q.
     # gamma_Q: small team covariance (scaled identity + small correlation).
-    gamma_Q = 0.1 * (
+    # The scale is kept very small (0.001) so the random-walk transition
+    # variance grows slowly over time, preventing the team strengths from
+    # drifting to extreme values (which made the bivariate-Poisson likelihood
+    # explode on long time horizons).
+    gamma_Q = 0.001 * (
         (1.0 - rho_team) * jnp.eye(num_teams)
         + rho_team * jnp.ones((num_teams, num_teams))
     )
-    B_Q = 0.1 * B_0
+    B_Q = 0.001 * B_0
 
     return EMParams(
         mean_0=jnp.zeros((num_teams, 2)),
