@@ -1,5 +1,5 @@
 {
-  "N": 200,
+  "N": 100,
   "n_epochs": 10,
   "n_gradient_steps": 20,
   "learning_rate": 0.01,
