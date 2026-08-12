@@ -369,10 +369,6 @@ def print_summary():
 def main():
     # Strip the --colab flag before positional-arg parsing.
     args = [a for a in sys.argv[1:] if a != "--colab"]
-    n_particles = int(args[0]) if args and args[0].isdigit() else int(CONFIG["N"])
-    start_date = (
-        args[1] if len(args) > 1 else str(CONFIG["start_date"])
-    )
 
     log("=" * 60)
     log("SMOOTHING RUNNER — STARTING")
@@ -381,6 +377,13 @@ def main():
 
     if is_colab():
         bootstrap()
+
+    # Read N and start_date AFTER bootstrap so the committed repo config
+    # (dates, teams, N) takes effect, not the stale pre-bootstrap CONFIG.
+    n_particles = int(args[0]) if args and args[0].isdigit() else int(CONFIG["N"])
+    start_date = (
+        args[1] if len(args) > 1 else str(CONFIG["start_date"])
+    )
 
     run_em(n_particles=n_particles, start_date=start_date)
 
