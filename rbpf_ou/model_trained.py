@@ -27,7 +27,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from rbpf_ou.src.data import get_results, WORLDCUP_2026_TEAMS
+from rbpf_ou.src.data import get_results, WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
 from rbpf_ou.src.helpers import load_params, generate_augmented_data
 from rbpf_ou.src.model import run_filter, compute_gamma_trajectory
 from rbpf_ou.src.graphic import (
@@ -54,6 +54,14 @@ else:
 N = int(_CONFIG.get("N", 200))
 START_DATE = str(_CONFIG.get("start_date", "1950-01-01"))
 END_DATE = str(_CONFIG.get("end_date", "2026-01-01"))
+# Use the SAME team set as the EM run (config "teams": ACTIVE_TEAMS or
+# WORLDCUP_2026_TEAMS), so the filter/graphics match the trained params'
+# matrix dimension. Defaults to WORLDCUP_2026_TEAMS for backward compat.
+_TEAM_SETS = {
+    "ACTIVE_TEAMS": ACTIVE_TEAMS,
+    "WORLDCUP_2026_TEAMS": WORLDCUP_2026_TEAMS,
+}
+TEAMS = _TEAM_SETS.get(_CONFIG.get("teams", "WORLDCUP_2026_TEAMS"), WORLDCUP_2026_TEAMS)
 
 
 def main():
@@ -76,7 +84,7 @@ def main():
         start_date=START_DATE,
         end_date=END_DATE,
         max_goals=MAX_GOALS,
-        teams_only=WORLDCUP_2026_TEAMS,
+        teams_only=TEAMS,
     )
     NUM_TEAMS = len(team_id_to_name)
     print(f"Loaded {len(data)} matches from {data['date'].min()} to {data['date'].max()}")
