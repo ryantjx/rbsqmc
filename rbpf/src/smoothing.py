@@ -210,7 +210,7 @@ def E_step(
 
     filtered_states, _ = run_filter(
         key=filter_key,
-        model_inputs=model_inputs,
+        model_inputs=augmented_results,
         params=params,
         num_teams=num_teams,
         n_particles=n_particles
