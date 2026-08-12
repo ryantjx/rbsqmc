@@ -309,6 +309,7 @@ def loss_fn(
     params: EMParams,
     smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
     model_inputs: RBPFFootballResults,
+    gamma_q_prior: float = 0.0,
 ):
     """MCEM objective: -average over M trajectories of log p(y, X^*).
 
@@ -316,11 +317,29 @@ def loss_fn(
     Q(theta) = E_{p(X|y,theta_old)}[log p(y, X | theta)], averaged over the
     M smoothed trajectories from the E-step. Each term is scaled by its size
     (see ``_complete_log_likelihood``).
+
+    A quadratic shrinkage prior on ``gamma_Q`` is added to keep the transition
+    variance bounded (preventing the random-walk from drifting to extreme
+    values that destabilize the filter):
+
+        prior = gamma_q_prior * ||gamma_Q - gamma_target||_F^2
+
+    where ``gamma_target`` is a small scaled identity. ``gamma_q_prior`` is the
+    prior strength (0 disables it).
     """
     per_traj = jax.vmap(
         lambda X: _complete_log_likelihood(params, X, model_inputs)
     )(smoothed_trajectories)  # (M,)
-    return -jnp.mean(per_traj)
+    data_loss = -jnp.mean(per_traj)
+
+    # Quadratic shrinkage prior on gamma_Q toward a small scaled identity.
+    if gamma_q_prior > 0:
+        num_teams = params.gamma_Q.shape[0]
+        gamma_target = 0.001 * jnp.eye(num_teams)
+        prior = gamma_q_prior * jnp.sum((params.gamma_Q - gamma_target) ** 2)
+    else:
+        prior = 0.0
+    return data_loss + prior
 
 
 def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
@@ -412,6 +431,7 @@ def M_step(
     prev_params: EMParams,
     learning_rate: float,
     n_gradient_steps: int,
+    gamma_q_prior: float = 0.0,
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
@@ -419,6 +439,9 @@ def M_step(
     The objective is the MCEM loss: -average over the M smoothed trajectories
     of log p(y, X^*). gamma_0, gamma_Q, and B are Cholesky-parameterized so
     they stay positive-definite by construction.
+
+    ``gamma_q_prior`` is the strength of a quadratic shrinkage prior on
+    ``gamma_Q`` (see ``loss_fn``), keeping the transition variance bounded.
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
@@ -442,6 +465,7 @@ def M_step(
             ),
             smoothed_trajectories,
             model_inputs,
+            gamma_q_prior=gamma_q_prior,
         )
 
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
@@ -540,6 +564,7 @@ def run_EM(
     n_gradient_steps: int = 10,
     learning_rate: float = 1e-3,
     n_trajectories: int = N_TRAJECTORIES,
+    gamma_q_prior: float = 0.0,
     key: jax.Array = jax.random.PRNGKey(42),
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     params = init_params
@@ -570,6 +595,7 @@ def run_EM(
             prev_params=params,
             learning_rate=learning_rate,
             n_gradient_steps=n_gradient_steps,
+            gamma_q_prior=gamma_q_prior,
         )
         mstep_start_history.append(loss_start)
         mstep_end_history.append(loss_best)

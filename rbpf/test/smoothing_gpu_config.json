@@ -3,6 +3,7 @@
   "n_epochs": 10,
   "n_gradient_steps": 20,
   "learning_rate": 0.01,
+  "gamma_q_prior": 0.1,
   "start_date": "2015-01-01",
   "end_date": "2025-12-31",
   "teams": "WORLDCUP_2026_TEAMS",
