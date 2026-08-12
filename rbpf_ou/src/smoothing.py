@@ -1,0 +1,681 @@
+from functools import partial
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+
+from rbpf_ou.src.utils import RBPFFootballResults, EMParams, FootballResults
+from rbpf_ou.src.data import WORLDCUP_2026_TEAMS, get_results, ACTIVE_TEAMS
+from rbpf_ou.src.helpers import default_init_params, generate_augmented_data, params_to_dict
+from rbpf_ou.src.model import (
+    run_filter,
+    compute_gamma_trajectory,
+    _sample_psd_gaussian,
+)
+from rbpf_ou.src.bivariate_poisson import loglik
+
+import os
+import json
+import cuthbertlib
+import optax
+from tqdm import tqdm
+from rbpf_ou.src.graphic import plot_log_likelihood_history
+
+# Default to CPU locally, but allow the GPU pipeline to force a device via
+# the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).
+jax.config.update(
+    "jax_platforms", os.environ.get("RBSQMC_PLATFORM", "cpu")
+)
+
+MAX_GOALS = 8
+N = 100
+# Number of independent smoothed trajectories sampled in the E-step for MCEM.
+# Averaging the complete-data log-likelihood over these reduces the Monte Carlo
+# noise of the 1-sample estimate (which was the root cause of the M-step being
+# "stuck at step 0").
+N_TRAJECTORIES = 2
+
+
+def _smoother_rts_single(
+    filtered_states: cuthbertlib.types.ArrayTree,
+    model_inputs: RBPFFootballResults,
+    params: EMParams,
+    num_teams: int,
+    key: jax.Array,
+):
+    """Sample ONE smoothed trajectory via FFBSi (RTS backward sampling).
+
+    OU (scalar-phi AR(1)) transition: ``X_{t+1} = mu + phi (X_t - mu) + eps``
+    with ``phi = exp(-kappa*dt)``. The prediction mean mean-reverts toward
+    ``mu`` and the RTS gain includes the ``phi`` factor.
+    """
+    n_particles = filtered_states.particles.x.shape[1]
+    K = filtered_states.particles.x.shape[3]  # 2 (attack/defence)
+    dim = num_teams * K  # total state dimension (2M)
+
+    # 1. Sample Terminal States
+    key, cat_key, sample_key = jax.random.split(key, 3)
+    log_w_T = filtered_states.log_weights[-1]  # (N,)
+    I_T = jax.random.categorical(cat_key, log_w_T)  # scalar
+
+    # Terminal covariance: Sigma_T = gamma_T (x) B (Kronecker, shared B).
+    gamma_T = model_inputs.gamma_t[-1]  # (M, M) filtered posterior team covariance
+    Sigma_T = jnp.kron(gamma_T, params.B)  # (2M, 2M)
+    # Sigma_T is PSD with exact-zero rows for observed teams (Schur-complement
+    # marginalization). Use the PSD-aware sampler so observed teams stay at
+    # their mean instead of jittering.
+    mu_T = filtered_states.particles.x[-1, I_T]  # (M, 2)
+    X_T_STAR = _sample_psd_gaussian(
+        sample_key, mu_T.flatten(), Sigma_T
+    ).reshape(num_teams, K)  # (M, 2)
+
+    # Derive a fresh key for the backward pass so the terminal draw and the
+    # backward trajectory are not correlated.
+    key, backward_key = jax.random.split(key)
+
+    # 2. Backward Sampling
+    def backward_sampling(carry, xs):
+        X_next_star, key = carry  # X_next_star: (M, 2)
+        key, cat_key, sample_key = jax.random.split(key, 3)
+
+        particles_t, log_w_t, gamma_t, gamma_pred_t1, timestamp_tplus1, timestamp_prev_tplus1 = xs
+
+        # --- 2.5: Backward weights ---
+        # Transition from t -> t+1. OU: prediction mean mean-reverts toward mu
+        # with phi = exp(-kappa*dt). Prediction covariance = gamma_pred_t[t+1] (x) B.
+        dt = timestamp_tplus1 - timestamp_prev_tplus1
+        phi = jnp.exp(-params.kappa * dt)
+        pred_mean = params.mean_0 + phi * (particles_t - params.mean_0)  # (N, M, 2)
+        pred_Sigma = jnp.kron(gamma_pred_t1, params.B)  # (2M, 2M)
+
+        # pred_Sigma is PSD but can be singular / slightly indefinite in
+        # float32. Use slogdet for a stable log-det and a small PSD clamp
+        # before the solve.
+        pred_Sigma_reg = pred_Sigma + 1e-8 * jnp.eye(dim)
+        deltas = (X_next_star - pred_mean).reshape(n_particles, -1)  # (N, 2M)
+        quad = jnp.sum(
+            deltas * jnp.linalg.solve(pred_Sigma_reg, deltas.T).T, axis=-1
+        )  # (N,)
+        sign, log_det = jnp.linalg.slogdet(pred_Sigma_reg)  # stable log-det
+        log_transition = (
+            -0.5 * quad
+            - 0.5 * log_det
+            - 0.5 * dim * jnp.log(2 * jnp.pi)
+        )  # (N,)
+        log_backward_weights = log_w_t + log_transition  # (N,)
+
+        I_t = jax.random.categorical(cat_key, log_backward_weights)  # scalar
+
+        # --- 2.6: RTS gain ---
+        # J_t = Sigma_{t|t} Phi_{t+1}^T Sigma_{t+1|t}^{-1}  (OU RTS gain).
+        # With Kronecker structure and scalar phi, using the Kronecker identity
+        # (A (x) B)(C (x) D) = (AC) (x) (BD) and pinv(gamma_pred (x) B) =
+        # pinv(gamma_pred) (x) pinv(B), we get
+        #   J = (gamma_t phi pinv(gamma_pred_t1)) (x) (B pinv(B)) = J_gamma (x) I_K.
+        J_gamma = phi * gamma_t @ jnp.linalg.pinv(gamma_pred_t1)  # (M, M)
+        J = jnp.kron(J_gamma, jnp.eye(K))  # (2M, 2M)
+
+        diff = (X_next_star - pred_mean[I_t]).flatten()  # (2M,)
+        mu_RTS = particles_t[I_t] + (J @ diff).reshape(num_teams, K)  # (M, 2)
+
+        Gamma_RTS = gamma_t - J_gamma @ gamma_pred_t1 @ J_gamma.T  # (M, M)
+        Gamma_RTS = 0.5 * (Gamma_RTS + Gamma_RTS.T)  # Ensure symmetry
+        Sigma_RTS = jnp.kron(Gamma_RTS, params.B)  # (2M, 2M)
+
+        # Deterministic transition when dt = 0 (phi = 1, Q = 0): the state is
+        # preserved, so X_t^* = X_{t+1}^* with no sampling. Use lax.cond so the
+        # sampling branch (which inverts Sigma_RTS) is only executed when dt > 0.
+        deterministic = dt == 0.0
+        X_t_star = jax.lax.cond(
+            deterministic,
+            lambda _: X_next_star,  # dt == 0: preserve the state exactly
+            lambda _: _sample_psd_gaussian(
+                sample_key, mu_RTS.flatten(), Sigma_RTS
+            ).reshape(num_teams, K),  # dt > 0: sample from the RTS posterior
+            operand=sample_key,
+        )
+        return (X_t_star, key), X_t_star
+
+    xs_particles = filtered_states.particles.x[:-1]       # (T-1, N, M, K)
+    xs_log_weights = filtered_states.log_weights[:-1]      # (T-1, N)
+    xs_gamma_t = model_inputs.gamma_t[:-1]                 # (T-1, M, M)
+    xs_gamma_pred_tplus1 = model_inputs.gamma_pred_t[1:]   # (T-1, M, M)
+    xs_timestamp_tplus1 = model_inputs.timestamp[1:]        # (T-1,)
+    xs_timestamp_prev_tplus1 = model_inputs.timestamp_prev[1:]  # (T-1,)
+    _, smoothed_rest = jax.lax.scan(
+        f=backward_sampling,
+        init=(X_T_STAR, backward_key),
+        xs=(xs_particles, xs_log_weights, xs_gamma_t, xs_gamma_pred_tplus1,
+            xs_timestamp_tplus1, xs_timestamp_prev_tplus1),
+        reverse=True,
+    )
+    # reverse=True returns times 0..T-2 in chronological order; append terminal state
+    smoothed_states = jnp.concatenate(
+        [smoothed_rest, X_T_STAR[None]], axis=0
+    )  # (T, M, 2)
+    return smoothed_states
+
+
+@partial(jax.jit, static_argnames=("num_teams", "n_trajectories"))
+def smoother_rts(
+    filtered_states: cuthbertlib.types.ArrayTree,
+    model_inputs: RBPFFootballResults,
+    params: EMParams,
+    num_teams: int,
+    key: jax.Array,
+    n_trajectories: int = N_TRAJECTORIES,
+):
+    """Sample M independent smoothed trajectories in parallel (FFBSi).
+
+    Vmaps the single-trajectory backward sampler over ``n_trajectories`` keys,
+    producing ``(M, T, num_teams, 2)``. This is the E-step for Monte Carlo EM.
+    """
+    keys = jax.random.split(key, n_trajectories)
+    return jax.vmap(
+        lambda k: _smoother_rts_single(
+            filtered_states, model_inputs, params, num_teams, k
+        )
+    )(keys)  # (M, T, num_teams, 2)
+
+
+def E_step(
+    params: EMParams,
+    model_inputs: FootballResults,
+    num_teams: int,
+    n_particles: int,
+    key: jax.Array,
+    n_trajectories: int = N_TRAJECTORIES,
+):
+    """
+    E-step: Forward Filter Backward Sampling (FFBSi) with M trajectories.
+    """
+    key, filter_key, smoother_key = jax.random.split(key, 3)
+    print(f"Running E-step: Forward Filter Backward Sampling (FFBSi)")
+    print(f"  num_teams = {num_teams}, n_particles = {n_particles}, "
+          f"n_trajectories = {n_trajectories}")
+    print(f"  Start time: {model_inputs.timestamp[0]}, End time: {model_inputs.timestamp[-1]}")
+
+    # initialize covariance trajectory
+    gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
+        model_inputs=model_inputs,
+        gamma_0=params.gamma_0,
+        gamma_Q=params.gamma_Q,
+        kappa=params.kappa,
+        num_teams=num_teams,
+    )
+
+    augmented_results = generate_augmented_data(
+        model_inputs=model_inputs,
+        gamma_updated=gamma_updated,
+        gamma_pred=gamma_pred,
+        kalman_gain=kalman_gain,
+    )
+
+    filtered_states, _ = run_filter(
+        key=filter_key,
+        model_inputs=augmented_results,
+        params=params,
+        num_teams=num_teams,
+        n_particles=n_particles,
+    )
+    smoothed_states = smoother_rts(
+        filtered_states=filtered_states,
+        model_inputs=augmented_results,
+        params=params,
+        num_teams=num_teams,
+        key=smoother_key,
+        n_trajectories=n_trajectories,
+    )
+    return filtered_states, smoothed_states, filtered_states.log_normalizing_constant[-1], augmented_results
+
+
+def _complete_log_likelihood(
+    params: EMParams,
+    X: jnp.ndarray,  # (T, num_teams, 2) -- one smoothed trajectory
+    model_inputs: RBPFFootballResults,
+) -> jax.Array:
+    """log p(y, X) for a single trajectory X (complete-data log-likelihood).
+
+    Includes the initial term ``log p(X_0 | mean_0, gamma_0 (x) B)``, the
+    transition terms ``log p(X_t | X_{t-1})`` (random walk,
+    ``Q = gamma_Q (x) B``), and the observation terms ``log p(y_t | X_t)``
+    (bivariate Poisson).
+
+    Each term is scaled by its size (number of dimensions it spans) so the
+    three terms are on a comparable per-dimension scale:
+
+    - ``init_ll``: a single ``2M``-dim Gaussian, scaled by ``2M``.
+    - ``obs_ll``: ``T`` observations, each ``2``-dim (home + away goals),
+      scaled by ``2 * T``.
+    - ``transition_ll``: ``T-1`` transitions, each ``2M``-dim, scaled by
+      ``2M * (T-1)``.
+    """
+    n_observations = X.shape[0]
+    num_teams = X.shape[1]
+    K = X.shape[2]  # 2 (attack/defence)
+    dim = num_teams * K  # FULL state dimension (2M)
+    n_transitions = n_observations - 1
+
+    observation_indices = jnp.arange(n_observations)
+    transition_indices = jnp.arange(1, n_observations)
+
+    # --- Initial term: log p(X_0 | mean_0, gamma_0 (x) B), scaled by dim ---
+    diff0 = (X[0] - params.mean_0).reshape(-1)  # (2M,)
+    sigma_0 = jnp.kron(params.gamma_0, params.B)  # (2M, 2M)
+    quad0 = diff0 @ jnp.linalg.solve(sigma_0, diff0)
+    sign0, log_det0 = jnp.linalg.slogdet(sigma_0)
+    init_ll = (
+        -0.5 * quad0 - 0.5 * log_det0 - 0.5 * dim * jnp.log(2 * jnp.pi)
+    ) / dim
+
+    # --- Observation log-likelihood: sum_t log p(y_t | x_t), scaled by 2*T ---
+    def obs_step(observation_index):
+        return loglik(
+            y=jnp.array([model_inputs.home_score[observation_index], model_inputs.away_score[observation_index]]),
+            x_i=X[observation_index, model_inputs.home_team_id[observation_index]],
+            x_j=X[observation_index, model_inputs.away_team_id[observation_index]],
+            alpha=params.alpha,
+            beta=params.beta,
+            max_goals=MAX_GOALS,
+            scale=1.0,
+        )
+    obs_ll = jnp.sum(jax.vmap(obs_step)(observation_indices)) / (2.0 * n_observations)
+
+    # --- Transition log-likelihood: sum_t log p(x_t | x_{t-1}), scaled by 2M*(T-1) ---
+    # OU (scalar-phi AR(1)): X_t = mu + phi (X_{t-1} - mu) + eps,
+    #   phi = exp(-kappa*dt), eps ~ N(0, (1-phi^2) * gamma_0 (x) B).
+    dts = model_inputs.timestamp[transition_indices] - model_inputs.timestamp_prev[transition_indices]
+    Q = jnp.kron(params.gamma_0, params.B)  # (2M, 2M) stationary covariance
+
+    def transition_step(observation_index, dt):
+        phi = jnp.exp(-params.kappa * dt)
+        pred_mean = params.mean_0 + phi * (X[observation_index - 1] - params.mean_0)  # (M, K)
+        diff = X[observation_index] - pred_mean  # (M, K)
+
+        deterministic = dt <= 1e-8
+        scale = 1.0 - phi**2
+        Q_t = jnp.maximum(scale, 1e-8) * Q
+        Q_t = 0.5 * (Q_t + Q_t.T)  # ensure symmetry
+
+        diff_flat = diff.reshape(-1)  # (2M,)
+        quad = diff_flat @ jnp.linalg.solve(Q_t, diff_flat)
+        sign, log_det = jnp.linalg.slogdet(Q_t)
+        log_density = -0.5 * quad - 0.5 * log_det - 0.5 * dim * jnp.log(2 * jnp.pi)
+
+        return jnp.where(deterministic, 0.0, log_density)
+
+    transition_ll = jnp.sum(jax.vmap(transition_step)(transition_indices, dts)) / (dim * n_transitions)
+
+    return init_ll + obs_ll + transition_ll
+
+
+def loss_fn(
+    params: EMParams,
+    smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
+    model_inputs: RBPFFootballResults,
+    gamma_q_prior: float = 0.0,
+):
+    """MCEM objective: -average over M trajectories of log p(y, X^*).
+
+    This is a proper Monte Carlo estimate of the EM objective
+    Q(theta) = E_{p(X|y,theta_old)}[log p(y, X | theta)], averaged over the
+    M smoothed trajectories from the E-step. Each term is scaled by its size
+    (see ``_complete_log_likelihood``).
+
+    A quadratic shrinkage prior on ``gamma_Q`` is added to keep the transition
+    variance bounded (preventing the random-walk from drifting to extreme
+    values that destabilize the filter):
+
+        prior = gamma_q_prior * ||gamma_Q - gamma_target||_F^2
+
+    where ``gamma_target`` is a small scaled identity. ``gamma_q_prior`` is the
+    prior strength (0 disables it).
+    """
+    per_traj = jax.vmap(
+        lambda X: _complete_log_likelihood(params, X, model_inputs)
+    )(smoothed_trajectories)  # (M,)
+    data_loss = -jnp.mean(per_traj)
+
+    # Quadratic shrinkage prior on gamma_Q toward a small scaled identity.
+    if gamma_q_prior > 0:
+        num_teams = params.gamma_Q.shape[0]
+        gamma_target = 0.001 * jnp.eye(num_teams)
+        prior = gamma_q_prior * jnp.sum((params.gamma_Q - gamma_target) ** 2)
+    else:
+        prior = 0.0
+    return data_loss + prior
+
+
+def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
+    """Symmetrise a square matrix (for PSD-constrained params)."""
+    return 0.5 * (x + x.T)
+
+
+# Minimum eigenvalue floor for the projected covariances.
+_EIGEN_FLOOR = 1e-4
+
+
+def _project_psd(x: jnp.ndarray, floor: float = _EIGEN_FLOOR) -> jnp.ndarray:
+    """Project a symmetric matrix onto the positive-definite cone.
+
+    Eigen-decompose, clamp eigenvalues to be >= ``floor`` (> 0), and rebuild.
+    Guarantees a full-rank, strictly PD matrix whose log-determinant and solve
+    are well defined.
+    """
+    x = _symmetrize(x)
+    eigvals, eigvecs = jnp.linalg.eigh(x)
+    eigvals = jnp.maximum(eigvals, floor)
+    return (eigvecs * eigvals) @ eigvecs.T
+
+
+def _psd_from_cholesky(L: jnp.ndarray, n: int) -> jnp.ndarray:
+    """Build a PD matrix ``A = L L^T`` from an unconstrained ``n x n`` factor.
+
+    ``L`` is a free matrix. We take its lower triangle, keep the diagonal
+    positive via ``softplus``, zero the strictly-upper triangle, and form
+    ``A = L L^T``. Because L is full-rank lower-triangular with positive
+    diagonal, A is positive-definite by construction and the map from the free
+    entries of L to the PD cone is smooth and surjective.
+    """
+    L_low = jnp.tril(L)
+    diag = jax.nn.softplus(jnp.diag(L_low))  # > 0, strictly
+    L_low = L_low.at[jnp.diag_indices(n)].set(diag)
+    return L_low @ L_low.T
+
+
+def _cholesky_from_psd(A: jnp.ndarray, n: int) -> jnp.ndarray:
+    """Inverse map: a free ``n x n`` factor encoding the PD matrix ``A``.
+
+    ``L`` is a lower-triangular Cholesky factor of the PD ``A`` with a
+    softplus-wrapped diagonal, padded to a full ``n x n`` free array (upper
+    triangle is arbitrary/zero and ignored by ``_psd_from_cholesky``).
+    """
+    L = jnp.linalg.cholesky(A)  # lower-triangular, positive diagonal
+    diag = L[jnp.diag_indices(n)]
+    L_free = jnp.zeros_like(A)
+    L_free = L_free.at[jnp.tril_indices(n)].set(
+        L[jnp.tril_indices(n)]
+    )
+    # invert softplus on the diagonal so reconstructing A recovers it:
+    # softplus(x) = diag  =>  x = log(exp(diag) - 1)
+    L_free = L_free.at[jnp.diag_indices(n)].set(
+        jnp.log(jnp.exp(diag) - 1.0 + 1e-10)
+    )
+    return L_free
+
+
+# Lower bound for the OU mean-reversion rate kappa.
+#
+# kappa -> 0 makes phi = exp(-kappa*dt) -> 1, so the transition covariance
+# (1-phi^2)*Sigma_0 -> 0 (a degenerate transition). Flooring kappa away from
+# zero keeps the transition covariance meaningfully non-singular.
+_KAPPA_MIN = 1e-3
+
+
+def _constrain(params: EMParams) -> EMParams:
+    """Apply validity constraints so parameters stay in their support.
+
+    - alpha, beta unconstrained real.
+    - kappa >= _KAPPA_MIN (keeps the OU transition covariance non-degenerate).
+    - gamma_0, gamma_Q, B projected onto the positive-definite cone
+      (full-rank, so the transition covariance Q and the smoother covariances
+      stay invertible and their log-determinants finite).
+
+    Note: during the M-step these are Cholesky-parameterized (so they stay PD
+    automatically); this projection is retained as a safety net for params
+    constructed outside the optimizer (e.g. hand-loaded values).
+    """
+    gamma_0 = _project_psd(params.gamma_0)
+    gamma_Q = _project_psd(params.gamma_Q)
+    B = _project_psd(params.B)
+    kappa = jnp.maximum(params.kappa, _KAPPA_MIN)
+    return EMParams(
+        mean_0=params.mean_0,
+        gamma_0=gamma_0,
+        gamma_Q=gamma_Q,
+        B=B,
+        kappa=kappa,
+        alpha=params.alpha,
+        beta=params.beta,
+    )
+
+
+def M_step(
+    smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
+    model_inputs: RBPFFootballResults,
+    prev_params: EMParams,
+    learning_rate: float,
+    n_gradient_steps: int,
+    gamma_q_prior: float = 0.0,
+):
+    """
+    M-step: Update parameters via scale-aware ADAM with a cosine schedule.
+
+    The objective is the MCEM loss: -average over the M smoothed trajectories
+    of log p(y, X^*). gamma_0, gamma_Q, and B are Cholesky-parameterized so
+    they stay positive-definite by construction.
+
+    ``gamma_q_prior`` is the strength of a quadratic shrinkage prior on
+    ``gamma_Q`` (see ``loss_fn``), keeping the transition variance bounded.
+
+    Returns:
+        tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
+        loss_best, loss_trace).
+    """
+    num_teams = prev_params.gamma_Q.shape[0]
+
+    def _loss_and_grad(carry):
+        # Reconstruct PD matrices from free Cholesky factors.
+        gamma_0 = _psd_from_cholesky(carry["L_gamma0"], num_teams)
+        gamma_Q = _psd_from_cholesky(carry["L_gammaQ"], num_teams)
+        B = _psd_from_cholesky(carry["L_B"], 2)
+        return loss_fn(
+            EMParams(
+                mean_0=prev_params.mean_0,
+                gamma_0=gamma_0,
+                gamma_Q=gamma_Q,
+                B=B,
+                kappa=carry["kappa"],
+                alpha=carry["alpha"],
+                beta=carry["beta"],
+            ),
+            smoothed_trajectories,
+            model_inputs,
+            gamma_q_prior=gamma_q_prior,
+        )
+
+    value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
+
+    # Initial parameter blocks (dict so optax.multi_transform labels align).
+    carry = {
+        "L_gamma0": _cholesky_from_psd(prev_params.gamma_0, num_teams),
+        "L_gammaQ": _cholesky_from_psd(prev_params.gamma_Q, num_teams),
+        "L_B": _cholesky_from_psd(prev_params.B, 2),
+        "kappa": prev_params.kappa,
+        "alpha": prev_params.alpha,
+        "beta": prev_params.beta,
+    }
+
+    # --- Per-parameter learning rates (scale-aware) ---
+    base = learning_rate
+    lr_mapping = {
+        "L_gamma0": base * 1,
+        "L_gammaQ": base * 1,
+        "L_B": base * 1,
+        "kappa": base * 1.0,
+        "alpha": base * 1.0,
+        "beta": base * 1.0,
+    }
+    transforms = {
+        "L_gamma0": optax.adam(lr_mapping["L_gamma0"]),
+        "L_gammaQ": optax.adam(lr_mapping["L_gammaQ"]),
+        "L_B": optax.adam(lr_mapping["L_B"]),
+        "kappa": optax.adam(lr_mapping["kappa"]),
+        "alpha": optax.adam(lr_mapping["alpha"]),
+        "beta": optax.adam(lr_mapping["beta"]),
+    }
+    param_labels = {
+        "L_gamma0": "L_gamma0",
+        "L_gammaQ": "L_gammaQ",
+        "L_B": "L_B",
+        "kappa": "kappa",
+        "alpha": "alpha",
+        "beta": "beta",
+    }
+    optimizer = optax.chain(
+        # Clip the global gradient norm to prevent the explosive first step
+        # (the transition log-density gradient ~ Q^{-1} can be enormous when
+        # gamma_Q is near-singular). This stabilizes the M-step.
+        optax.clip_by_global_norm(1.0),
+        optax.multi_transform(transforms, param_labels),
+        optax.scale_by_schedule(
+            optax.cosine_decay_schedule(1.0, n_gradient_steps)
+        ),
+    )
+    opt_state = optimizer.init(carry)
+
+    # --- JIT-compiled gradient-descent loop (single lax.scan) ---
+    def _step(carry, step):
+        opt_state, params_carry, best_carry, best_loss = carry
+        loss, grads = value_and_grad_fn(params_carry)
+        updates, opt_state = optimizer.update(grads, opt_state, params_carry)
+        params_carry = optax.apply_updates(params_carry, updates)
+
+        # Track best by relative improvement.
+        improved = loss < best_loss * (1 - 1e-4)
+        best_carry = jax.tree.map(
+            lambda b, p: jnp.where(improved, p, b), best_carry, params_carry
+        )
+        best_loss = jnp.where(improved, loss, best_loss)
+        return (opt_state, params_carry, best_carry, best_loss), loss
+
+    init_carry = (opt_state, carry, carry, jnp.inf)
+    (_, _, best_carry, best_loss), loss_trace = jax.lax.scan(
+        _step, init_carry, jnp.arange(n_gradient_steps)
+    )
+    loss_trace = jnp.asarray(loss_trace)  # (n_gradient_steps,)
+    loss_start = loss_trace[0]            # objective at prev_params
+    loss_best = best_loss                 # best objective over the M-step
+
+    # Reconstruct PD matrices from the best free factors and project onto support.
+    best_gamma_0 = _psd_from_cholesky(best_carry["L_gamma0"], num_teams)
+    best_gamma_Q = _psd_from_cholesky(best_carry["L_gammaQ"], num_teams)
+    best_B = _psd_from_cholesky(best_carry["L_B"], 2)
+    final = _constrain(EMParams(
+        mean_0=prev_params.mean_0,
+        gamma_0=best_gamma_0,
+        gamma_Q=best_gamma_Q,
+        B=best_B,
+        kappa=best_carry["kappa"],
+        alpha=best_carry["alpha"],
+        beta=best_carry["beta"],
+    ))
+    best_step = int(jnp.argmin(loss_trace))
+    print(f"      M-step done: loss {float(loss_best):.4f} -> best at step {best_step}, "
+          f"kappa={float(final.kappa):.5f} alpha={float(final.alpha):.5f} beta={float(final.beta):.5f}")
+    return final, float(loss_start), float(loss_best), loss_trace
+
+
+def run_EM(
+    model_inputs: FootballResults,
+    init_params: EMParams,
+    num_teams: int,
+    n_particles: int = 10,
+    n_epochs: int = 10,
+    n_gradient_steps: int = 10,
+    learning_rate: float = 1e-3,
+    n_trajectories: int = N_TRAJECTORIES,
+    gamma_q_prior: float = 0.0,
+    key: jax.Array = jax.random.PRNGKey(42),
+) -> tuple[EMParams, jnp.ndarray, dict]:
+    params = init_params
+
+    log_likelihood_history = []
+    mstep_start_history = []
+    mstep_end_history = []
+    mstep_loss_traces = []  # full loss trajectory per epoch (every gradient step)
+
+    for epoch in tqdm(range(n_epochs)):
+        key, e_key = jax.random.split(key)
+        # 1. run E step to get M smoothed trajectories
+        print("    E-step: Running filtering and backward sampling...")
+        _, smoothed_trajectories, log_marginal, augmented_results = E_step(
+            params=params,
+            model_inputs=model_inputs,
+            num_teams=num_teams,
+            n_particles=n_particles,
+            key=e_key,
+            n_trajectories=n_trajectories,
+        )
+        log_likelihood_history.append(log_marginal)
+        # 2. run M step to update parameters (MCEM over M trajectories)
+        print("    M-step: Updating parameters...")
+        params, loss_start, loss_best, loss_trace = M_step(
+            smoothed_trajectories=smoothed_trajectories,
+            model_inputs=augmented_results,
+            prev_params=params,
+            learning_rate=learning_rate,
+            n_gradient_steps=n_gradient_steps,
+            gamma_q_prior=gamma_q_prior,
+        )
+        mstep_start_history.append(loss_start)
+        mstep_end_history.append(loss_best)
+        mstep_loss_traces.append(loss_trace)
+
+    print("EM completed. Final parameters:")
+    print("  kappa:", params.kappa)
+    print("  alpha:", params.alpha)
+    print("  beta:", params.beta)
+    print("  B:", params.B)
+    print("  gamma_Q:", params.gamma_Q.shape)
+    print("  gamma_0:", params.gamma_0.shape)
+    print("  mean_0:", params.mean_0.shape)
+
+    em_diagnostics = {
+        "mstep_loss_start": jnp.array(mstep_start_history),
+        "mstep_loss_end": jnp.array(mstep_end_history),
+        "mstep_loss_trace": mstep_loss_traces,  # list of per-epoch loss lists
+    }
+    return params, jnp.array(log_likelihood_history), em_diagnostics
+
+
+def main():
+    data, model_inputs, team_id_to_name = get_results(
+        start_date="1950-01-01",
+        end_date="2025-12-31",
+        max_goals=MAX_GOALS,
+        teams_only=WORLDCUP_2026_TEAMS,
+    )
+    NUM_TEAMS = len(team_id_to_name)
+    key = jax.random.PRNGKey(42)
+    params = default_init_params(NUM_TEAMS, team_id_to_name=team_id_to_name)
+
+    try:
+        final_params, log_marginal_likelihoods, em_diagnostics = run_EM(
+            model_inputs=model_inputs,
+            init_params=params,
+            num_teams=NUM_TEAMS,
+            n_particles=N,
+            n_epochs=3,
+            n_gradient_steps=10,
+            learning_rate=0.01,
+            key=key,
+        )
+    except Exception as e:
+        print("Error during EM run:", e)
+        raise
+    # save parameters to JSON
+    output_path = os.path.join(os.path.dirname(__file__), "..", "outputs", "smoothing")
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+    with open(output_path + "/em_params.json", "w") as f:
+        json.dump(params_to_dict(final_params), f, indent=2)
+    with open(output_path + "/log_marginal_likelihoods.json", "w") as f:
+        json.dump(np.asarray(log_marginal_likelihoods).tolist(), f, indent=2)
+
+    # plot log marginal likelihoods
+    plot_log_likelihood_history(log_marginal_likelihoods.tolist(), output_path=output_path + "/log_marginal_likelihoods.png")
+
+
+if __name__ == "__main__":
+    main()
