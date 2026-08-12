@@ -33,7 +33,7 @@ N = 100
 # Averaging the complete-data log-likelihood over these reduces the Monte Carlo
 # noise of the 1-sample estimate (which was the root cause of the M-step being
 # "stuck at step 0").
-N_TRAJECTORIES = 5
+N_TRAJECTORIES = 2
 
 
 def _smoother_rts_single(
