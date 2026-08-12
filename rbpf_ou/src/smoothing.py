@@ -679,6 +679,7 @@ def run_EM(
 
     for epoch in tqdm(range(n_epochs)):
         key, e_key = jax.random.split(key)
+        print(f"    [EM] Epoch {epoch + 1}/{n_epochs} — E-step starting...")
         # 1. run E step to get M smoothed trajectories
         print("    E-step: Running filtering and backward sampling...")
         _, smoothed_trajectories, log_marginal, augmented_results = E_step(
@@ -690,6 +691,7 @@ def run_EM(
             n_trajectories=n_trajectories,
         )
         log_likelihood_history.append(log_marginal)
+        print(f"    [EM] Epoch {epoch + 1} E-step done: log_marginal={float(log_marginal):.4f}")
         # 2. run M step to update parameters (MCEM over M trajectories)
         print("    M-step: Updating parameters...")
         params, loss_start, loss_best, loss_trace = M_step(
@@ -703,6 +705,7 @@ def run_EM(
         mstep_start_history.append(loss_start)
         mstep_end_history.append(loss_best)
         mstep_loss_traces.append(loss_trace)
+        print(f"    [EM] Epoch {epoch + 1} M-step done: loss {float(loss_best):.4f}")
 
         # Free GPU/TPU memory between epochs. The E-step materializes the full
         # (T, M, M) gamma trajectories and (T, N, M, K) filter states, which at

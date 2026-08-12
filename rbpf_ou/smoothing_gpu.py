@@ -256,6 +256,7 @@ def run_em(n_particles: int, start_date: str):
     print(f"JAX backend: {jax.default_backend()}")
     print(f"JAX devices: {jax.devices()}")
 
+    print("[EM] Loading data...")
     data, model_inputs, team_id_to_name = get_results(
         start_date=start_date,
         end_date=end_date,
@@ -263,14 +264,18 @@ def run_em(n_particles: int, start_date: str):
         teams_only=teams,
     )
     num_teams = len(team_id_to_name)
+    print(f"[EM] Loaded {len(data)} matches, {num_teams} teams, "
+          f"date=[{start_date}, {end_date}]")
     key = jax.random.PRNGKey(42)
+    print("[EM] Initializing parameters...")
     params = default_init_params(num_teams, team_id_to_name=team_id_to_name)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(os.path.join(OUTPUT_DIR, "em_params_init.json"), "w") as f:
         json.dump(params_to_dict(params), f, indent=2)
+    print(f"[EM] Saved init params to {os.path.join(OUTPUT_DIR, 'em_params_init.json')}")
 
-    print(f"Running EM (N={n_particles}, n_epochs={CONFIG['n_epochs']}, "
+    print(f"[EM] Starting EM (N={n_particles}, n_epochs={CONFIG['n_epochs']}, "
           f"date=[{start_date}, {end_date}])")
 
     final_params, log_marginal_history, em_diagnostics = run_EM(
@@ -283,6 +288,7 @@ def run_em(n_particles: int, start_date: str):
         learning_rate=float(CONFIG["learning_rate"]),
         key=key,
     )
+    print("[EM] EM run completed.")
 
     with open(os.path.join(OUTPUT_DIR, "em_params_final.json"), "w") as f:
         json.dump(params_to_dict(final_params), f, indent=2)
