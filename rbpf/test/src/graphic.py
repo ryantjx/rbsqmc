@@ -201,18 +201,16 @@ def plot_top_filter_states(
     return fig, (attack_ax, defense_ax)
 
 
-def _team_correlation_from_sigma(sigma_final, num_teams):
-    """Extract the between-team correlation matrix from a (2M, 2M) covariance.
+def _team_correlation_from_gamma(gamma_final):
+    """Normalize an (M, M) team covariance to a correlation matrix.
 
-    The general covariance ``sigma_final`` has a ``(2, 2)`` block per team pair.
-    We take the attack-attack block (rows/cols 0, 2, 4, ...) as the between-team
-    covariance, then normalize to a correlation matrix.
+    With the Kronecker structure, ``gamma_t`` is already the ``M x M`` team
+    covariance (the attack/defence factor ``B`` is shared and does not affect
+    between-team correlation). We normalize its diagonal to a correlation.
     """
-    attack_idx = np.arange(0, 2 * num_teams, 2)
-    gamma = sigma_final[np.ix_(attack_idx, attack_idx)]  # (M, M)
-    std = np.sqrt(np.diag(gamma))
+    std = np.sqrt(np.diag(gamma_final))
     std_safe = np.where(std > 1e-10, std, 1.0)
-    corr = gamma / np.outer(std_safe, std_safe)
+    corr = gamma_final / np.outer(std_safe, std_safe)
     corr = np.clip(corr, -1, 1)
     return corr, std
 
@@ -222,15 +220,15 @@ def plot_correlation_matrix(augmented_results, team_id_to_name, num_teams=None,
     """Heatmap of between-team correlation matrix at final timestep.
 
     Args:
-        augmented_results: RBPFFootballResults with sigma_t shape (T+1, 2M, 2M)
+        augmented_results: RBPFFootballResults with gamma_t shape (T+1, M, M)
         team_id_to_name: dict mapping team_id -> team name
         num_teams: number of teams (inferred from team_id_to_name if None)
         save_path: if given, save figure to this path
     """
     if num_teams is None:
         num_teams = len(team_id_to_name)
-    sigma_final = np.array(augmented_results.sigma_t[-1])  # (2M, 2M)
-    corr, std = _team_correlation_from_sigma(sigma_final, num_teams)
+    gamma_final = np.array(augmented_results.gamma_t[-1])  # (M, M)
+    corr, std = _team_correlation_from_gamma(gamma_final)
 
     active = std > 1e-10
     active_idx = np.where(active)[0]
@@ -257,7 +255,7 @@ def plot_correlation_extremes(augmented_results, team_id_to_name, top_n=5,
     """Bar chart of top-N and bottom-N team pair correlations at final timestep.
 
     Args:
-        augmented_results: RBPFFootballResults with sigma_t shape (T+1, 2M, 2M)
+        augmented_results: RBPFFootballResults with gamma_t shape (T+1, M, M)
         team_id_to_name: dict mapping team_id -> team name
         top_n: number of pairs to show for highest and lowest correlations
         num_teams: number of teams (inferred from team_id_to_name if None)
@@ -265,8 +263,8 @@ def plot_correlation_extremes(augmented_results, team_id_to_name, top_n=5,
     """
     if num_teams is None:
         num_teams = len(team_id_to_name)
-    sigma_final = np.array(augmented_results.sigma_t[-1])  # (2M, 2M)
-    corr, std = _team_correlation_from_sigma(sigma_final, num_teams)
+    gamma_final = np.array(augmented_results.gamma_t[-1])  # (M, M)
+    corr, std = _team_correlation_from_gamma(gamma_final)
 
     active = std > 1e-10
     active_idx = np.where(active)[0]

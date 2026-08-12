@@ -17,15 +17,19 @@ class RBPFState(NamedTuple):
 
 
 class RBPFFootballResults(NamedTuple):
-    """Augmented model inputs carrying the deterministic covariance trajectory.
+    """Augmented model inputs carrying the deterministic team-covariance
+    trajectory.
 
-    Unlike the OU reference (which stored a Kronecker ``gamma_t`` of shape
-    ``(M, M)``), the random-walk model in MODEL.md has a *general* ``2M x 2M``
-    covariance trajectory. ``sigma_t`` is the filtered posterior covariance
-    ``Sigma_{t|t}``, ``sigma_pred_t`` is the prediction covariance
-    ``Sigma_{t|t-1}``, and ``kalman_gain_t`` is the Kalman gain ``K_t`` used to
-    condition the unobserved (Rao-Blackwellized) teams on the sampled observed
-    block.
+    The random-walk model in MODEL.md uses a Kronecker-structured covariance
+    ``Sigma = gamma (x) B`` with a *shared* attack/defence factor ``B``
+    (``B_0 = B_Q = B``). This lets us track only the ``M x M`` team covariance
+    ``gamma_t`` (plus the fixed ``2 x 2`` ``B``) instead of the full
+    ``2M x 2M`` matrix, giving a 4x memory reduction that scales to many teams.
+
+    - ``gamma_t``:      (T, M, M) filtered posterior team covariance ``Gamma_{t|t}``
+    - ``gamma_pred_t``: (T, M, M) prediction team covariance ``Gamma_{t|t-1}``
+    - ``kalman_gain_t``:(T, M, 2)  Kalman gain in team space (all teams vs the
+      two observed teams)
     """
     match_index_id: jax.Array
     timestamp: jax.Array
@@ -34,26 +38,29 @@ class RBPFFootballResults(NamedTuple):
     away_team_id: jax.Array
     home_score: jax.Array
     away_score: jax.Array
-    sigma_t: jax.Array          # (T, 2M, 2M) filtered posterior covariance
-    sigma_pred_t: jax.Array     # (T, 2M, 2M) prediction covariance
-    kalman_gain_t: jax.Array    # (T, 2M, 4)  Kalman gain (all teams vs observed)
+    gamma_t: jax.Array          # (T, M, M) filtered posterior team covariance
+    gamma_pred_t: jax.Array     # (T, M, M) prediction team covariance
+    kalman_gain_t: jax.Array    # (T, M, 2)  Kalman gain (all teams vs observed)
 
 
 class EMParams(NamedTuple):
     """All parameters that EM optimizes.
 
+    The covariance is Kronecker-structured ``Sigma = gamma (x) B`` with a
+    *shared* attack/defence factor ``B`` (``B_0 = B_Q = B``), so the initial
+    covariance is ``Sigma_0 = gamma_0 (x) B`` and the transition covariance is
+    ``Q = gamma_Q (x) B``.
+
     - mean_0:  (M, 2) initial mean (fixed at zeros during EM).
-    - sigma_0: (2M, 2M) general initial covariance (Cholesky-parameterized in
-      the M-step; NOT a Kronecker product).
-    - gamma_Q: (M, M) team-correlation factor of the transition covariance
-      ``Q = gamma_Q (x) B_Q``.
-    - B_Q:     (2, 2) attack/defence factor of the transition covariance.
+    - gamma_0: (M, M) team factor of the initial covariance ``Sigma_0 = gamma_0 (x) B``.
+    - gamma_Q: (M, M) team factor of the transition covariance ``Q = gamma_Q (x) B``.
+    - B:       (2, 2) shared attack/defence factor (used for both Sigma_0 and Q).
     - alpha:   scalar baseline scoring rate.
     - beta:    scalar shared-scoring / correlation parameter.
     """
     mean_0: jax.Array      # (M, 2)
-    sigma_0: jax.Array     # (2M, 2M)
+    gamma_0: jax.Array     # (M, M)
     gamma_Q: jax.Array     # (M, M)
-    B_Q: jax.Array         # (2, 2)
+    B: jax.Array           # (2, 2)
     alpha: float
     beta: float

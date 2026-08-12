@@ -5,7 +5,7 @@ This single script combines:
   * the EM core (forward-filter + RTS smoothing + M-step).
 
 It reuses the EM machinery from ``rbpf/test/src/smoothing.py`` (parameter set:
-estimates ``sigma_0``, ``gamma_Q``, ``B_Q``, ``alpha``, ``beta``; ``mean_0``
+estimates ``gamma_0``, ``gamma_Q``, ``B``, ``alpha``, ``beta``; ``mean_0``
 fixed). Runtime configuration (N, epochs, dates, teams, hardware) is read from
 ``smoothing_gpu_config.json``.
 
@@ -319,9 +319,9 @@ def run_em(n_particles: int, start_date: str):
     print("EM completed. Final parameters:")
     print("  alpha:", final_params.alpha)
     print("  beta:", final_params.beta)
-    print("  B_Q:", final_params.B_Q)
+    print("  B:", final_params.B)
     print("  gamma_Q:", final_params.gamma_Q.shape)
-    print("  sigma_0:", final_params.sigma_0.shape)
+    print("  gamma_0:", final_params.gamma_0.shape)
     print("  mean_0:", final_params.mean_0.shape)
     print(f"Log marginal history: {np.asarray(log_marginal_history).tolist()}")
 
@@ -338,11 +338,11 @@ def print_summary():
         log("Final EM parameters:")
         log(f"  alpha  = {params.get('alpha', 'N/A')} [ESTIMATED]")
         log(f"  beta   = {params.get('beta', 'N/A')} [ESTIMATED]")
-        log(f"  B_Q    = {params.get('B_Q', 'N/A')} [ESTIMATED]")
+        log(f"  B      = {params.get('B', 'N/A')} [ESTIMATED]")
         log(f"  gamma_Q shape = {len(params.get('gamma_Q', []))}x"
             f"{len(params.get('gamma_Q', [[]])[0]) if params.get('gamma_Q') else 'N/A'} [ESTIMATED]")
-        log(f"  sigma_0 shape = {len(params.get('sigma_0', []))}x"
-            f"{len(params.get('sigma_0', [[]])[0]) if params.get('sigma_0') else 'N/A'} [ESTIMATED]")
+        log(f"  gamma_0 shape = {len(params.get('gamma_0', []))}x"
+            f"{len(params.get('gamma_0', [[]])[0]) if params.get('gamma_0') else 'N/A'} [ESTIMATED]")
         log(f"  mean_0 shape = {len(params.get('mean_0', []))}x"
             f"{len(params.get('mean_0', [[]])[0]) if params.get('mean_0') else 'N/A'} [FIXED]")
     else:
@@ -372,7 +372,7 @@ def main():
 
     log("=" * 60)
     log("SMOOTHING RUNNER — STARTING")
-    log("  Reuses rbpf/test/src/smoothing.py EM (sigma_0, gamma_Q, B_Q, alpha, beta; mean_0 fixed).")
+    log("  Reuses rbpf/test/src/smoothing.py EM (gamma_0, gamma_Q, B, alpha, beta; mean_0 fixed).")
     log("=" * 60)
 
     if is_colab():

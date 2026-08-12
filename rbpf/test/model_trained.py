@@ -28,7 +28,7 @@ if _REPO_ROOT not in sys.path:
 
 from rbpf.test.src.data import get_results, WORLDCUP_2026_TEAMS
 from rbpf.test.src.helpers import load_params, generate_augmented_data
-from rbpf.test.src.model import run_filter, compute_covariance_trajectory
+from rbpf.test.src.model import run_filter, compute_gamma_trajectory
 from rbpf.test.src.graphic import (
     plot_top_strengths,
     plot_top_filter_states,
@@ -84,17 +84,16 @@ def main():
     print(f"Loaded params: alpha={params.alpha}, beta={params.beta}")
 
     # Augment model inputs with the deterministic covariance trajectory.
-    sigma_updated, sigma_pred, kalman_gain = compute_covariance_trajectory(
+    gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
         model_inputs=model_inputs,
-        sigma_0=params.sigma_0,
+        gamma_0=params.gamma_0,
         gamma_Q=params.gamma_Q,
-        B_Q=params.B_Q,
         num_teams=NUM_TEAMS,
     )
     augmented_results = generate_augmented_data(
         model_inputs=model_inputs,
-        sigma_updated=sigma_updated,
-        sigma_pred=sigma_pred,
+        gamma_updated=gamma_updated,
+        gamma_pred=gamma_pred,
         kalman_gain=kalman_gain,
     )
 

@@ -9,7 +9,7 @@ from rbpf.test.src.data import WORLDCUP_2026_TEAMS, get_results, ACTIVE_TEAMS
 from rbpf.test.src.helpers import default_init_params, generate_augmented_data, params_to_dict
 from rbpf.test.src.model import (
     run_filter,
-    compute_covariance_trajectory,
+    compute_gamma_trajectory,
     _sample_psd_gaussian,
 )
 from rbpf.test.src.bivariate_poisson import loglik
@@ -59,7 +59,9 @@ def _smoother_rts_single(
     log_w_T = filtered_states.log_weights[-1]  # (N,)
     I_T = jax.random.categorical(cat_key, log_w_T)  # scalar
 
-    Sigma_T = model_inputs.sigma_t[-1]  # (2M, 2M) filtered posterior covariance
+    # Terminal covariance: Sigma_T = gamma_T (x) B (Kronecker, shared B).
+    gamma_T = model_inputs.gamma_t[-1]  # (M, M) filtered posterior team covariance
+    Sigma_T = jnp.kron(gamma_T, params.B)  # (2M, 2M)
     # Sigma_T is PSD with exact-zero rows for observed teams (Schur-complement
     # marginalization). Use the PSD-aware sampler so observed teams stay at
     # their mean instead of jittering.
@@ -77,13 +79,13 @@ def _smoother_rts_single(
         X_next_star, key = carry  # X_next_star: (M, 2)
         key, cat_key, sample_key = jax.random.split(key, 3)
 
-        particles_t, log_w_t, sigma_t, sigma_pred_t1, timestamp_tplus1, timestamp_prev_tplus1 = xs
+        particles_t, log_w_t, gamma_t, gamma_pred_t1, timestamp_tplus1, timestamp_prev_tplus1 = xs
 
         # --- 2.5: Backward weights ---
         # Transition from t -> t+1. Random walk: prediction mean = particle
-        # state (no mean reversion). Prediction covariance = sigma_pred_t[t+1].
+        # state (no mean reversion). Prediction covariance = gamma_pred_t[t+1] (x) B.
         pred_mean = particles_t  # (N, M, 2)
-        pred_Sigma = sigma_pred_t1  # (2M, 2M)
+        pred_Sigma = jnp.kron(gamma_pred_t1, params.B)  # (2M, 2M)
 
         # pred_Sigma is PSD but can be singular / slightly indefinite in
         # float32. Use slogdet for a stable log-det and a small PSD clamp
@@ -104,14 +106,20 @@ def _smoother_rts_single(
         I_t = jax.random.categorical(cat_key, log_backward_weights)  # scalar
 
         # --- 2.6: RTS gain ---
-        # J_t = Sigma_{t|t} Sigma_{t+1|t}^{-1}  (random-walk RTS gain)
-        J = sigma_t @ jnp.linalg.pinv(sigma_pred_t1)  # (2M, 2M)
+        # J_t = Sigma_{t|t} Sigma_{t+1|t}^{-1}  (random-walk RTS gain).
+        # With Kronecker structure, J = (gamma_t (x) B) @ pinv(gamma_pred_t1 (x) B).
+        # Using the Kronecker identity (A (x) B)(C (x) D) = (AC) (x) (BD), and
+        # pinv(gamma_pred (x) B) = pinv(gamma_pred) (x) pinv(B), we get
+        #   J = (gamma_t pinv(gamma_pred_t1)) (x) (B pinv(B)) = J_gamma (x) I_K.
+        J_gamma = gamma_t @ jnp.linalg.pinv(gamma_pred_t1)  # (M, M)
+        J = jnp.kron(J_gamma, jnp.eye(K))  # (2M, 2M)
 
         diff = (X_next_star - pred_mean[I_t]).flatten()  # (2M,)
         mu_RTS = particles_t[I_t] + (J @ diff).reshape(num_teams, K)  # (M, 2)
 
-        Sigma_RTS = sigma_t - J @ sigma_pred_t1 @ J.T  # (2M, 2M)
-        Sigma_RTS = 0.5 * (Sigma_RTS + Sigma_RTS.T)  # Ensure symmetry
+        Gamma_RTS = gamma_t - J_gamma @ gamma_pred_t1 @ J_gamma.T  # (M, M)
+        Gamma_RTS = 0.5 * (Gamma_RTS + Gamma_RTS.T)  # Ensure symmetry
+        Sigma_RTS = jnp.kron(Gamma_RTS, params.B)  # (2M, 2M)
 
         # Deterministic transition when dt = 0 (Q = 0): the state is preserved,
         # so X_t^* = X_{t+1}^* with no sampling. Use lax.cond so the sampling
@@ -130,14 +138,14 @@ def _smoother_rts_single(
 
     xs_particles = filtered_states.particles.x[:-1]       # (T-1, N, M, K)
     xs_log_weights = filtered_states.log_weights[:-1]      # (T-1, N)
-    xs_sigma_t = model_inputs.sigma_t[:-1]                 # (T-1, 2M, 2M)
-    xs_sigma_pred_tplus1 = model_inputs.sigma_pred_t[1:]   # (T-1, 2M, 2M)
+    xs_gamma_t = model_inputs.gamma_t[:-1]                 # (T-1, M, M)
+    xs_gamma_pred_tplus1 = model_inputs.gamma_pred_t[1:]   # (T-1, M, M)
     xs_timestamp_tplus1 = model_inputs.timestamp[1:]        # (T-1,)
     xs_timestamp_prev_tplus1 = model_inputs.timestamp_prev[1:]  # (T-1,)
     _, smoothed_rest = jax.lax.scan(
         f=backward_sampling,
         init=(X_T_STAR, backward_key),
-        xs=(xs_particles, xs_log_weights, xs_sigma_t, xs_sigma_pred_tplus1,
+        xs=(xs_particles, xs_log_weights, xs_gamma_t, xs_gamma_pred_tplus1,
             xs_timestamp_tplus1, xs_timestamp_prev_tplus1),
         reverse=True,
     )
@@ -188,18 +196,17 @@ def E_step(
     print(f"  Start time: {model_inputs.timestamp[0]}, End time: {model_inputs.timestamp[-1]}")
 
     # initialize covariance trajectory
-    sigma_updated, sigma_pred, kalman_gain = compute_covariance_trajectory(
+    gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
         model_inputs=model_inputs,
-        sigma_0=params.sigma_0,
+        gamma_0=params.gamma_0,
         gamma_Q=params.gamma_Q,
-        B_Q=params.B_Q,
         num_teams=num_teams,
     )
 
     augmented_results = generate_augmented_data(
         model_inputs=model_inputs,
-        sigma_updated=sigma_updated,
-        sigma_pred=sigma_pred,
+        gamma_updated=gamma_updated,
+        gamma_pred=gamma_pred,
         kalman_gain=kalman_gain,
     )
 
@@ -228,9 +235,10 @@ def _complete_log_likelihood(
 ) -> jax.Array:
     """log p(y, X) for a single trajectory X (complete-data log-likelihood).
 
-    Includes the initial term ``log p(X_0 | mean_0, sigma_0)``, the transition
-    terms ``log p(X_t | X_{t-1})`` (random walk, ``Q = gamma_Q (x) B_Q``), and
-    the observation terms ``log p(y_t | X_t)`` (bivariate Poisson).
+    Includes the initial term ``log p(X_0 | mean_0, gamma_0 (x) B)``, the
+    transition terms ``log p(X_t | X_{t-1})`` (random walk,
+    ``Q = gamma_Q (x) B``), and the observation terms ``log p(y_t | X_t)``
+    (bivariate Poisson).
     """
     n_observations = X.shape[0]
     num_teams = X.shape[1]
@@ -240,9 +248,9 @@ def _complete_log_likelihood(
     observation_indices = jnp.arange(n_observations)
     transition_indices = jnp.arange(1, n_observations)
 
-    # --- Initial term: log p(X_0 | mean_0, sigma_0) ---
+    # --- Initial term: log p(X_0 | mean_0, gamma_0 (x) B) ---
     diff0 = (X[0] - params.mean_0).reshape(-1)  # (2M,)
-    sigma_0 = params.sigma_0  # (2M, 2M)
+    sigma_0 = jnp.kron(params.gamma_0, params.B)  # (2M, 2M)
     quad0 = diff0 @ jnp.linalg.solve(sigma_0, diff0)
     sign0, log_det0 = jnp.linalg.slogdet(sigma_0)
     init_ll = -0.5 * quad0 - 0.5 * log_det0 - 0.5 * dim * jnp.log(2 * jnp.pi)
@@ -261,9 +269,9 @@ def _complete_log_likelihood(
     obs_ll = jnp.sum(jax.vmap(obs_step)(observation_indices))
 
     # --- Transition log-likelihood: sum_t log p(x_t | x_{t-1}) ---
-    # Random walk: X_t = X_{t-1} + eps, eps ~ N(0, dt * Q), Q = gamma_Q (x) B_Q.
+    # Random walk: X_t = X_{t-1} + eps, eps ~ N(0, dt * Q), Q = gamma_Q (x) B.
     dts = model_inputs.timestamp[transition_indices] - model_inputs.timestamp_prev[transition_indices]
-    Q = jnp.kron(params.gamma_Q, params.B_Q)  # (2M, 2M)
+    Q = jnp.kron(params.gamma_Q, params.B)  # (2M, 2M)
 
     def transition_step(observation_index, dt):
         pred_mean = X[observation_index - 1]  # (M, K) random-walk prediction
@@ -364,7 +372,7 @@ def _constrain(params: EMParams) -> EMParams:
     """Apply validity constraints so parameters stay in their support.
 
     - alpha, beta unconstrained real.
-    - sigma_0, gamma_Q, B_Q projected onto the positive-definite cone
+    - gamma_0, gamma_Q, B projected onto the positive-definite cone
       (full-rank, so the transition covariance Q and the smoother covariances
       stay invertible and their log-determinants finite).
 
@@ -372,14 +380,14 @@ def _constrain(params: EMParams) -> EMParams:
     automatically); this projection is retained as a safety net for params
     constructed outside the optimizer (e.g. hand-loaded values).
     """
-    sigma_0 = _project_psd(params.sigma_0)
+    gamma_0 = _project_psd(params.gamma_0)
     gamma_Q = _project_psd(params.gamma_Q)
-    B_Q = _project_psd(params.B_Q)
+    B = _project_psd(params.B)
     return EMParams(
         mean_0=params.mean_0,
-        sigma_0=sigma_0,
+        gamma_0=gamma_0,
         gamma_Q=gamma_Q,
-        B_Q=B_Q,
+        B=B,
         alpha=params.alpha,
         beta=params.beta,
     )
@@ -396,7 +404,7 @@ def M_step(
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
 
     The objective is the MCEM loss: -average over the M smoothed trajectories
-    of log p(y, X^*). sigma_0, gamma_Q, and B_Q are Cholesky-parameterized so
+    of log p(y, X^*). gamma_0, gamma_Q, and B are Cholesky-parameterized so
     they stay positive-definite by construction.
 
     Returns:
@@ -404,19 +412,18 @@ def M_step(
         loss_best, loss_trace).
     """
     num_teams = prev_params.gamma_Q.shape[0]
-    dim = 2 * num_teams
 
     def _loss_and_grad(carry):
         # Reconstruct PD matrices from free Cholesky factors.
-        sigma_0 = _psd_from_cholesky(carry["L_sigma"], dim)
-        gamma_Q = _psd_from_cholesky(carry["L_gamma"], num_teams)
-        B_Q = _psd_from_cholesky(carry["L_B"], 2)
+        gamma_0 = _psd_from_cholesky(carry["L_gamma0"], num_teams)
+        gamma_Q = _psd_from_cholesky(carry["L_gammaQ"], num_teams)
+        B = _psd_from_cholesky(carry["L_B"], 2)
         return loss_fn(
             EMParams(
                 mean_0=prev_params.mean_0,
-                sigma_0=sigma_0,
+                gamma_0=gamma_0,
                 gamma_Q=gamma_Q,
-                B_Q=B_Q,
+                B=B,
                 alpha=carry["alpha"],
                 beta=carry["beta"],
             ),
@@ -428,9 +435,9 @@ def M_step(
 
     # Initial parameter blocks (dict so optax.multi_transform labels align).
     carry = {
-        "L_sigma": _cholesky_from_psd(prev_params.sigma_0, dim),
-        "L_gamma": _cholesky_from_psd(prev_params.gamma_Q, num_teams),
-        "L_B": _cholesky_from_psd(prev_params.B_Q, 2),
+        "L_gamma0": _cholesky_from_psd(prev_params.gamma_0, num_teams),
+        "L_gammaQ": _cholesky_from_psd(prev_params.gamma_Q, num_teams),
+        "L_B": _cholesky_from_psd(prev_params.B, 2),
         "alpha": prev_params.alpha,
         "beta": prev_params.beta,
     }
@@ -438,22 +445,22 @@ def M_step(
     # --- Per-parameter learning rates (scale-aware) ---
     base = learning_rate
     lr_mapping = {
-        "L_sigma": base * 1,
-        "L_gamma": base * 1,
+        "L_gamma0": base * 1,
+        "L_gammaQ": base * 1,
         "L_B": base * 1,
         "alpha": base * 1.0,
         "beta": base * 1.0,
     }
     transforms = {
-        "L_sigma": optax.adam(lr_mapping["L_sigma"]),
-        "L_gamma": optax.adam(lr_mapping["L_gamma"]),
+        "L_gamma0": optax.adam(lr_mapping["L_gamma0"]),
+        "L_gammaQ": optax.adam(lr_mapping["L_gammaQ"]),
         "L_B": optax.adam(lr_mapping["L_B"]),
         "alpha": optax.adam(lr_mapping["alpha"]),
         "beta": optax.adam(lr_mapping["beta"]),
     }
     param_labels = {
-        "L_sigma": "L_sigma",
-        "L_gamma": "L_gamma",
+        "L_gamma0": "L_gamma0",
+        "L_gammaQ": "L_gammaQ",
         "L_B": "L_B",
         "alpha": "alpha",
         "beta": "beta",
@@ -490,14 +497,14 @@ def M_step(
     loss_best = best_loss                 # best objective over the M-step
 
     # Reconstruct PD matrices from the best free factors and project onto support.
-    best_sigma_0 = _psd_from_cholesky(best_carry["L_sigma"], dim)
-    best_gamma_Q = _psd_from_cholesky(best_carry["L_gamma"], num_teams)
-    best_B_Q = _psd_from_cholesky(best_carry["L_B"], 2)
+    best_gamma_0 = _psd_from_cholesky(best_carry["L_gamma0"], num_teams)
+    best_gamma_Q = _psd_from_cholesky(best_carry["L_gammaQ"], num_teams)
+    best_B = _psd_from_cholesky(best_carry["L_B"], 2)
     final = _constrain(EMParams(
         mean_0=prev_params.mean_0,
-        sigma_0=best_sigma_0,
+        gamma_0=best_gamma_0,
         gamma_Q=best_gamma_Q,
-        B_Q=best_B_Q,
+        B=best_B,
         alpha=best_carry["alpha"],
         beta=best_carry["beta"],
     ))
@@ -554,9 +561,9 @@ def run_EM(
     print("EM completed. Final parameters:")
     print("  alpha:", params.alpha)
     print("  beta:", params.beta)
-    print("  B_Q:", params.B_Q)
+    print("  B:", params.B)
     print("  gamma_Q:", params.gamma_Q.shape)
-    print("  sigma_0:", params.sigma_0.shape)
+    print("  gamma_0:", params.gamma_0.shape)
     print("  mean_0:", params.mean_0.shape)
 
     em_diagnostics = {

@@ -61,46 +61,48 @@ def propagate_sample(
     model_inputs: RBPFFootballResults,
     mean: jnp.ndarray,
     gamma_Q: jnp.ndarray,
-    B_Q: jnp.ndarray,
+    B: jnp.ndarray,
     num_teams: int,
 ):
     """Random-walk propagation with Rao-Blackwellized Kalman update.
 
     The random-walk transition has no mean reversion, so the prediction mean is
     simply the previous state: ``mu_{t|t-1} = mu_{t-1|t-1}``. The prediction
-    covariance ``Sigma_{t|t-1}`` and the Kalman gain ``K_t`` are precomputed
-    deterministically in ``compute_covariance_trajectory`` and carried in
+    team covariance ``Gamma_{t|t-1}`` and the Kalman gain ``K_t`` are
+    precomputed deterministically in ``compute_gamma_trajectory`` and carried in
     ``model_inputs``.
 
     We sample only the observed block (home + away teams, 4 dims) from the
-    prediction Gaussian, then condition the remaining (Rao-Blackwellized)
-    teams on it via the Kalman gain.
+    prediction Gaussian ``Sigma_EE = gamma_EE (x) B``, then condition the
+    remaining (Rao-Blackwellized) teams on it via the Kalman gain in team space.
     """
     # 1. Random-walk prediction: mean unchanged (no phi_t / mean reversion).
     pred_mean = state.x  # (M, 2)
 
-    sigma_pred = model_inputs.sigma_pred_t  # (2M, 2M)
+    gamma_pred = model_inputs.gamma_pred_t  # (M, M)
 
     h = model_inputs.home_team_id
     a = model_inputs.away_team_id
-    obs_indices_flat = jnp.array([2 * h, 2 * h + 1, 2 * a, 2 * a + 1])  # (4,)
+    obs_indices = jnp.array([h, a])  # (2,)
 
-    # 2. Sample the observed block.
-    mu_E = pred_mean.reshape(-1)[obs_indices_flat]  # (4,)
-    Sigma_EE = sigma_pred[jnp.ix_(obs_indices_flat, obs_indices_flat)]  # (4, 4)
+    # 2. Sample the observed block (home + away, 4 dims).
+    # mu_E: (2, 2) -> flatten to (4,)
+    mu_E = pred_mean[obs_indices]  # (2, 2)
+    gamma_EE = gamma_pred[jnp.ix_(obs_indices, obs_indices)]  # (2, 2)
+    Sigma_EE = jnp.kron(gamma_EE, B)  # (4, 4)
 
     key, subkey = jax.random.split(key)
     # PSD-aware sampler: robust to the rare dt==0 re-observation case where
     # Sigma_EE is singular (a team's posterior variance was zeroed). Zero-
     # variance directions stay exactly at the mean.
-    x_E_flat = _sample_psd_gaussian(subkey, mu_E, Sigma_EE)  # (4,)
+    x_E_flat = _sample_psd_gaussian(subkey, mu_E.flatten(), Sigma_EE)  # (4,)
+    x_E = x_E_flat.reshape(2, 2)  # (2, 2)
 
-    # 3. Kalman update for ALL teams (Rao-Blackwellization).
-    kalman_gain = model_inputs.kalman_gain_t  # (2M, 4)
-    x_update_flat = pred_mean.reshape(-1) + kalman_gain @ (x_E_flat - mu_E)  # (2M,)
+    # 3. Kalman update for ALL teams (Rao-Blackwellization) in team space.
+    kalman_gain = model_inputs.kalman_gain_t  # (M, 2)
+    x_update = pred_mean + kalman_gain @ (x_E - mu_E)  # (M, 2)
     # Overwrite observed teams with the sampled values.
-    x_update_flat = x_update_flat.at[obs_indices_flat].set(x_E_flat)
-    x_update = x_update_flat.reshape(num_teams, 2)  # (M, 2)
+    x_update = x_update.at[obs_indices].set(x_E)
     return RBPFState(x=x_update)
 
 
@@ -132,7 +134,7 @@ def build_rbpf_filter(
             propagate_sample,
             mean=params.mean_0,
             gamma_Q=params.gamma_Q,
-            B_Q=params.B_Q,
+            B=params.B,
             num_teams=num_teams,
         ),
         log_potential=partial(
@@ -148,61 +150,59 @@ def build_rbpf_filter(
 
 
 @partial(jax.jit, static_argnames=("num_teams",))
-def compute_covariance_trajectory(
+def compute_gamma_trajectory(
     model_inputs: FootballResults,
-    sigma_0: jnp.ndarray,
+    gamma_0: jnp.ndarray,
     gamma_Q: jnp.ndarray,
-    B_Q: jnp.ndarray,
     num_teams: int,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Deterministic covariance trajectory for the random-walk model.
+    """Deterministic team-covariance trajectory for the random-walk model.
 
     The covariance evolution does not depend on the particle states, so we can
-    compute the full ``2M x 2M`` trajectory with a single ``lax.scan``:
+    compute the ``M x M`` team-covariance trajectory with a single ``lax.scan``.
+    With the shared attack/defence factor ``B``, the prediction is
 
-        Sigma_{t|t-1} = Sigma_{t-1|t-1} + dt_t * Q,   Q = gamma_Q (x) B_Q
-        K_t           = Sigma_{t|t-1}[:, O] pinv(Sigma_{t|t-1}[O, O])
-        Sigma_{t|t}   = Sigma_{t|t-1} - K_t Sigma_{t|t-1}[O, :]
+        Gamma_{t|t-1} = Gamma_{t-1|t-1} + dt_t * gamma_Q
+        K_t           = Gamma_{t|t-1}[:, O] pinv(Gamma_{t|t-1}[O, O])
+        Gamma_{t|t}   = Gamma_{t|t-1} - K_t Gamma_{t|t-1}[O, :]
 
-    where ``O`` is the observed block (home + away teams, 4 dims). The observed
-    teams' posterior rows/cols are zeroed (Schur-complement marginalization).
+    where ``O`` is the observed block (home + away teams, 2 dims in team space).
+    The observed teams' posterior rows/cols are zeroed (Schur-complement
+    marginalization).
 
     Returns:
-        (sigma_updated, sigma_pred, kalman_gain), each of shape
-        ``(T, 2M, 2M)`` / ``(T, 2M, 4)``.
+        (gamma_updated, gamma_pred, kalman_gain), each of shape
+        ``(T, M, M)`` / ``(T, M, 2)``.
     """
-    Q = jnp.kron(gamma_Q, B_Q)  # (2M, 2M)
-    dim = 2 * num_teams
-
-    def sigma_step(sigma_prev, model_input):
+    def gamma_step(gamma_prev, model_input):
         dt = model_input.timestamp - model_input.timestamp_prev
-        sigma_pred = sigma_prev + dt * Q
-        sigma_pred = 0.5 * (sigma_pred + sigma_pred.T)  # ensure symmetry
+        gamma_pred = gamma_prev + dt * gamma_Q
+        gamma_pred = 0.5 * (gamma_pred + gamma_pred.T)  # ensure symmetry
 
         h = model_input.home_team_id
         a = model_input.away_team_id
-        obs_indices_flat = jnp.array([2 * h, 2 * h + 1, 2 * a, 2 * a + 1])
+        obs_indices = jnp.array([h, a])  # (2,)
 
-        sigma_EE = sigma_pred[jnp.ix_(obs_indices_flat, obs_indices_flat)]
-        sigma_EE = 0.5 * (sigma_EE + sigma_EE.T)
-        sigma_RE = sigma_pred[:, obs_indices_flat]
+        gamma_EE = gamma_pred[jnp.ix_(obs_indices, obs_indices)]
+        gamma_EE = 0.5 * (gamma_EE + gamma_EE.T)
+        gamma_RE = gamma_pred[:, obs_indices]
 
-        # Handles both positive-definite and structurally singular sigma_EE.
-        K = sigma_RE @ jnp.linalg.pinv(sigma_EE)
+        # Handles both positive-definite and structurally singular gamma_EE.
+        K = gamma_RE @ jnp.linalg.pinv(gamma_EE)
 
-        sigma_updated = sigma_pred - K @ sigma_RE.T
-        sigma_updated = 0.5 * (sigma_updated + sigma_updated.T)
+        gamma_updated = gamma_pred - K @ gamma_RE.T
+        gamma_updated = 0.5 * (gamma_updated + gamma_updated.T)
 
-        obs_mask = jnp.zeros(dim, dtype=bool).at[obs_indices_flat].set(True)
+        obs_mask = jnp.zeros(num_teams, dtype=bool).at[obs_indices].set(True)
         keep_mask = jnp.outer(~obs_mask, ~obs_mask)
-        sigma_updated = sigma_updated * keep_mask
+        gamma_updated = gamma_updated * keep_mask
 
-        return sigma_updated, (sigma_updated, sigma_pred, K)
+        return gamma_updated, (gamma_updated, gamma_pred, K)
 
-    _, (sigma_updated, sigma_pred, kalman_gain) = jax.lax.scan(
-        f=sigma_step, init=sigma_0, xs=model_inputs
+    _, (gamma_updated, gamma_pred, kalman_gain) = jax.lax.scan(
+        f=gamma_step, init=gamma_0, xs=model_inputs
     )
-    return sigma_updated, sigma_pred, kalman_gain
+    return gamma_updated, gamma_pred, kalman_gain
 
 
 @partial(jax.jit, static_argnames=("num_teams", "n_particles"))
@@ -247,11 +247,10 @@ def main():
 
     print("Running filter (random-walk)...")
     key, filter_key = jax.random.split(key)
-    sigma_updated, sigma_pred, kalman_gain = compute_covariance_trajectory(
+    gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
         model_inputs=model_inputs,
-        sigma_0=params.sigma_0,
+        gamma_0=params.gamma_0,
         gamma_Q=params.gamma_Q,
-        B_Q=params.B_Q,
         num_teams=NUM_TEAMS,
     )
     augmented_results = RBPFFootballResults(
@@ -262,8 +261,8 @@ def main():
         away_team_id=model_inputs.away_team_id,
         home_score=model_inputs.home_score,
         away_score=model_inputs.away_score,
-        sigma_t=sigma_updated,
-        sigma_pred_t=sigma_pred,
+        gamma_t=gamma_updated,
+        gamma_pred_t=gamma_pred,
         kalman_gain_t=kalman_gain,
     )
     try:
@@ -281,7 +280,7 @@ def main():
     print(f"  observations:   {len(model_inputs.timestamp)}")
     print(f"  particles.x:     {filtered_states.particles.x.shape}")
     print(filtered_states.particles.x[-1][0])  # last time step's particle states
-    print(f"  particles.sigma: {augmented_results.sigma_t.shape}")
+    print(f"  particles.gamma: {augmented_results.gamma_t.shape}")
     print(f"  log_weights:     {filtered_states.log_weights.shape}")
     print(f"  log_normalizing_constant: {filtered_states.log_normalizing_constant.shape}")
 

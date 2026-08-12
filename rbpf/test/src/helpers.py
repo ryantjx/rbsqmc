@@ -16,9 +16,9 @@ def params_to_dict(params: EMParams) -> dict:
     """Convert EMParams to a JSON-serializable dict."""
     return {
         "mean_0": jnp.array(params.mean_0).tolist(),
-        "sigma_0": jnp.array(params.sigma_0).tolist(),
+        "gamma_0": jnp.array(params.gamma_0).tolist(),
         "gamma_Q": jnp.array(params.gamma_Q).tolist(),
-        "B_Q": jnp.array(params.B_Q).tolist(),
+        "B": jnp.array(params.B).tolist(),
         "alpha": float(params.alpha),
         "beta": float(params.beta),
     }
@@ -28,9 +28,9 @@ def params_from_dict(d: dict) -> EMParams:
     """Convert a JSON dict back to EMParams."""
     return EMParams(
         mean_0=jnp.array(d["mean_0"]),
-        sigma_0=jnp.array(d["sigma_0"]),
+        gamma_0=jnp.array(d["gamma_0"]),
         gamma_Q=jnp.array(d["gamma_Q"]),
-        B_Q=jnp.array(d["B_Q"]),
+        B=jnp.array(d["B"]),
         alpha=d["alpha"],
         beta=d["beta"],
     )
@@ -100,15 +100,16 @@ def default_init_params(
 ) -> EMParams:
     """Generate default initial parameters for the random-walk model.
 
-    The initial covariance ``sigma_0`` is a *general* ``(2M, 2M)`` matrix. As a
-    convenient positive-definite starting point we build it as a Kronecker
-    product ``gamma_0 (x) B_0`` of a team covariance (from the regional
-    correlation prior) and an attack/defence covariance. This is only an
-    *initialization*; the M-step's Cholesky parameterization lets ``sigma_0``
-    become a fully general matrix during training.
+    The covariance is Kronecker-structured ``Sigma = gamma (x) B`` with a
+    *shared* attack/defence factor ``B`` (``B_0 = B_Q = B``). We build:
 
-    The transition covariance factors ``gamma_Q`` (team) and ``B_Q``
-    (attack/defence) are initialized to small, well-conditioned PD matrices.
+    - ``gamma_0``: team covariance from the regional correlation prior.
+    - ``B``:       shared ``2 x 2`` attack/defence covariance.
+    - ``gamma_Q``: small team covariance for the transition ``Q = gamma_Q (x) B``.
+      The scale is kept very small (0.001) so the random-walk transition variance
+      grows slowly over time, preventing the team strengths from drifting to
+      extreme values (which made the bivariate-Poisson likelihood explode on
+      long time horizons).
     """
     rho_team = 0.03
     if team_id_to_name is not None:
@@ -126,31 +127,22 @@ def default_init_params(
     gamma_0 = D @ C0 @ D
 
     cov_attack_defence = 0.2
-    B_0 = jnp.array([
+    B = jnp.array([
         [1.0, cov_attack_defence],
         [cov_attack_defence, 1.0],
     ])
 
-    # General initial covariance: gamma_0 (x) B_0  (2M, 2M)
-    sigma_0 = jnp.kron(gamma_0, B_0)
-
-    # Transition covariance factors: Q = gamma_Q (x) B_Q.
-    # gamma_Q: small team covariance (scaled identity + small correlation).
-    # The scale is kept very small (0.001) so the random-walk transition
-    # variance grows slowly over time, preventing the team strengths from
-    # drifting to extreme values (which made the bivariate-Poisson likelihood
-    # explode on long time horizons).
+    # Transition covariance factor: Q = gamma_Q (x) B (shared B).
     gamma_Q = 0.001 * (
         (1.0 - rho_team) * jnp.eye(num_teams)
         + rho_team * jnp.ones((num_teams, num_teams))
     )
-    B_Q = 0.001 * B_0
 
     return EMParams(
         mean_0=jnp.zeros((num_teams, 2)),
-        sigma_0=sigma_0,
+        gamma_0=gamma_0,
         gamma_Q=gamma_Q,
-        B_Q=B_Q,
+        B=B,
         alpha=0.2,
         beta=-4.0,
     )
@@ -173,13 +165,13 @@ def to_jax_data(df: pd.DataFrame) -> FootballResults:
 
 def generate_augmented_data(
     model_inputs: FootballResults,
-    sigma_updated: jnp.ndarray,
-    sigma_pred: jnp.ndarray,
+    gamma_updated: jnp.ndarray,
+    gamma_pred: jnp.ndarray,
     kalman_gain: jnp.ndarray,
 ) -> RBPFFootballResults:
     """
     Generate augmented data for the RBPF model, including the deterministic
-    covariance trajectory (filtered posterior, prediction, and Kalman gain).
+    team-covariance trajectory (filtered posterior, prediction, and Kalman gain).
     """
     return RBPFFootballResults(
         match_index_id=model_inputs.match_index_id,
@@ -189,7 +181,7 @@ def generate_augmented_data(
         away_team_id=model_inputs.away_team_id,
         home_score=model_inputs.home_score,
         away_score=model_inputs.away_score,
-        sigma_t=sigma_updated,
-        sigma_pred_t=sigma_pred,
+        gamma_t=gamma_updated,
+        gamma_pred_t=gamma_pred,
         kalman_gain_t=kalman_gain,
     )
