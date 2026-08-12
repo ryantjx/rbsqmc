@@ -706,19 +706,12 @@ def run_EM(
 
         # Free GPU/TPU memory between epochs. The E-step materializes the full
         # (T, M, M) gamma trajectories and (T, N, M, K) filter states, which at
-        # M=228 (ACTIVE_TEAMS) is ~8GB. XLA caches compiled executables and
-        # buffers across epochs, so without explicit release the second epoch's
-        # E-step OOMs. Clearing the JAX caches and the device allocator lets
-        # epoch N+1 reuse epoch N's memory.
+        # M=228 (ACTIVE_TEAMS) is ~8GB. The loop variables ``smoothed_trajectories``
+        # and ``augmented_results`` keep those device buffers alive into the next
+        # epoch, so the second E-step OOMs. Explicitly drop them and clear the
+        # JAX compilation cache so epoch N+1 can reuse epoch N's memory.
+        del smoothed_trajectories, augmented_results
         jax.clear_caches()
-        # Best-effort device memory release (GPU/TPU allocators). The backend
-        # object exposes ``memory_release`` on CUDA/TPU; guard against absence.
-        try:
-            backend = jax.default_backend()
-            if backend in ("cuda", "tpu", "rocm"):
-                jax.devices()[0].memory_release()
-        except Exception:
-            pass
 
     print("EM completed. Final parameters:")
     print("  kappa:", params.kappa)
