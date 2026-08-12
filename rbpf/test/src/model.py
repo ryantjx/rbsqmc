@@ -285,9 +285,29 @@ def main():
     print(f"  log_normalizing_constant: {filtered_states.log_normalizing_constant.shape}")
 
     import os
+    import numpy as np
     from rbpf.test.src.graphic import plot_all
     path = os.path.join(os.path.dirname(__file__), "..", "outputs", "graphic")
     plot_all(filtered_states, augmented_results, team_id_to_name, top_n=5, save_path=path)
+
+    # --- Save final filter states and full correlation matrix to outputs_gpu ---
+    out_dir = os.path.join(os.path.dirname(__file__), "..", "outputs_gpu")
+    os.makedirs(out_dir, exist_ok=True)
+
+    x_final = np.asarray(filtered_states.particles.x[-1])  # (N, M, 2)
+    final_mean = x_final.mean(axis=0)  # (M, 2)
+    np.save(os.path.join(out_dir, "final_filter_states.npy"), final_mean)
+
+    gamma_final = np.asarray(augmented_results.gamma_t[-1])  # (M, M)
+    std = np.sqrt(np.diag(gamma_final))
+    std_safe = np.where(std > 1e-10, std, 1.0)
+    corr = gamma_final / np.outer(std_safe, std_safe)
+    corr = np.clip(corr, -1, 1)
+    np.save(os.path.join(out_dir, "correlation_matrix.npy"), corr)
+
+    team_names = [team_id_to_name[i] for i in range(NUM_TEAMS)]
+    np.save(os.path.join(out_dir, "team_names.npy"), np.array(team_names))
+    print(f"Saved final filter states and correlation matrix under {out_dir}/")
 
 
 if __name__ == "__main__":

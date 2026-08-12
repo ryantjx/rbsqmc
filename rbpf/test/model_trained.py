@@ -19,6 +19,7 @@ import sys
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 # Ensure the repo root is importable even when this file is run directly as a
 # script (in which case sys.path[0] is the script's own directory, not the root).
@@ -132,6 +133,26 @@ def main():
         save_path=os.path.join(args.output_dir, "log_normalizing_constant.png"),
     )
 
+    # --- Save final filter states and full correlation matrix as .npy ---
+    # Final filtered posterior mean per team: (M, 2) [attack, defence].
+    x_final = np.asarray(filtered_states.particles.x[-1])  # (N, M, 2)
+    final_mean = x_final.mean(axis=0)  # (M, 2)
+    np.save(os.path.join(args.output_dir, "final_filter_states.npy"), final_mean)
+
+    # Full between-team correlation matrix from the final team covariance
+    # gamma_t[-1] (M, M), normalized to a correlation matrix.
+    gamma_final = np.asarray(augmented_results.gamma_t[-1])  # (M, M)
+    std = np.sqrt(np.diag(gamma_final))
+    std_safe = np.where(std > 1e-10, std, 1.0)
+    corr = gamma_final / np.outer(std_safe, std_safe)
+    corr = np.clip(corr, -1, 1)
+    np.save(os.path.join(args.output_dir, "correlation_matrix.npy"), corr)
+
+    # Also save the team names for reference.
+    team_names = [team_id_to_name[i] for i in range(NUM_TEAMS)]
+    np.save(os.path.join(args.output_dir, "team_names.npy"), np.array(team_names))
+
+    print(f"Saved final filter states and correlation matrix under {args.output_dir}/")
     print(f"Graphics saved under {args.output_dir}/")
 
 
