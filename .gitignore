@@ -58,5 +58,12 @@ outputs/
 *.jpg
 *.pdf
 
+# QMC script outputs / large generated artifacts (src/scripts/qmc)
+src/scripts/qmc/outputs/
+src/scripts/qmc/qmc_archive/outputs/
+src/scripts/qmc/*.npz
+src/scripts/qmc/qmc_archive/*.npz
+src/scripts/qmc/qmc_archive/outputs/images/
+
 # Logs
 *.log
