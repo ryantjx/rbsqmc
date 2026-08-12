@@ -232,6 +232,7 @@ def _complete_log_likelihood(
     params: EMParams,
     X: jnp.ndarray,  # (T, num_teams, 2) -- one smoothed trajectory
     model_inputs: RBPFFootballResults,
+    lambda_weight: float = 0.5,
 ) -> jax.Array:
     """log p(y, X) for a single trajectory X (complete-data log-likelihood).
 
@@ -239,6 +240,12 @@ def _complete_log_likelihood(
     transition terms ``log p(X_t | X_{t-1})`` (random walk,
     ``Q = gamma_Q (x) B``), and the observation terms ``log p(y_t | X_t)``
     (bivariate Poisson).
+
+    The transition and observation terms are weighted to balance their scales:
+    the transition term is weighted by ``lambda_weight`` and the observation
+    (likelihood) term by ``1 - lambda_weight``. This prevents the full-state
+    transition log-density (which is summed over all ``2M`` dims) from
+    dominating the objective and driving ``gamma_Q`` to grow unboundedly.
     """
     n_observations = X.shape[0]
     num_teams = X.shape[1]
@@ -290,22 +297,27 @@ def _complete_log_likelihood(
 
     transition_ll = jnp.sum(jax.vmap(transition_step)(transition_indices, dts))
 
-    return init_ll + obs_ll + transition_ll
+    # Weighted objective: transition weighted by lambda, observation by 1-lambda.
+    return init_ll + (1.0 - lambda_weight) * obs_ll + lambda_weight * transition_ll
 
 
 def loss_fn(
     params: EMParams,
     smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
     model_inputs: RBPFFootballResults,
+    lambda_weight: float = 0.5,
 ):
     """MCEM objective: -average over M trajectories of log p(y, X^*).
 
     This is a proper Monte Carlo estimate of the EM objective
     Q(theta) = E_{p(X|y,theta_old)}[log p(y, X | theta)], averaged over the
     M smoothed trajectories from the E-step.
+
+    The transition term is weighted by ``lambda_weight`` and the observation
+    (likelihood) term by ``1 - lambda_weight`` (see ``_complete_log_likelihood``).
     """
     per_traj = jax.vmap(
-        lambda X: _complete_log_likelihood(params, X, model_inputs)
+        lambda X: _complete_log_likelihood(params, X, model_inputs, lambda_weight)
     )(smoothed_trajectories)  # (M,)
     return -jnp.mean(per_traj)
 
@@ -399,6 +411,7 @@ def M_step(
     prev_params: EMParams,
     learning_rate: float,
     n_gradient_steps: int,
+    lambda_weight: float = 0.5,
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
@@ -406,6 +419,9 @@ def M_step(
     The objective is the MCEM loss: -average over the M smoothed trajectories
     of log p(y, X^*). gamma_0, gamma_Q, and B are Cholesky-parameterized so
     they stay positive-definite by construction.
+
+    ``lambda_weight`` weights the transition term (vs ``1 - lambda_weight`` for
+    the observation term) in the objective, balancing their scales.
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
@@ -429,6 +445,7 @@ def M_step(
             ),
             smoothed_trajectories,
             model_inputs,
+            lambda_weight=lambda_weight,
         )
 
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
@@ -523,6 +540,7 @@ def run_EM(
     n_gradient_steps: int = 10,
     learning_rate: float = 1e-3,
     n_trajectories: int = N_TRAJECTORIES,
+    lambda_weight: float = 0.5,
     key: jax.Array = jax.random.PRNGKey(42),
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     params = init_params
@@ -553,6 +571,7 @@ def run_EM(
             prev_params=params,
             learning_rate=learning_rate,
             n_gradient_steps=n_gradient_steps,
+            lambda_weight=lambda_weight,
         )
         mstep_start_history.append(loss_start)
         mstep_end_history.append(loss_best)
