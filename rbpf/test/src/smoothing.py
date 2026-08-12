@@ -232,7 +232,6 @@ def _complete_log_likelihood(
     params: EMParams,
     X: jnp.ndarray,  # (T, num_teams, 2) -- one smoothed trajectory
     model_inputs: RBPFFootballResults,
-    lambda_weight: float = 0.5,
 ) -> jax.Array:
     """log p(y, X) for a single trajectory X (complete-data log-likelihood).
 
@@ -241,28 +240,34 @@ def _complete_log_likelihood(
     ``Q = gamma_Q (x) B``), and the observation terms ``log p(y_t | X_t)``
     (bivariate Poisson).
 
-    The transition and observation terms are weighted to balance their scales:
-    the transition term is weighted by ``lambda_weight`` and the observation
-    (likelihood) term by ``1 - lambda_weight``. This prevents the full-state
-    transition log-density (which is summed over all ``2M`` dims) from
-    dominating the objective and driving ``gamma_Q`` to grow unboundedly.
+    Each term is scaled by its size (number of dimensions it spans) so the
+    three terms are on a comparable per-dimension scale:
+
+    - ``init_ll``: a single ``2M``-dim Gaussian, scaled by ``2M``.
+    - ``obs_ll``: ``T`` observations, each ``2``-dim (home + away goals),
+      scaled by ``2 * T``.
+    - ``transition_ll``: ``T-1`` transitions, each ``2M``-dim, scaled by
+      ``2M * (T-1)``.
     """
     n_observations = X.shape[0]
     num_teams = X.shape[1]
     K = X.shape[2]  # 2 (attack/defence)
     dim = num_teams * K  # FULL state dimension (2M)
+    n_transitions = n_observations - 1
 
     observation_indices = jnp.arange(n_observations)
     transition_indices = jnp.arange(1, n_observations)
 
-    # --- Initial term: log p(X_0 | mean_0, gamma_0 (x) B) ---
+    # --- Initial term: log p(X_0 | mean_0, gamma_0 (x) B), scaled by dim ---
     diff0 = (X[0] - params.mean_0).reshape(-1)  # (2M,)
     sigma_0 = jnp.kron(params.gamma_0, params.B)  # (2M, 2M)
     quad0 = diff0 @ jnp.linalg.solve(sigma_0, diff0)
     sign0, log_det0 = jnp.linalg.slogdet(sigma_0)
-    init_ll = -0.5 * quad0 - 0.5 * log_det0 - 0.5 * dim * jnp.log(2 * jnp.pi)
+    init_ll = (
+        -0.5 * quad0 - 0.5 * log_det0 - 0.5 * dim * jnp.log(2 * jnp.pi)
+    ) / dim
 
-    # --- Observation log-likelihood: sum_t log p(y_t | x_t) ---
+    # --- Observation log-likelihood: sum_t log p(y_t | x_t), scaled by 2*T ---
     def obs_step(observation_index):
         return loglik(
             y=jnp.array([model_inputs.home_score[observation_index], model_inputs.away_score[observation_index]]),
@@ -273,9 +278,9 @@ def _complete_log_likelihood(
             max_goals=MAX_GOALS,
             scale=1.0,
         )
-    obs_ll = jnp.sum(jax.vmap(obs_step)(observation_indices))
+    obs_ll = jnp.sum(jax.vmap(obs_step)(observation_indices)) / (2.0 * n_observations)
 
-    # --- Transition log-likelihood: sum_t log p(x_t | x_{t-1}) ---
+    # --- Transition log-likelihood: sum_t log p(x_t | x_{t-1}), scaled by 2M*(T-1) ---
     # Random walk: X_t = X_{t-1} + eps, eps ~ N(0, dt * Q), Q = gamma_Q (x) B.
     dts = model_inputs.timestamp[transition_indices] - model_inputs.timestamp_prev[transition_indices]
     Q = jnp.kron(params.gamma_Q, params.B)  # (2M, 2M)
@@ -295,29 +300,25 @@ def _complete_log_likelihood(
 
         return jnp.where(deterministic, 0.0, log_density)
 
-    transition_ll = jnp.sum(jax.vmap(transition_step)(transition_indices, dts))
+    transition_ll = jnp.sum(jax.vmap(transition_step)(transition_indices, dts)) / (dim * n_transitions)
 
-    # Weighted objective: transition weighted by lambda, observation by 1-lambda.
-    return init_ll + (1.0 - lambda_weight) * obs_ll + lambda_weight * transition_ll
+    return init_ll + obs_ll + transition_ll
 
 
 def loss_fn(
     params: EMParams,
     smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
     model_inputs: RBPFFootballResults,
-    lambda_weight: float = 0.5,
 ):
     """MCEM objective: -average over M trajectories of log p(y, X^*).
 
     This is a proper Monte Carlo estimate of the EM objective
     Q(theta) = E_{p(X|y,theta_old)}[log p(y, X | theta)], averaged over the
-    M smoothed trajectories from the E-step.
-
-    The transition term is weighted by ``lambda_weight`` and the observation
-    (likelihood) term by ``1 - lambda_weight`` (see ``_complete_log_likelihood``).
+    M smoothed trajectories from the E-step. Each term is scaled by its size
+    (see ``_complete_log_likelihood``).
     """
     per_traj = jax.vmap(
-        lambda X: _complete_log_likelihood(params, X, model_inputs, lambda_weight)
+        lambda X: _complete_log_likelihood(params, X, model_inputs)
     )(smoothed_trajectories)  # (M,)
     return -jnp.mean(per_traj)
 
@@ -411,7 +412,6 @@ def M_step(
     prev_params: EMParams,
     learning_rate: float,
     n_gradient_steps: int,
-    lambda_weight: float = 0.5,
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
@@ -419,9 +419,6 @@ def M_step(
     The objective is the MCEM loss: -average over the M smoothed trajectories
     of log p(y, X^*). gamma_0, gamma_Q, and B are Cholesky-parameterized so
     they stay positive-definite by construction.
-
-    ``lambda_weight`` weights the transition term (vs ``1 - lambda_weight`` for
-    the observation term) in the objective, balancing their scales.
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
@@ -445,7 +442,6 @@ def M_step(
             ),
             smoothed_trajectories,
             model_inputs,
-            lambda_weight=lambda_weight,
         )
 
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
@@ -544,7 +540,6 @@ def run_EM(
     n_gradient_steps: int = 10,
     learning_rate: float = 1e-3,
     n_trajectories: int = N_TRAJECTORIES,
-    lambda_weight: float = 0.5,
     key: jax.Array = jax.random.PRNGKey(42),
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     params = init_params
@@ -575,7 +570,6 @@ def run_EM(
             prev_params=params,
             learning_rate=learning_rate,
             n_gradient_steps=n_gradient_steps,
-            lambda_weight=lambda_weight,
         )
         mstep_start_history.append(loss_start)
         mstep_end_history.append(loss_best)
