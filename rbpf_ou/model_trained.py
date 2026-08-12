@@ -23,7 +23,7 @@ import numpy as np
 
 # Ensure the repo root is importable even when this file is run directly as a
 # script (in which case sys.path[0] is the script's own directory, not the root).
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 

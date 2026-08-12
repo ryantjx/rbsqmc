@@ -11,7 +11,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="${HERE}/smoothing_gpu_config.json"
-REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
+REPO_ROOT="$(cd "${HERE}/.." && pwd)"
 
 # --- Load shared configuration (single source of truth) ---
 # Parse the JSON config with python3 (jq may not be installed on macOS).
