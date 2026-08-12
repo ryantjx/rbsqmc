@@ -1,5 +1,5 @@
 {
-  "N": 100,
+  "N": 50,
   "n_epochs": 10,
   "n_gradient_steps": 20,
   "learning_rate": 0.001,
@@ -8,9 +8,9 @@
   "teams": "ACTIVE_TEAMS",
   "max_goals": 8,
   "output_dir": "rbpf_ou/outputs_gpu_active",
-  "hardware": "gpu",
+  "hardware": "tpu",
   "gpu_type": "A100",
-  "tpu_type": "v5e1",
+  "tpu_type": "v6e1",
   "high_ram": false,
   "colab_timeout": 7200,
   "repo_url": "https://github.com/ryantjx/rbsqmc.git"
