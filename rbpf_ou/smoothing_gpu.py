@@ -193,16 +193,6 @@ def bootstrap():
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
     log("Set XLA_PYTHON_CLIENT_PREALLOCATE=false, ALLOCATOR=platform")
 
-    # Let rbpf_ou/src modules (which default to cpu) use the requested
-    # accelerator. GPU -> cuda, TPU -> tpu. Only set if the caller didn't
-    # already choose one.
-    if "RBSQMC_PLATFORM" not in os.environ:
-        if CONFIG["hardware"] == "tpu":
-            os.environ["RBSQMC_PLATFORM"] = "tpu"
-        else:
-            os.environ["RBSQMC_PLATFORM"] = "cuda"
-    log(f"RBSQMC_PLATFORM={os.environ.get('RBSQMC_PLATFORM')}")
-
     if os.path.exists(TEST_DIR):
         os.chdir(TEST_DIR)
         # Make the cloned repo importable (``import rbpf`` needs the repo root,
@@ -230,6 +220,18 @@ def bootstrap():
     CONFIG = _load_config()
     OUTPUT_DIR = os.path.join(_repo_root(), CONFIG["output_dir"])
     log(f"Configuration reloaded from {CONFIG_PATH}")
+
+    # Let rbpf_ou/src modules (which default to cpu) use the requested
+    # accelerator. GPU -> cuda, TPU -> tpu. Only set if the caller didn't
+    # already choose one. This MUST happen after the config reload above so the
+    # committed repo config (hardware: tpu/gpu) is authoritative, not the stale
+    # pre-clone config.
+    if "RBSQMC_PLATFORM" not in os.environ:
+        if CONFIG["hardware"] == "tpu":
+            os.environ["RBSQMC_PLATFORM"] = "tpu"
+        else:
+            os.environ["RBSQMC_PLATFORM"] = "cuda"
+    log(f"RBSQMC_PLATFORM={os.environ.get('RBSQMC_PLATFORM')}")
 
 
 # ---------------------------------------------------------------------------
