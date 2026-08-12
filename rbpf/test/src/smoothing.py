@@ -483,6 +483,10 @@ def M_step(
         "beta": "beta",
     }
     optimizer = optax.chain(
+        # Clip the global gradient norm to prevent the explosive first step
+        # (the transition log-density gradient ~ Q^{-1} can be enormous when
+        # gamma_Q is near-singular). This stabilizes the M-step.
+        optax.clip_by_global_norm(1.0),
         optax.multi_transform(transforms, param_labels),
         optax.scale_by_schedule(
             optax.cosine_decay_schedule(1.0, n_gradient_steps)
