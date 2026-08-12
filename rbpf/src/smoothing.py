@@ -151,7 +151,7 @@ def _smoother_rts_single(
     )  # (T, M, 2)
     return smoothed_states
 
-@partial(jax.jit, static_argnames=("n_trajectories",))
+@partial(jax.jit, static_argnames=("num_teams", "n_trajectories"))
 def smoother_rts(
     filtered_states: cuthbertlib.types.ArrayTree,
     model_inputs: RBPFFootballResults,
