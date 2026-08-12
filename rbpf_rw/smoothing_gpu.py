@@ -4,13 +4,13 @@ This single script combines:
   * the Colab bootstrap (clone repo, install deps, verify accelerator), and
   * the EM core (forward-filter + RTS smoothing + M-step).
 
-It reuses the EM machinery from ``rbpf/test/src/smoothing.py`` (parameter set:
+It reuses the EM machinery from ``rbpf_rw/src/smoothing.py`` (parameter set:
 estimates ``gamma_0``, ``gamma_Q``, ``B``, ``alpha``, ``beta``; ``mean_0``
 fixed). Runtime configuration (N, epochs, dates, teams, hardware) is read from
 ``smoothing_gpu_config.json``.
 
-On Colab the repo is cloned/updated and the ``rbpf.test`` package is made
-importable *after* the bootstrap, which is why ``rbpf.test`` imports happen
+On Colab the repo is cloned/updated and the ``rbpf_rw`` package is made
+importable *after* the bootstrap, which is why ``rbpf_rw`` imports happen
 lazily inside the EM function rather than at module top level.
 
 Usage:
@@ -21,7 +21,7 @@ Usage:
     colab run --gpu T4 --keep smoothing_gpu.py [GPU_N] [START_DATE]
     colab run --tpu v5e1 --keep smoothing_gpu.py [GPU_N] [START_DATE]
 
-Writes (into ``rbpf/test/outputs_gpu``):
+Writes (into ``rbpf_rw/outputs_gpu``):
   - em_params_init.json
   - em_params_final.json
   - em_log_marginal_history.json
@@ -47,7 +47,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 REPO_DIR = "/content/rbsqmc"
-TEST_DIR = os.path.join(REPO_DIR, "rbpf", "test")
+TEST_DIR = os.path.join(REPO_DIR, "rbpf_rw")
 
 # Defaults so the module imports even when the config file is absent (which is
 # the case on a fresh Colab VM, where `colab run` uploads only this script).
@@ -60,7 +60,7 @@ _DEFAULT_CONFIG = {
     "end_date": "2025-12-31",
     "teams": "WORLDCUP_2026_TEAMS",
     "max_goals": 8,
-    "output_dir": "rbpf/test/outputs_gpu",
+    "output_dir": "rbpf_rw/outputs_gpu",
     "hardware": "gpu",
     "gpu_type": "T4",
     "tpu_type": "v5e1",
@@ -193,7 +193,7 @@ def bootstrap():
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
     log("Set XLA_PYTHON_CLIENT_PREALLOCATE=false, ALLOCATOR=platform")
 
-    # Let rbpf/test/src modules (which default to cpu) use the requested
+    # Let rbpf_rw/src modules (which default to cpu) use the requested
     # accelerator. GPU -> cuda, TPU -> tpu. Only set if the caller didn't
     # already choose one.
     if "RBSQMC_PLATFORM" not in os.environ:
@@ -233,16 +233,16 @@ def bootstrap():
 
 
 # ---------------------------------------------------------------------------
-# EM core (imports rbpf.test lazily so it works on a freshly-cloned Colab VM)
+# EM core (imports rbpf_rw lazily so it works on a freshly-cloned Colab VM)
 # ---------------------------------------------------------------------------
 def run_em(n_particles: int, start_date: str):
     import jax
     import jax.numpy as jnp
     import numpy as np
 
-    from rbpf.test.src.data import get_results, ACTIVE_TEAMS, WORLDCUP_2026_TEAMS
-    from rbpf.test.src.helpers import default_init_params, params_to_dict
-    from rbpf.test.src.smoothing import MAX_GOALS, run_EM
+    from rbpf_rw.src.data import get_results, ACTIVE_TEAMS, WORLDCUP_2026_TEAMS
+    from rbpf_rw.src.helpers import default_init_params, params_to_dict
+    from rbpf_rw.src.smoothing import MAX_GOALS, run_EM
 
     _TEAM_SETS = {
         "ACTIVE_TEAMS": ACTIVE_TEAMS,
@@ -304,7 +304,7 @@ def run_em(n_particles: int, start_date: str):
             f, indent=2,
         )
     try:
-        from rbpf.test.src.graphic import plot_mstep_diagnostics
+        from rbpf_rw.src.graphic import plot_mstep_diagnostics
         plot_mstep_diagnostics(
             mstep_start,
             mstep_end,
@@ -372,7 +372,7 @@ def main():
 
     log("=" * 60)
     log("SMOOTHING RUNNER — STARTING")
-    log("  Reuses rbpf/test/src/smoothing.py EM (gamma_0, gamma_Q, B, alpha, beta; mean_0 fixed).")
+    log("  Reuses rbpf_rw/src/smoothing.py EM (gamma_0, gamma_Q, B, alpha, beta; mean_0 fixed).")
     log("=" * 60)
 
     if is_colab():

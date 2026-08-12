@@ -1,6 +1,6 @@
 import jax
 
-from rbpf.test.src.utils import EMParams, FootballResults, RBPFFootballResults
+from rbpf_rw.src.utils import EMParams, FootballResults, RBPFFootballResults
 import jax.numpy as jnp
 import json
 import os

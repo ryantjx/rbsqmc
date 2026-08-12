@@ -4,22 +4,22 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from rbpf.test.src.utils import RBPFFootballResults, EMParams, FootballResults
-from rbpf.test.src.data import WORLDCUP_2026_TEAMS, get_results, ACTIVE_TEAMS
-from rbpf.test.src.helpers import default_init_params, generate_augmented_data, params_to_dict
-from rbpf.test.src.model import (
+from rbpf_rw.src.utils import RBPFFootballResults, EMParams, FootballResults
+from rbpf_rw.src.data import WORLDCUP_2026_TEAMS, get_results, ACTIVE_TEAMS
+from rbpf_rw.src.helpers import default_init_params, generate_augmented_data, params_to_dict
+from rbpf_rw.src.model import (
     run_filter,
     compute_gamma_trajectory,
     _sample_psd_gaussian,
 )
-from rbpf.test.src.bivariate_poisson import loglik
+from rbpf_rw.src.bivariate_poisson import loglik
 
 import os
 import json
 import cuthbertlib
 import optax
 from tqdm import tqdm
-from rbpf.test.src.graphic import plot_log_likelihood_history
+from rbpf_rw.src.graphic import plot_log_likelihood_history
 
 # Default to CPU locally, but allow the GPU pipeline to force a device via
 # the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).

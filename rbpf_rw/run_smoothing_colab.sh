@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run rbpf/test/smoothing_gpu.py on a Colab GPU.
+# Run rbpf_rw/smoothing_gpu.py on a Colab GPU.
 #
-# Reuses the EM machinery from rbpf/test/src/smoothing.py (parameter set:
+# Reuses the EM machinery from rbpf_rw/src/smoothing.py (parameter set:
 # estimates gamma_0, gamma_Q, B, alpha, beta; mean_0 fixed) but runs with a
 # GPU-oriented configuration.
 #
@@ -24,7 +24,7 @@ print(c.get('$1', ''))
 "
 }
 
-# config output_dir is repo-root-relative (e.g. "rbpf/test/outputs_gpu").
+# config output_dir is repo-root-relative (e.g. "rbpf_rw/outputs_gpu").
 REMOTE_OUTPUTS="/content/rbsqmc/$(read_config output_dir)"
 LOCAL_OUTPUTS="${REPO_ROOT}/$(read_config output_dir)"
 # Full path to the script so `colab run` can upload it regardless of cwd.
@@ -55,7 +55,7 @@ fi
 
 echo "============================================================"
 echo "  COLAB SMOOTHING GPU — RANDOM-WALK MODEL TEST RUN"
-echo "  Reuses rbpf/test/src/smoothing.py EM (gamma_0, gamma_Q, B, alpha, beta; mean_0 fixed)."
+echo "  Reuses rbpf_rw/src/smoothing.py EM (gamma_0, gamma_Q, B, alpha, beta; mean_0 fixed)."
 echo "  ${ACCEL_LABEL}, N=${GPU_N}, start_date=$(read_config start_date), n_epochs=$(read_config n_epochs), teams=$(read_config teams)"
 if [ "$(read_config high_ram)" = "true" ]; then
     echo "  High-RAM: ENABLED (note: set in the Colab UI — the CLI exposes no --high-ram flag)"

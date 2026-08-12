@@ -2,14 +2,14 @@
 
 Loads a trained ``EMParams`` JSON (by default the GPU EM output), runs the
 forward filter over the full dataset, and writes the plots defined in
-``rbpf/test/src/graphic.py``.
+``rbpf_rw/src/graphic.py``.
 
 Usage:
     python model_trained.py [--params-path PATH] [--output-dir DIR]
 
 Defaults:
-    --params-path  rbpf/test/outputs_gpu/em_params_final.json
-    --output-dir   rbpf/test/outputs/smoothed
+    --params-path  rbpf_rw/outputs_gpu/em_params_final.json
+    --output-dir   rbpf_rw/outputs/smoothed
 """
 
 import argparse
@@ -27,10 +27,10 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from rbpf.test.src.data import get_results, WORLDCUP_2026_TEAMS
-from rbpf.test.src.helpers import load_params, generate_augmented_data
-from rbpf.test.src.model import run_filter, compute_gamma_trajectory
-from rbpf.test.src.graphic import (
+from rbpf_rw.src.data import get_results, WORLDCUP_2026_TEAMS
+from rbpf_rw.src.helpers import load_params, generate_augmented_data
+from rbpf_rw.src.model import run_filter, compute_gamma_trajectory
+from rbpf_rw.src.graphic import (
     plot_top_strengths,
     plot_top_filter_states,
     plot_correlation_matrix,
@@ -61,13 +61,13 @@ def main():
     parser.add_argument(
         "--params-path",
         type=str,
-        default="rbpf/test/outputs_gpu/em_params_final.json",
+        default="rbpf_rw/outputs_gpu/em_params_final.json",
         help="Path to trained EMParams JSON.",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="rbpf/test/outputs/smoothed",
+        default="rbpf_rw/outputs/smoothed",
         help="Directory to write graphics.",
     )
     args = parser.parse_args()

@@ -5,10 +5,10 @@ import cuthbert
 import cuthbertlib
 from functools import partial
 
-from rbpf.test.src.bivariate_poisson import loglik
-from rbpf.test.src.data import get_results, FootballResults
-from rbpf.test.src.helpers import default_init_params
-from rbpf.test.src.utils import RBPFState, RBPFFootballResults, EMParams
+from rbpf_rw.src.bivariate_poisson import loglik
+from rbpf_rw.src.data import get_results, FootballResults
+from rbpf_rw.src.helpers import default_init_params
+from rbpf_rw.src.utils import RBPFState, RBPFFootballResults, EMParams
 
 # Default to CPU locally, but allow the GPU pipeline to force a device via
 # the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).
@@ -229,7 +229,7 @@ def run_filter(
 
 
 def main():
-    from rbpf.test.src.data import WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
+    from rbpf_rw.src.data import WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
     data, model_inputs, team_id_to_name = get_results(
         start_date="1950-01-01",
         end_date="2026-01-01",
@@ -286,7 +286,7 @@ def main():
 
     import os
     import numpy as np
-    from rbpf.test.src.graphic import plot_all
+    from rbpf_rw.src.graphic import plot_all
     path = os.path.join(os.path.dirname(__file__), "..", "outputs", "graphic")
     plot_all(filtered_states, augmented_results, team_id_to_name, top_n=5, save_path=path)
 
