@@ -8,7 +8,7 @@
   "teams": "ACTIVE_TEAMS",
   "max_goals": 8,
   "output_dir": "rbpf_ou/outputs_gpu_active",
-  "hardware": "tpu",
+  "hardware": "gpu",
   "gpu_type": "A100",
   "tpu_type": "v6e1",
   "high_ram": false,
