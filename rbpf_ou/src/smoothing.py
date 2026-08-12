@@ -10,7 +10,6 @@ from rbpf_ou.src.helpers import default_init_params, generate_augmented_data, pa
 from rbpf_ou.src.model import (
     run_filter,
     compute_gamma_trajectory,
-    _sample_psd_gaussian,
 )
 from rbpf_ou.src.bivariate_poisson import loglik
 
@@ -34,6 +33,97 @@ N = 100
 # noise of the 1-sample estimate (which was the root cause of the M-step being
 # "stuck at step 0").
 N_TRAJECTORIES = 2
+
+
+# ---------------------------------------------------------------------------
+# Kronecker-aware helpers (avoid materializing the full (2M, 2M) covariance).
+#
+# The full state covariance is always a Kronecker product  Sigma = A (x) B
+# with A = (M, M) (team covariance) and B = (K, K) (shared attack/defence
+# factor, K = 2). Forming A (x) B is O((MK)^2) memory and O((MK)^3) compute,
+# which blows up at M = 228 (ACTIVE_TEAMS). These helpers compute the same
+# quantities in factored form using the identities
+#     (A (x) B) vec_C(S) = vec_C(A S B^T)          (S is (M, K))
+#     logdet(A (x) B)    = K logdet(A) + M logdet(B)
+# so memory stays O(M^2) and compute O(M^3) + O(K^3).
+# ---------------------------------------------------------------------------
+def _kron_quad_form(A, B, V):
+    """v_i^T (A (x) B)^{-1} v_i for each row v_i of V.
+
+    V: (N, M*K) where each row is vec_C(S_i) of an (M, K) matrix S_i.
+    A: (M, M), B: (K, K). Returns (N,).
+    """
+    K = B.shape[0]
+    N = V.shape[0]
+    S = V.reshape(N, -1, K)  # (N, M, K)
+    B_inv = jnp.linalg.inv(B)  # (K, K), K is tiny
+    A_inv_S = jnp.linalg.solve(A, S)  # (N, M, K)  == A^{-1} S
+    St_Ainv_S = jnp.matmul(S.transpose(0, 2, 1), A_inv_S)  # (N, K, K)
+    # tr(S^T A^{-1} S B^{-T}) = sum((S^T A^{-1} S) * B^{-1})
+    return jnp.sum(St_Ainv_S * B_inv[None], axis=(-2, -1))
+
+
+def _kron_logdet(A, B):
+    """logdet(A (x) B) = K logdet(A) + M logdet(B). A: (M, M), B: (K, K)."""
+    M = A.shape[0]
+    K = B.shape[0]
+    _, logdet_A = jnp.linalg.slogdet(A)
+    _, logdet_B = jnp.linalg.slogdet(B)
+    return K * logdet_A + M * logdet_B
+
+
+def _project_psd_small(x: jnp.ndarray, floor: float = 1e-6) -> jnp.ndarray:
+    """Project a symmetric matrix onto the PD cone (eigenvalue floor).
+
+    The filtered ``gamma_pred`` can be slightly indefinite in float32 (min
+    eigenvalue ~ -1e-5) at large M (ACTIVE_TEAMS). A tiny ``+1e-8 I`` shift is
+    not enough to make it PD, so the Kronecker solve/logdet produce NaN. This
+    clamps eigenvalues to ``>= floor`` so the factored solve is well defined.
+    """
+    x = 0.5 * (x + x.T)
+    eigvals, eigvecs = jnp.linalg.eigh(x)
+    eigvals = jnp.maximum(eigvals, floor)
+    return (eigvecs * eigvals) @ eigvecs.T
+
+
+def _pinv_psd(x: jnp.ndarray, floor: float = 1e-6) -> jnp.ndarray:
+    """Robust pseudo-inverse of a PSD matrix via eigendecomposition.
+
+    ``gamma_pred`` is PSD but highly rank-deficient at large M (teams that
+    never played have exact-zero variance). ``jnp.linalg.pinv`` (SVD-based) can
+    fail to converge on such degenerate matrices. This eigendecomposes, inverts
+    only the eigenvalues above ``floor``, and zeroes the rest — a stable
+    Moore-Penrose pseudo-inverse for PSD inputs.
+    """
+    x = 0.5 * (x + x.T)
+    eigvals, eigvecs = jnp.linalg.eigh(x)
+    inv_eigvals = jnp.where(eigvals > floor, 1.0 / jnp.maximum(eigvals, floor), 0.0)
+    return (eigvecs * inv_eigvals) @ eigvecs.T
+
+
+def _kron_sample_psd(key, mean, A, B):
+    """Sample from N(mean, A (x) B) without forming A (x) B.
+
+    mean: (M*K,) flattened vec_C of an (M, K) matrix. A: (M, M), B: (K, K).
+    Returns (M*K,). Eigenvalues of A and B are clipped to >= 0 so observed
+    (zero-variance) teams stay exactly at their mean (PSD-aware, matching
+    ``_sample_psd_gaussian``).
+    """
+    M = A.shape[0]
+    K = B.shape[0]
+    mean_MK = mean.reshape(M, K)
+    eigvals_A, eigvecs_A = jnp.linalg.eigh(A)
+    eigvals_A = jnp.clip(eigvals_A, 0.0)
+    eigvals_B, eigvecs_B = jnp.linalg.eigh(B)
+    eigvals_B = jnp.clip(eigvals_B, 0.0)
+    z = jax.random.normal(key, (M, K))
+    # We want vec(X) ~ N(0, A (x) B). Using the Kronecker eigendecomposition
+    #   A (x) B = (U_A (x) U_B)(L_A (x) L_B)(U_A (x) U_B)^T,
+    # a draw is vec(X) = (U_A sqrt(L_A) (x) U_B sqrt(L_B)) z, which equals
+    #   X = U_A sqrt(L_A) Z' sqrt(L_B) U_B^T,  Z' ~ N(0, I) of shape (M, K).
+    Z_A = (eigvecs_A * jnp.sqrt(eigvals_A)[None, :]) @ z  # U_A sqrt(L_A) Z'  (M, K)
+    X = Z_A @ (eigvecs_B * jnp.sqrt(eigvals_B)[None, :]).T  # ... sqrt(L_B) U_B^T  (M, K)
+    return (mean_MK + X).reshape(-1)
 
 
 def _smoother_rts_single(
@@ -60,13 +150,12 @@ def _smoother_rts_single(
 
     # Terminal covariance: Sigma_T = gamma_T (x) B (Kronecker, shared B).
     gamma_T = model_inputs.gamma_t[-1]  # (M, M) filtered posterior team covariance
-    Sigma_T = jnp.kron(gamma_T, params.B)  # (2M, 2M)
     # Sigma_T is PSD with exact-zero rows for observed teams (Schur-complement
-    # marginalization). Use the PSD-aware sampler so observed teams stay at
-    # their mean instead of jittering.
+    # marginalization). Use the PSD-aware Kronecker sampler so observed teams
+    # stay at their mean instead of jittering (no (2M, 2M) matrix is formed).
     mu_T = filtered_states.particles.x[-1, I_T]  # (M, 2)
-    X_T_STAR = _sample_psd_gaussian(
-        sample_key, mu_T.flatten(), Sigma_T
+    X_T_STAR = _kron_sample_psd(
+        sample_key, mu_T.flatten(), gamma_T, params.B
     ).reshape(num_teams, K)  # (M, 2)
 
     # Derive a fresh key for the backward pass so the terminal draw and the
@@ -86,17 +175,14 @@ def _smoother_rts_single(
         dt = timestamp_tplus1 - timestamp_prev_tplus1
         phi = jnp.exp(-params.kappa * dt)
         pred_mean = params.mean_0 + phi * (particles_t - params.mean_0)  # (N, M, 2)
-        pred_Sigma = jnp.kron(gamma_pred_t1, params.B)  # (2M, 2M)
-
-        # pred_Sigma is PSD but can be singular / slightly indefinite in
-        # float32. Use slogdet for a stable log-det and a small PSD clamp
-        # before the solve.
-        pred_Sigma_reg = pred_Sigma + 1e-8 * jnp.eye(dim)
+        # pred_Sigma = gamma_pred_t1 (x) B. Compute the quadratic form and
+        # log-det in factored form (no (2M, 2M) matrix). gamma_pred_t1 can be
+        # slightly indefinite in float32 at large M, so project it onto the PD
+        # cone before the factored solve/logdet.
+        gamma_pred_reg = _project_psd_small(gamma_pred_t1)
         deltas = (X_next_star - pred_mean).reshape(n_particles, -1)  # (N, 2M)
-        quad = jnp.sum(
-            deltas * jnp.linalg.solve(pred_Sigma_reg, deltas.T).T, axis=-1
-        )  # (N,)
-        sign, log_det = jnp.linalg.slogdet(pred_Sigma_reg)  # stable log-det
+        quad = _kron_quad_form(gamma_pred_reg, params.B, deltas)  # (N,)
+        log_det = _kron_logdet(gamma_pred_reg, params.B)  # stable log-det
         log_transition = (
             -0.5 * quad
             - 0.5 * log_det
@@ -112,15 +198,13 @@ def _smoother_rts_single(
         # (A (x) B)(C (x) D) = (AC) (x) (BD) and pinv(gamma_pred (x) B) =
         # pinv(gamma_pred) (x) pinv(B), we get
         #   J = (gamma_t phi pinv(gamma_pred_t1)) (x) (B pinv(B)) = J_gamma (x) I_K.
-        J_gamma = phi * gamma_t @ jnp.linalg.pinv(gamma_pred_t1)  # (M, M)
-        J = jnp.kron(J_gamma, jnp.eye(K))  # (2M, 2M)
-
-        diff = (X_next_star - pred_mean[I_t]).flatten()  # (2M,)
-        mu_RTS = particles_t[I_t] + (J @ diff).reshape(num_teams, K)  # (M, 2)
+        J_gamma = phi * gamma_t @ _pinv_psd(gamma_pred_t1)  # (M, M)
+        # (J_gamma (x) I_K) vec_C(S) = vec_C(J_gamma S)  -- Kronecker matvec.
+        diff = (X_next_star - pred_mean[I_t])  # (M, K)
+        mu_RTS = particles_t[I_t] + (J_gamma @ diff)  # (M, 2)
 
         Gamma_RTS = gamma_t - J_gamma @ gamma_pred_t1 @ J_gamma.T  # (M, M)
         Gamma_RTS = 0.5 * (Gamma_RTS + Gamma_RTS.T)  # Ensure symmetry
-        Sigma_RTS = jnp.kron(Gamma_RTS, params.B)  # (2M, 2M)
 
         # Deterministic transition when dt = 0 (phi = 1, Q = 0): the state is
         # preserved, so X_t^* = X_{t+1}^* with no sampling. Use lax.cond so the
@@ -129,8 +213,8 @@ def _smoother_rts_single(
         X_t_star = jax.lax.cond(
             deterministic,
             lambda _: X_next_star,  # dt == 0: preserve the state exactly
-            lambda _: _sample_psd_gaussian(
-                sample_key, mu_RTS.flatten(), Sigma_RTS
+            lambda _: _kron_sample_psd(
+                sample_key, mu_RTS.flatten(), Gamma_RTS, params.B
             ).reshape(num_teams, K),  # dt > 0: sample from the RTS posterior
             operand=sample_key,
         )
@@ -260,10 +344,9 @@ def _complete_log_likelihood(
     transition_indices = jnp.arange(1, n_observations)
 
     # --- Initial term: log p(X_0 | mean_0, gamma_0 (x) B), scaled by dim ---
-    diff0 = (X[0] - params.mean_0).reshape(-1)  # (2M,)
-    sigma_0 = jnp.kron(params.gamma_0, params.B)  # (2M, 2M)
-    quad0 = diff0 @ jnp.linalg.solve(sigma_0, diff0)
-    sign0, log_det0 = jnp.linalg.slogdet(sigma_0)
+    diff0 = (X[0] - params.mean_0)  # (M, K)
+    quad0 = _kron_quad_form(params.gamma_0, params.B, diff0.reshape(1, -1))[0]
+    log_det0 = _kron_logdet(params.gamma_0, params.B)
     init_ll = (
         -0.5 * quad0 - 0.5 * log_det0 - 0.5 * dim * jnp.log(2 * jnp.pi)
     ) / dim
@@ -285,7 +368,9 @@ def _complete_log_likelihood(
     # OU (scalar-phi AR(1)): X_t = mu + phi (X_{t-1} - mu) + eps,
     #   phi = exp(-kappa*dt), eps ~ N(0, (1-phi^2) * gamma_0 (x) B).
     dts = model_inputs.timestamp[transition_indices] - model_inputs.timestamp_prev[transition_indices]
-    Q = jnp.kron(params.gamma_0, params.B)  # (2M, 2M) stationary covariance
+    # Q = gamma_0 (x) B (stationary covariance). We keep it factored: the
+    # per-step covariance is scale * (gamma_0 (x) B), so the quadratic form
+    # and log-det are computed via the Kronecker helpers (no (2M, 2M) matrix).
 
     def transition_step(observation_index, dt):
         phi = jnp.exp(-params.kappa * dt)
@@ -293,13 +378,10 @@ def _complete_log_likelihood(
         diff = X[observation_index] - pred_mean  # (M, K)
 
         deterministic = dt <= 1e-8
-        scale = 1.0 - phi**2
-        Q_t = jnp.maximum(scale, 1e-8) * Q
-        Q_t = 0.5 * (Q_t + Q_t.T)  # ensure symmetry
-
-        diff_flat = diff.reshape(-1)  # (2M,)
-        quad = diff_flat @ jnp.linalg.solve(Q_t, diff_flat)
-        sign, log_det = jnp.linalg.slogdet(Q_t)
+        scale = jnp.maximum(1.0 - phi**2, 1e-8)
+        # (scale * gamma_0) (x) B  -- factored, no kron.
+        quad = _kron_quad_form(scale * params.gamma_0, params.B, diff.reshape(1, -1))[0]
+        log_det = _kron_logdet(scale * params.gamma_0, params.B)
         log_density = -0.5 * quad - 0.5 * log_det - 0.5 * dim * jnp.log(2 * jnp.pi)
 
         return jnp.where(deterministic, 0.0, log_density)
