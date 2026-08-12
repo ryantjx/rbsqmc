@@ -9,6 +9,7 @@ Functions:
   - plot_em_convergence: line plot of EM log marginal likelihood across epochs
   - plot_log_likelihood_history: EM log-likelihood values and epoch changes
   - plot_mstep_diagnostics: M-step objective per epoch (start vs best)
+  - plot_em_diagnostics: E-step score + M-step optimization score (full traces)
   - plot_all: generate all plots and save them
 """
 
@@ -461,6 +462,79 @@ def plot_mstep_diagnostics(
         )
 
     ax_value.set_title("M-step objective per epoch (start vs best)")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_em_diagnostics(
+    log_marginal_history: list[float],
+    mstep_loss_start: list[float],
+    mstep_loss_end: list[float],
+    mstep_loss_trace: list[list[float]],
+    output_path: str = os.path.join(OUTPUT_DIR, "em_diagnostics.png"),
+) -> None:
+    """Comprehensive EM diagnostics: E-step score + M-step optimization score.
+
+    Two stacked panels:
+
+    1. **E-step score** (top): the log marginal likelihood ``log p(y | theta)``
+       evaluated by the particle filter at each EM epoch. This is the quantity
+       EM is supposed to monotonically increase (up to MC noise). A rising
+       trend confirms the E-step is improving the model fit.
+
+    2. **M-step optimization score** (bottom): the full per-gradient-step loss
+       trajectory ``-log L`` for every epoch, overlaid. Each epoch's M-step
+       should descend from its start value to a lower best value; the gap
+       between consecutive epochs' start values shows the E-step's contribution.
+
+    Args:
+        log_marginal_history: per-epoch E-step log marginal likelihood.
+        mstep_loss_start: M-step objective at the start of each epoch.
+        mstep_loss_end: best M-step objective reached in each epoch.
+        mstep_loss_trace: full per-gradient-step loss trajectory per epoch.
+        output_path: where to save the figure.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    epochs = np.arange(1, len(log_marginal_history) + 1)
+    lm = np.asarray(log_marginal_history, dtype=float)
+    loss_start = np.asarray(mstep_loss_start, dtype=float)
+    loss_end = np.asarray(mstep_loss_end, dtype=float)
+
+    fig, (ax_estep, ax_mstep) = plt.subplots(
+        2, 1, figsize=(10, 9), sharex=True,
+        gridspec_kw={"height_ratios": [1, 1.4]},
+    )
+
+    # --- Panel 1: E-step score (log marginal likelihood) ---
+    ax_estep.plot(epochs, lm, "o-", color="tab:blue", linewidth=1.8, markersize=6,
+                  label="E-step log marginal L")
+    ax_estep.set_ylabel("E-step score\n(log marginal likelihood)")
+    ax_estep.grid(True, alpha=0.3)
+    ax_estep.legend(loc="best")
+    ax_estep.set_title("EM diagnostics: E-step score and M-step optimization")
+
+    # --- Panel 2: M-step optimization score (full gradient traces) ---
+    cmap = plt.get_cmap("viridis")
+    n_epochs = len(mstep_loss_trace)
+    for i, trace in enumerate(mstep_loss_trace):
+        trace = np.asarray(trace, dtype=float)
+        color = cmap(i / max(n_epochs - 1, 1))
+        ax_mstep.plot(trace, "-", color=color, linewidth=1.0,
+                      label=f"epoch {i + 1}" if i in (0, n_epochs - 1) else None)
+    # Mark start/end of each epoch's M-step.
+    ax_mstep.plot(epochs - 1, loss_start, "o", color="tab:red", markersize=5,
+                  label="M-step loss (start)")
+    ax_mstep.plot(epochs - 1, loss_end, "s", color="tab:green", markersize=5,
+                  label="M-step loss (best)")
+    ax_mstep.set_xlabel("M-step gradient step (epochs overlaid)")
+    ax_mstep.set_ylabel("M-step objective (-log L)")
+    ax_mstep.grid(True, alpha=0.3)
+    ax_mstep.legend(loc="best", fontsize=8)
+
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

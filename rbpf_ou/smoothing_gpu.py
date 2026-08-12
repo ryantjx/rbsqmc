@@ -312,7 +312,7 @@ def run_em(n_particles: int, start_date: str):
             f, indent=2,
         )
     try:
-        from rbpf_ou.src.graphic import plot_mstep_diagnostics
+        from rbpf_ou.src.graphic import plot_mstep_diagnostics, plot_em_diagnostics
         plot_mstep_diagnostics(
             mstep_start,
             mstep_end,
@@ -321,6 +321,15 @@ def run_em(n_particles: int, start_date: str):
         )
         print("Saved M-step diagnostics plot to",
               os.path.join(OUTPUT_DIR, "mstep_diagnostics.png"))
+        plot_em_diagnostics(
+            log_marginal_history=log_marginal_history,
+            mstep_loss_start=mstep_start,
+            mstep_loss_end=mstep_end,
+            mstep_loss_trace=mstep_trace,
+            output_path=os.path.join(OUTPUT_DIR, "em_diagnostics.png"),
+        )
+        print("Saved EM diagnostics plot to",
+              os.path.join(OUTPUT_DIR, "em_diagnostics.png"))
     except Exception as e:  # non-fatal: plotting should not kill the run
         print("WARNING: could not save M-step diagnostics plot:", e)
 
