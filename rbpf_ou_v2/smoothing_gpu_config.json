@@ -1,0 +1,16 @@
+{
+  "N": 500,
+  "n_steps": 200,
+  "learning_rate": 0.001,
+  "start_date": "2000-01-01",
+  "end_date": "2025-12-31",
+  "teams": "WORLDCUP_2026_TEAMS",
+  "max_goals": 8,
+  "output_dir": "rbpf_ou_v2/outputs_gpu_l4",
+  "hardware": "gpu",
+  "gpu_type": "L4",
+  "tpu_type": "v6e1",
+  "high_ram": false,
+  "colab_timeout": 7200,
+  "repo_url": "https://github.com/ryantjx/rbsqmc.git"
+}
