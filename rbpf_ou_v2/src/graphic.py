@@ -10,6 +10,7 @@ Functions:
   - plot_log_likelihood_history: EM log-likelihood values and epoch changes
   - plot_mstep_diagnostics: M-step objective per epoch (start vs best)
   - plot_em_diagnostics: E-step score + M-step optimization score (full traces)
+  - plot_gd_performance: GD loss / log-marginal / per-param traces (v2)
   - plot_all: generate all plots and save them
 """
 
@@ -535,6 +536,83 @@ def plot_em_diagnostics(
     ax_mstep.grid(True, alpha=0.3)
     ax_mstep.legend(loc="best", fontsize=8)
 
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_gd_performance(
+    log_marginal_history: list[float],
+    loss_history: list[float] | None = None,
+    param_history: dict[str, list[float]] | None = None,
+    output_path: str = os.path.join(OUTPUT_DIR, "gd_performance.png"),
+) -> None:
+    """Plot the direct-GD training performance (v2).
+
+    Three stacked panels:
+
+    1. **Log marginal likelihood** (top): ``log Z(theta)`` per gradient step.
+       A rising trend is the key success signal (v1's EM diverged; v2's GD
+       should improve the fit).
+    2. **Loss** (middle): ``-log Z(theta)`` per step (the objective being
+       minimized). Should fall.
+    3. **Parameters** (bottom): per-parameter traces (e.g. ``kappa``,
+       ``alpha``, ``beta``) if ``param_history`` is provided.
+
+    Args:
+        log_marginal_history: ``log Z(theta)`` per step.
+        loss_history: optional ``-log Z(theta)`` per step (drawn on a twin axis
+            of the top panel if provided).
+        param_history: optional dict of param-name -> per-step values.
+        output_path: where to save the figure.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    lm = np.asarray(log_marginal_history, dtype=float)
+    steps = np.arange(1, lm.size + 1)
+
+    n_panels = 3 if param_history else (2 if loss_history is not None else 1)
+    fig, axes = plt.subplots(n_panels, 1, figsize=(10, 4 * n_panels), sharex=True)
+
+    if n_panels == 1:
+        axes = [axes]
+
+    # --- Panel 1: log marginal likelihood ---
+    ax = axes[0]
+    ax.plot(steps, lm, "-", color="tab:blue", linewidth=1.5, label="log Z(θ)")
+    if loss_history is not None:
+        ax2 = ax.twinx()
+        ax2.plot(steps, np.asarray(loss_history, dtype=float), "-",
+                 color="tab:red", linewidth=1.0, alpha=0.7, label="-log Z(θ)")
+        ax2.set_ylabel("-log Z(θ)", color="tab:red")
+        ax2.tick_params(axis="y", labelcolor="tab:red")
+    ax.set_ylabel("log Z(θ)")
+    ax.set_title("Direct GD training performance")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best")
+
+    # --- Panel 2: loss (if no param history) ---
+    if n_panels >= 2 and param_history is None:
+        ax = axes[1]
+        ax.plot(steps, np.asarray(loss_history, dtype=float), "-",
+                color="tab:red", linewidth=1.5, label="-log Z(θ)")
+        ax.set_ylabel("-log Z(θ)")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best")
+
+    # --- Panel 3 (or 2): parameters ---
+    if param_history:
+        ax = axes[-1]
+        for name, values in param_history.items():
+            ax.plot(steps, np.asarray(values, dtype=float), "-",
+                    linewidth=1.2, label=name)
+        ax.set_ylabel("Parameter value")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best")
+
+    axes[-1].set_xlabel("Gradient step")
     fig.tight_layout()
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
