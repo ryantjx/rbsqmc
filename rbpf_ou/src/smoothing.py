@@ -44,6 +44,16 @@ _EIGEN_FLOOR = 1e-4
 # zero keeps the transition covariance meaningfully non-singular.
 _KAPPA_MIN = 1e-3
 
+# Upper bound for the OU mean-reversion rate kappa.
+#
+# kappa controls how fast a team's strength reverts to the population mean:
+# the OU half-life is t_1/2 = ln(2)/kappa. A large kappa (e.g. 0.58 from a
+# previous run) gives a half-life of ~1.2 days, so a team's attack/defence
+# reverts to the mean almost immediately between matches — destroying the
+# persistence that makes rankings meaningful. To force a half-life of at
+# least one week we need kappa <= ln(2)/7 ~= 0.099, so we cap it at 0.1.
+_KAPPA_MAX = 0.1
+
 
 # ---------------------------------------------------------------------------
 # Kronecker-aware helpers (avoid materializing the full (2M, 2M) covariance).
@@ -435,6 +445,8 @@ def loss_fn(
     smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
     model_inputs: RBPFFootballResults,
     gamma_q_prior: float = 0.0,
+    gamma_0_prior: float = 0.0,
+    gamma_0_target: jnp.ndarray | None = None,
 ):
     """MCEM objective: -average over M trajectories of log p(y, X^*).
 
@@ -444,14 +456,18 @@ def loss_fn(
     (see ``_complete_log_likelihood``), so the three terms are on a comparable
     per-dimension scale and summed with equal weight.
 
-    A quadratic shrinkage prior on ``gamma_Q`` is added to keep the transition
-    variance bounded (preventing the random-walk from drifting to extreme
-    values that destabilize the filter):
+    Two quadratic shrinkage priors keep the covariance parameters from
+    collapsing to degenerate (near-zero) values that inflate the transition
+    log-likelihood:
 
-        prior = gamma_q_prior * ||gamma_Q - gamma_target||_F^2
-
-    where ``gamma_target`` is a small scaled identity. ``gamma_q_prior`` is the
-    prior strength (0 disables it).
+    - ``gamma_q_prior`` shrinks ``gamma_Q`` toward a small scaled identity.
+      (Note: ``gamma_Q`` is currently held fixed in the M-step, so this prior
+      is effectively inert — retained for backward compatibility.)
+    - ``gamma_0_prior`` shrinks ``gamma_0`` toward ``gamma_0_target`` (the
+      initial regional-correlation prior). Without this, EM drives ``gamma_0``
+      toward 0, which collapses the stationary state variance and makes team
+      strengths (attack/defence) hover near the mean with almost no spread.
+      This prior is what keeps the state variance at a meaningful scale.
     """
     init_ll, obs_ll, transition_ll = jax.vmap(
         lambda X: _complete_log_likelihood(params, X, model_inputs)
@@ -465,6 +481,13 @@ def loss_fn(
         prior = gamma_q_prior * jnp.sum((params.gamma_Q - gamma_target) ** 2)
     else:
         prior = 0.0
+
+    # Quadratic shrinkage prior on gamma_0 toward the initial prior, keeping
+    # the stationary state variance from collapsing to ~0.
+    if gamma_0_prior > 0 and gamma_0_target is not None:
+        prior = prior + gamma_0_prior * jnp.sum(
+            (params.gamma_0 - gamma_0_target) ** 2
+        )
     return data_loss + prior
 
 
@@ -526,7 +549,9 @@ def _constrain(params: EMParams) -> EMParams:
     """Apply validity constraints so parameters stay in their support.
 
     - alpha, beta unconstrained real.
-    - kappa >= _KAPPA_MIN (keeps the OU transition covariance non-degenerate).
+    - kappa clamped to [_KAPPA_MIN, _KAPPA_MAX] (keeps the OU transition
+      covariance non-degenerate while forcing a half-life of at least one
+      week so team strengths persist between matches).
     - scale clamped to [0, 10] (team-strength influence on goal rates; a
       negative scale would flip the sign of the strength effect, and a large
       scale dilutes the strength signal toward the baseline).
@@ -541,7 +566,7 @@ def _constrain(params: EMParams) -> EMParams:
     gamma_0 = _project_psd(params.gamma_0)
     gamma_Q = _project_psd(params.gamma_Q)
     B = _project_psd(params.B)
-    kappa = jnp.maximum(params.kappa, _KAPPA_MIN)
+    kappa = jnp.clip(params.kappa, _KAPPA_MIN, _KAPPA_MAX)
     scale = jnp.clip(params.scale, 0.0, 10.0)
     return EMParams(
         mean_0=params.mean_0,
@@ -562,6 +587,8 @@ def M_step(
     learning_rate: float,
     n_gradient_steps: int,
     gamma_q_prior: float = 0.0,
+    gamma_0_prior: float = 0.0,
+    gamma_0_target: jnp.ndarray | None = None,
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
@@ -578,11 +605,16 @@ def M_step(
     fixed at ``prev_params.gamma_Q``.
 
     ``scale`` is a free parameter optimized by the M-step (it controls the
-    influence of team strength on the goal rates). It is clamped to [0, 1] by
+    influence of team strength on the goal rates). It is clamped to [0, 10] by
     ``_constrain``.
 
     ``gamma_q_prior`` is the strength of a quadratic shrinkage prior on
     ``gamma_Q`` (see ``loss_fn``), keeping the transition variance bounded.
+
+    ``gamma_0_prior`` / ``gamma_0_target``: a quadratic shrinkage prior on
+    ``gamma_0`` toward the initial regional-correlation prior. This prevents
+    EM from collapsing the stationary state variance to ~0 (which would make
+    team strengths hover near the mean with no spread).
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
@@ -608,6 +640,8 @@ def M_step(
             smoothed_trajectories,
             model_inputs,
             gamma_q_prior=gamma_q_prior,
+            gamma_0_prior=gamma_0_prior,
+            gamma_0_target=gamma_0_target,
         )
 
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
@@ -716,9 +750,14 @@ def run_EM(
     learning_rate: float = 1e-3,
     n_trajectories: int = N_TRAJECTORIES,
     gamma_q_prior: float = 0.0,
+    gamma_0_prior: float = 0.0,
     key: jax.Array = jax.random.PRNGKey(42),
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     params = init_params
+
+    # Target for the gamma_0 shrinkage prior: the initial regional-correlation
+    # prior. This keeps the stationary state variance from collapsing to ~0.
+    gamma_0_target = init_params.gamma_0
 
     log_likelihood_history = []
     mstep_start_history = []
@@ -763,6 +802,8 @@ def run_EM(
             learning_rate=learning_rate,
             n_gradient_steps=n_gradient_steps,
             gamma_q_prior=gamma_q_prior,
+            gamma_0_prior=gamma_0_prior,
+            gamma_0_target=gamma_0_target,
         )
         mstep_start_history.append(loss_start)
         mstep_end_history.append(loss_best)

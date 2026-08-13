@@ -294,6 +294,7 @@ def run_em(n_particles: int, start_date: str):
         n_gradient_steps=int(CONFIG["n_gradient_steps"]),
         learning_rate=float(CONFIG["learning_rate"]),
         n_trajectories=int(CONFIG.get("n_trajectories", 8)),
+        gamma_0_prior=float(CONFIG.get("gamma_0_prior", 0.0)),
         key=key,
     )
     print("[EM] EM run completed.")

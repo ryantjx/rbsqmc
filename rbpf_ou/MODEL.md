@@ -119,7 +119,7 @@ The complete-data log-likelihood for one trajectory is
 
 $$\log p(X_{0:T}, y_{1:T} \mid \Theta) = \underbrace{\log p_{\mu_0, \Gamma_0 \otimes B}(X_0)}_{\text{init}} + \sum_{t=1}^{T} \underbrace{\log p_{\kappa, \Gamma_0 \otimes B}(X_t \mid X_{t-1})}_{\text{transition}} + \sum_{t=1}^{T} \underbrace{\log p_{\alpha, \beta}(y_t \mid X_t^{\mathcal{O}_t})}_{\text{observation}}$$
 
-**2 M-step.** Maximize $A(\Theta \mid \Theta^{(k)})$ with respect to $\Theta$ via **scale-aware ADAM** with a cosine schedule and global-norm gradient clipping. The covariance matrices $\Gamma_0, \Gamma_Q, B$ are **Cholesky-parameterized** so they stay positive-definite by construction; $\kappa$ is floored at `_KAPPA_MIN = 1e-3` to keep the transition covariance non-degenerate.
+**2 M-step.** Maximize $A(\Theta \mid \Theta^{(k)})$ with respect to $\Theta$ via **scale-aware ADAM** with a cosine schedule and global-norm gradient clipping. The covariance matrices $\Gamma_0, \Gamma_Q, B$ are **Cholesky-parameterized** so they stay positive-definite by construction; $\kappa$ is clamped to $[\text{\_KAPPA\_MIN}, \text{\_KAPPA\_MAX}] = [10^{-3}, 0.1]$ to keep the transition covariance non-degenerate **and** to force a mean-reversion half-life of at least one week ($t_{1/2} = \ln 2 / \kappa \ge 7$ days).
 
 **Loss scaling.** Each term of the complete-data log-likelihood is divided by the number of dimensions it spans, so the three terms are on a comparable per-dimension scale and summed with equal weight:
 
@@ -129,7 +129,10 @@ $$\log p(X_{0:T}, y_{1:T} \mid \Theta) = \underbrace{\log p_{\mu_0, \Gamma_0 \ot
 
 The observation term's influence is instead controlled by the `scale` hyperparameter: smaller `scale` amplifies the team-strength signal in the goal rates, giving the observation term more gradient weight without a manual loss-weighting hack.
 
-A quadratic shrinkage prior on $\Gamma_Q$ toward a small scaled identity is added to keep the transition variance bounded.
+Two quadratic shrinkage priors keep the covariance parameters from collapsing to degenerate (near-zero) values:
+
+- A prior on $\Gamma_Q$ toward a small scaled identity (retained for backward compatibility; $\Gamma_Q$ is currently held fixed in the M-step, so this prior is effectively inert).
+- A prior on $\Gamma_0$ toward the initial regional-correlation prior (`gamma_0_prior`, default 0.1). Without it, EM drives $\Gamma_0 \to 0$, collapsing the stationary state variance so team strengths hover near the mean with almost no spread. This prior is what keeps the attack/defence state variance at a meaningful scale.
 
 ---
 
@@ -155,21 +158,21 @@ A quadratic shrinkage prior on $\Gamma_Q$ toward a small scaled identity is adde
 | `gamma_0` | $(M, M)$ | stationary team covariance (regional prior) | regional correlation |
 | `gamma_Q` | $(M, M)$ | transition team covariance factor | small scaled identity |
 | `B` | $(2, 2)$ | shared attack/defence covariance | $\begin{bmatrix}1 & 0.2\\0.2 & 1\end{bmatrix}$ |
-| `kappa` | scalar | OU mean-reversion rate | 0.01 |
+| `kappa` | scalar | OU mean-reversion rate (clamped to $[10^{-3}, 0.1]$) | 0.01 |
 | `alpha` | scalar | baseline scoring rate | 0.2 |
 | `beta` | scalar | shared-scoring / correlation rate | −4.0 |
-| `scale` | scalar | team-strength influence on goal rates (hyperparameter, fixed) | 1.0 |
+| `scale` | scalar | team-strength influence on goal rates (free param, clamped to $[0, 10]$) | 1.0 |
 
 ### 5.3 Training configuration (`smoothing_gpu_config.json`)
 
 | Key | Value | Meaning |
 |-----|-------|---------|
-| `N` | 200 | number of filter particles |
+| `N` | 300 | number of filter particles |
 | `n_epochs` | 10 | number of EM epochs |
 | `n_gradient_steps` | 30 | ADAM steps per M-step |
 | `learning_rate` | 0.01 | base ADAM learning rate |
-| `n_trajectories` | 8 | smoothed trajectories per E-step (MCEM) |
-| `scale` | 0.2 | team-strength influence on goal rates (hyperparameter) |
+| `n_trajectories` | 12 | smoothed trajectories per E-step (MCEM) |
+| `gamma_0_prior` | 0.1 | shrinkage prior on $\Gamma_0$ toward the regional prior (keeps state variance from collapsing) |
 | `teams` | `WORLDCUP_2026_TEAMS` | 48-team set (L4 run) |
 | `hardware` / `gpu_type` | `gpu` / `L4` | Colab L4 |
 
@@ -196,3 +199,12 @@ The A100 run (`outputs_gpu_active/`) shows three failure signals: the log margin
 7. **ESS diagnostics were missing.** The filter did not report ESS, so the per-step degeneracy was invisible. Now tracked via `_ess_from_log_weights` in `E_step` (see Section 5.3).
 
 These are addressed by the improvement plan (Phase 2: diagnostics; Phase 3: fix `gamma_Q`, raise `N_TRAJECTORIES`, rebalance loss, tune config; Phase 4: small-M CPU iteration then promote to A100).
+
+### 6.1 Post-convergence issues (L4 run, `outputs_gpu_l4/`)
+
+The L4 run (N=300, n_trajectories=12, `scale` free) converged — log marginal `[-5315, ..., -5303]`, ESS healthy (~220/300), prediction mean log-likelihood −3.41 — but the **rankings were still noise** (Egypt, US, Saudi Arabia, Haiti top; Portugal, Belgium, Switzerland bottom). Two root causes, both now addressed:
+
+1. **`kappa` was too large (0.58).** The OU half-life is $t_{1/2} = \ln 2 / \kappa \approx 1.2$ days, so a team's strength reverted to the mean almost immediately between matches (median gap 1 day, mean 5.3 days). This destroys persistence and makes rankings noise. **Fix:** clamp $\kappa$ to `_KAPPA_MAX = 0.1` (half-life ≥ 7 days) in `_constrain`.
+2. **State variance collapsed to ~0.2.** The stationary state variance is $\Gamma_0[i,i] \cdot B[k,k]$. With no prior, EM drove $\Gamma_0 \to 0$, so attack/defence states hovered near the mean with almost no spread. **Fix:** add a quadratic shrinkage prior on $\Gamma_0$ toward the initial regional-correlation prior (`gamma_0_prior = 0.1`), keeping the state variance at a meaningful scale.
+
+> **Note on $\mu_0$.** $\mu_0$ is unidentifiable from the likelihood: team strengths only appear in *differences* ($x_i^{\text{att}} - x_j^{\text{def}}$), so shifting all teams' strengths by a constant leaves the goal rates unchanged. It is therefore held fixed at zero.
