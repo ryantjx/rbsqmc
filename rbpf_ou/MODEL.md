@@ -188,17 +188,9 @@ A small-M CPU config for fast local iteration lives in `smoothing_gpu_config_cpu
 
 ## 6 Known Issues (why EM is not converging)
 
-The A100 run (`outputs_gpu_active/`) shows three failure signals: the log marginal likelihood is flat/declining across epochs (`[-50513, -50515, -50716, ...]`), the parameters barely move from their initial values, and the M-step loss resets to ~1.6 at the start of every epoch (a signature of Monte Carlo noise dominating the Q-function estimate). Root causes, in rough order of impact:
+The A100 run (`outputs_gpu_active/`) originally showed three failure signals: the log marginal likelihood was flat/declining across epochs (`[-50513, -50515, -50716, ...]`), the parameters barely moved from their initial values, and the M-step loss reset to ~1.6 at the start of every epoch (a signature of Monte Carlo noise dominating the Q-function estimate). Most of the root causes have since been fixed (see Section 6.2). The one that remains open:
 
-1. **`N_TRAJECTORIES = 2` is far too low.** The MCEM Q-function estimate is an average over only 2 smoothed trajectories, so it is dominated by Monte Carlo noise. This is the single biggest lever. Raising it to 8–16 (or more) is the first fix.
-2. **`gamma_Q` is dead weight.** It is estimated in the M-step and appears in the parameter set, but it is **never used**: both the transition log-likelihood (`_complete_log_likelihood`) and the filter's covariance trajectory (`compute_gamma_trajectory`) use `gamma_0`, not `gamma_Q`. The M-step is wasting gradient effort on a parameter that has no effect on the objective's data terms.
-3. **Loss-scaling imbalance.** The transition term is scaled by $2M(T-1) \approx 2.3\text{M}$ dimensions while the observation term is scaled by $2T \approx 10\text{K}$. The M-step therefore effectively ignores `alpha`/`beta` (the observation parameters), which is why they barely move.
-4. **`learning_rate = 0.001` + global-norm clip too small.** Combined with the noise, the M-step makes negligible progress per epoch.
-5. **`N = 50` particles for $M = 228$ teams is too low.** The filter resamples unconditionally every time step (systematic resampling resets weights to uniform), so degeneracy is *per-step*, not cumulative. But a low per-step ESS still means the observation potential concentrates mass onto few particles.
-6. **Bootstrap proposal.** Using the transition as the proposal ignores the observation, causing per-step weight degeneracy when the observation is informative (the proposal rarely lands near the observed score).
-7. **ESS diagnostics were missing.** The filter did not report ESS, so the per-step degeneracy was invisible. Now tracked via `_ess_from_log_weights` in `E_step` (see Section 5.3).
-
-These are addressed by the improvement plan (Phase 2: diagnostics; Phase 3: fix `gamma_Q`, raise `N_TRAJECTORIES`, rebalance loss, tune config; Phase 4: small-M CPU iteration then promote to A100).
+1. **Bootstrap proposal.** The filter uses the transition as the proposal, ignoring the observation. This causes per-step weight degeneracy when the observation is informative (the proposal rarely lands near the observed score). A natural next step is an auxiliary/guided proposal that incorporates the observation (e.g. a locally-optimal or a mixture proposal), at the cost of a more complex importance weight.
 
 ### 6.1 Post-convergence issues (L4 run, `outputs_gpu_l4/`)
 
@@ -208,3 +200,14 @@ The L4 run (N=300, n_trajectories=12, `scale` free) converged — log marginal `
 2. **State variance collapsed to ~0.2.** The stationary state variance is $\Gamma_0[i,i] \cdot B[k,k]$. With no prior, EM drove $\Gamma_0 \to 0$, so attack/defence states hovered near the mean with almost no spread. **Fix:** add a quadratic shrinkage prior on $\Gamma_0$ toward the initial regional-correlation prior (`gamma_0_prior = 0.1`), keeping the state variance at a meaningful scale.
 
 > **Note on $\mu_0$.** $\mu_0$ is unidentifiable from the likelihood: team strengths only appear in *differences* ($x_i^{\text{att}} - x_j^{\text{def}}$), so shifting all teams' strengths by a constant leaves the goal rates unchanged. It is therefore held fixed at zero.
+
+### 6.2 Resolved issues
+
+The following issues from the original "why EM is not converging" list have been fixed and verified on the L4 run (`outputs_gpu_l4/`):
+
+1. **`N_TRAJECTORIES = 2` was far too low.** The MCEM Q-function estimate was an average over only 2 smoothed trajectories, so it was dominated by Monte Carlo noise. **Fix:** raised to `n_trajectories = 12` in the config (module default `N_TRAJECTORIES = 8`). The L4 run converged with a healthy ESS (~220/300).
+2. **`gamma_Q` was dead weight.** It was estimated in the M-step but never used: both the transition log-likelihood (`_complete_log_likelihood`) and the filter's covariance trajectory (`compute_gamma_trajectory`) use `gamma_0`, not `gamma_Q`. **Fix:** `gamma_Q` is now held fixed in the M-step (removed from the optimizer), so gradient effort is no longer wasted on a parameter with zero effect on the objective.
+3. **Loss-scaling imbalance.** The transition term was scaled by $2M(T-1) \approx 2.3\text{M}$ dimensions while the observation term was scaled by $2T \approx 10\text{K}$, so the M-step effectively ignored `alpha`/`beta`. **Fix:** each term is now scaled by the number of dimensions it spans (per-dimension scaling), putting the three terms on a comparable scale.
+4. **`learning_rate = 0.001` + global-norm clip too small.** Combined with the noise, the M-step made negligible progress per epoch. **Fix:** raised `learning_rate` to `0.01` in the config.
+5. **`N = 50` particles for $M = 228$ teams was too low.** **Fix:** raised `N` to `300` (and switched to the 48-team `WORLDCUP_2026_TEAMS` set on L4 to avoid OOM).
+6. **ESS diagnostics were missing.** The filter did not report ESS, so per-step degeneracy was invisible. **Fix:** now tracked via `_ess_from_log_weights` in `E_step` (see Section 5.3).
