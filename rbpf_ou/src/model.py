@@ -7,8 +7,8 @@ from functools import partial
 
 from rbpf_ou.src.bivariate_poisson import loglik
 from rbpf_ou.src.data import get_results, FootballResults
-from rbpf_ou.src.helpers import default_init_params
-from rbpf_ou.src.utils import RBPFState, RBPFFootballResults, EMParams, kron_sample_psd
+from rbpf_ou.src.helpers import default_init_params, kron_sample_psd
+from rbpf_ou.src.utils import RBPFState, RBPFFootballResults, EMParams
 
 # Default to CPU locally, but allow the GPU pipeline to force a device via
 # the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).

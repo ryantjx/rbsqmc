@@ -4,14 +4,14 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from rbpf_ou.src.utils import (
-    RBPFFootballResults,
-    EMParams,
-    FootballResults,
+from rbpf_ou.src.utils import RBPFFootballResults, EMParams, FootballResults
+from rbpf_ou.src.data import WORLDCUP_2026_TEAMS, get_results, ACTIVE_TEAMS
+from rbpf_ou.src.helpers import (
+    default_init_params,
+    generate_augmented_data,
+    params_to_dict,
     kron_sample_psd,
 )
-from rbpf_ou.src.data import WORLDCUP_2026_TEAMS, get_results, ACTIVE_TEAMS
-from rbpf_ou.src.helpers import default_init_params, generate_augmented_data, params_to_dict
 from rbpf_ou.src.model import (
     run_filter,
     compute_gamma_trajectory,
