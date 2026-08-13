@@ -122,7 +122,6 @@ def main():
     gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
         model_inputs=model_inputs,
         gamma_0=params.gamma_0,
-        gamma_Q=params.gamma_Q,
         kappa=params.kappa,
         num_teams=NUM_TEAMS,
     )

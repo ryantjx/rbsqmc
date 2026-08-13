@@ -17,7 +17,6 @@ def params_to_dict(params: EMParams) -> dict:
     return {
         "mean_0": jnp.array(params.mean_0).tolist(),
         "gamma_0": jnp.array(params.gamma_0).tolist(),
-        "gamma_Q": jnp.array(params.gamma_Q).tolist(),
         "B": jnp.array(params.B).tolist(),
         "kappa": float(params.kappa),
         "alpha": float(params.alpha),
@@ -31,7 +30,6 @@ def params_from_dict(d: dict) -> EMParams:
     return EMParams(
         mean_0=jnp.array(d["mean_0"]),
         gamma_0=jnp.array(d["gamma_0"]),
-        gamma_Q=jnp.array(d["gamma_Q"]),
         B=jnp.array(d["B"]),
         kappa=d["kappa"],
         alpha=d["alpha"],
@@ -105,12 +103,11 @@ def default_init_params(
     """Generate default initial parameters for the OU (scalar-phi AR(1)) model.
 
     The covariance is Kronecker-structured ``Sigma = gamma (x) B`` with a
-    *shared* attack/defence factor ``B`` (``B_0 = B_Q = B``). We build:
+    *shared* attack/defence factor ``B``. We build:
 
     - ``gamma_0``: team covariance from the regional correlation prior
       (the stationary covariance of the OU process).
     - ``B``:       shared ``2 x 2`` attack/defence covariance.
-    - ``gamma_Q``: small team covariance for the transition ``Q = gamma_Q (x) B``.
     - ``kappa``:   scalar mean-reversion rate of the OU transition.
     """
     rho_team = 0.03
@@ -134,16 +131,9 @@ def default_init_params(
         [cov_attack_defence, 1.0],
     ])
 
-    # Transition covariance factor: Q = gamma_Q (x) B (shared B).
-    gamma_Q = 0.001 * (
-        (1.0 - rho_team) * jnp.eye(num_teams)
-        + rho_team * jnp.ones((num_teams, num_teams))
-    )
-
     return EMParams(
         mean_0=jnp.zeros((num_teams, 2)),
         gamma_0=gamma_0,
-        gamma_Q=gamma_Q,
         B=B,
         kappa=0.01,
         alpha=0.2,

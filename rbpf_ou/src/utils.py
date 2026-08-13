@@ -47,9 +47,8 @@ class EMParams(NamedTuple):
     """All parameters that EM optimizes.
 
     The covariance is Kronecker-structured ``Sigma = gamma (x) B`` with a
-    *shared* attack/defence factor ``B`` (``B_0 = B_Q = B``), so the initial
-    covariance is ``Sigma_0 = gamma_0 (x) B`` and the transition covariance is
-    ``Q = gamma_Q (x) B``.
+    *shared* attack/defence factor ``B``, so the initial/stationary covariance
+    is ``Sigma_0 = gamma_0 (x) B``.
 
     The transition is a scalar-phi AR(1) (discrete OU) with mean-reversion rate
     ``kappa``:
@@ -64,18 +63,15 @@ class EMParams(NamedTuple):
 
     - mean_0:  (M, 2) initial mean (fixed at zeros during EM).
     - gamma_0: (M, M) team factor of the initial/stationary covariance ``Sigma_0 = gamma_0 (x) B``.
-    - gamma_Q: (M, M) team factor of the transition covariance ``Q = gamma_Q (x) B``.
     - B:       (2, 2) shared attack/defence factor (used for both Sigma_0 and Q).
     - kappa:   scalar mean-reversion rate of the OU transition.
     - alpha:   scalar baseline scoring rate.
     - beta:    scalar shared-scoring / correlation parameter.
-    - scale:   scalar hyperparameter controlling the influence of team strength
-      on the goal rates (``log_lambda = alpha + (x_att - x_def)/scale``). Held
-      fixed during EM; tuned in the config.
+    - scale:   scalar controlling the influence of team strength on the goal
+      rates (``log_lambda = alpha + (x_att - x_def)/scale``). Free during EM.
     """
     mean_0: jax.Array      # (M, 2)
     gamma_0: jax.Array     # (M, M)
-    gamma_Q: jax.Array     # (M, M)
     B: jax.Array           # (2, 2)
     kappa: float
     alpha: float

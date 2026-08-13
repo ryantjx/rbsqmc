@@ -60,7 +60,6 @@ def propagate_sample(
     state: RBPFState,
     model_inputs: RBPFFootballResults,
     mean: jnp.ndarray,
-    gamma_Q: jnp.ndarray,
     B: jnp.ndarray,
     kappa: float,
     num_teams: int,
@@ -137,7 +136,6 @@ def build_rbpf_filter(
         propagate_sample=partial(
             propagate_sample,
             mean=params.mean_0,
-            gamma_Q=params.gamma_Q,
             B=params.B,
             kappa=params.kappa,
             num_teams=num_teams,
@@ -159,7 +157,6 @@ def build_rbpf_filter(
 def compute_gamma_trajectory(
     model_inputs: FootballResults,
     gamma_0: jnp.ndarray,
-    gamma_Q: jnp.ndarray,
     kappa: float,
     num_teams: int,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -265,7 +262,6 @@ def main():
     gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
         model_inputs=model_inputs,
         gamma_0=params.gamma_0,
-        gamma_Q=params.gamma_Q,
         kappa=params.kappa,
         num_teams=NUM_TEAMS,
     )

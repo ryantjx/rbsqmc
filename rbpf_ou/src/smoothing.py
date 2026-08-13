@@ -54,6 +54,17 @@ _KAPPA_MIN = 1e-3
 # least one week we need kappa <= ln(2)/7 ~= 0.099, so we cap it at 0.1.
 _KAPPA_MAX = 0.1
 
+# Reference mean-diagonal for gamma_0 after each M-step (see _normalize_scale).
+#
+# gamma_0 and scale are jointly unidentifiable: scaling x -> a x, gamma_0 ->
+# a^2 gamma_0, scale -> a scale leaves the likelihood unchanged. EM exploits
+# this flat direction by shrinking gamma_0 -> 0 (collapsing the state variance
+# to ~0). _normalize_scale rescales gamma_0 so its mean diagonal equals this
+# target and folds the factor into scale, pinning the variance scale with no
+# prior knowledge of the initial covariance. The value is arbitrary (it only
+# sets the units of the latent state); 0.16 corresponds to a state std of 0.4.
+_GAMMA0_TARGET = 0.16
+
 
 # ---------------------------------------------------------------------------
 # Kronecker-aware helpers (avoid materializing the full (2M, 2M) covariance).
@@ -327,7 +338,6 @@ def E_step(
     gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
         model_inputs=model_inputs,
         gamma_0=params.gamma_0,
-        gamma_Q=params.gamma_Q,
         kappa=params.kappa,
         num_teams=num_teams,
     )
@@ -444,9 +454,6 @@ def loss_fn(
     params: EMParams,
     smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
     model_inputs: RBPFFootballResults,
-    gamma_q_prior: float = 0.0,
-    gamma_0_prior: float = 0.0,
-    gamma_0_target: jnp.ndarray | None = None,
 ):
     """MCEM objective: -average over M trajectories of log p(y, X^*).
 
@@ -456,39 +463,16 @@ def loss_fn(
     (see ``_complete_log_likelihood``), so the three terms are on a comparable
     per-dimension scale and summed with equal weight.
 
-    Two quadratic shrinkage priors keep the covariance parameters from
-    collapsing to degenerate (near-zero) values that inflate the transition
-    log-likelihood:
-
-    - ``gamma_q_prior`` shrinks ``gamma_Q`` toward a small scaled identity.
-      (Note: ``gamma_Q`` is currently held fixed in the M-step, so this prior
-      is effectively inert — retained for backward compatibility.)
-    - ``gamma_0_prior`` shrinks ``gamma_0`` toward ``gamma_0_target`` (the
-      initial regional-correlation prior). Without this, EM drives ``gamma_0``
-      toward 0, which collapses the stationary state variance and makes team
-      strengths (attack/defence) hover near the mean with almost no spread.
-      This prior is what keeps the state variance at a meaningful scale.
+    No shrinkage priors are used. The ``gamma_0``/``scale`` scale-identifiability
+    degeneracy (scaling ``x -> a x``, ``gamma_0 -> a^2 gamma_0``, ``scale -> a scale``
+    leaves the likelihood unchanged) is instead broken by a deterministic
+    reparameterization in ``_normalize_scale``, which pins the variance scale
+    without any prior knowledge of the initial covariance.
     """
     init_ll, obs_ll, transition_ll = jax.vmap(
         lambda X: _complete_log_likelihood(params, X, model_inputs)
     )(smoothed_trajectories)  # each (M,)
-    data_loss = -jnp.mean(init_ll + obs_ll + transition_ll)
-
-    # Quadratic shrinkage prior on gamma_Q toward a small scaled identity.
-    if gamma_q_prior > 0:
-        num_teams = params.gamma_Q.shape[0]
-        gamma_target = 0.001 * jnp.eye(num_teams)
-        prior = gamma_q_prior * jnp.sum((params.gamma_Q - gamma_target) ** 2)
-    else:
-        prior = 0.0
-
-    # Quadratic shrinkage prior on gamma_0 toward the initial prior, keeping
-    # the stationary state variance from collapsing to ~0.
-    if gamma_0_prior > 0 and gamma_0_target is not None:
-        prior = prior + gamma_0_prior * jnp.sum(
-            (params.gamma_0 - gamma_0_target) ** 2
-        )
-    return data_loss + prior
+    return -jnp.mean(init_ll + obs_ll + transition_ll)
 
 
 def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
@@ -545,6 +529,34 @@ def _cholesky_from_psd(A: jnp.ndarray, n: int) -> jnp.ndarray:
     return L_free
 
 
+def _normalize_scale(params: EMParams) -> EMParams:
+    """Break the ``gamma_0``/``scale`` scale-identifiability degeneracy.
+
+    The likelihood is invariant to the joint rescaling
+    ``x -> a x``, ``gamma_0 -> a^2 gamma_0``, ``scale -> a scale`` (team
+    strengths only enter the goal rates as ``(x_att - x_def)/scale``, and the
+    Gaussian terms depend on ``gamma_0`` only through the ratio of the state
+    to its covariance). EM therefore has a flat direction along which it can
+    shrink ``gamma_0 -> 0`` while ``scale -> 0``, collapsing the state variance
+    to ~0 with no change in fit.
+
+    We break this degeneracy deterministically, with no prior knowledge of the
+    initial covariance: after each M-step we rescale ``gamma_0`` so its mean
+    diagonal equals ``_GAMMA0_TARGET`` (a fixed, arbitrary reference scale) and
+    absorb the absorbed factor into ``scale``. This pins the variance scale
+    while leaving the likelihood exactly unchanged, so the fitted state
+    variance is meaningful and ``scale`` carries the true magnitude.
+    """
+    # Mean diagonal of gamma_0 (a scalar measure of the state-variance scale).
+    mean_diag = jnp.mean(jnp.diag(params.gamma_0))
+    # Rescale gamma_0 so its mean diagonal hits the target, and fold the
+    # inverse factor into scale (scale -> scale * sqrt(mean_diag / target)).
+    factor = jnp.sqrt(mean_diag / _GAMMA0_TARGET)
+    gamma_0 = params.gamma_0 / (factor**2)
+    scale = params.scale * factor
+    return params._replace(gamma_0=gamma_0, scale=scale)
+
+
 def _constrain(params: EMParams) -> EMParams:
     """Apply validity constraints so parameters stay in their support.
 
@@ -555,29 +567,30 @@ def _constrain(params: EMParams) -> EMParams:
     - scale clamped to [0, 10] (team-strength influence on goal rates; a
       negative scale would flip the sign of the strength effect, and a large
       scale dilutes the strength signal toward the baseline).
-    - gamma_0, gamma_Q, B projected onto the positive-definite cone
-      (full-rank, so the transition covariance Q and the smoother covariances
-      stay invertible and their log-determinants finite).
+    - gamma_0, B projected onto the positive-definite cone (full-rank, so the
+      transition covariance Q and the smoother covariances stay invertible
+      and their log-determinants finite).
+    - gamma_0 rescaled to a fixed reference variance via ``_normalize_scale``
+      (breaks the gamma_0/scale scale-identifiability degeneracy without a
+      shrinkage prior).
 
     Note: during the M-step these are Cholesky-parameterized (so they stay PD
     automatically); this projection is retained as a safety net for params
     constructed outside the optimizer (e.g. hand-loaded values).
     """
     gamma_0 = _project_psd(params.gamma_0)
-    gamma_Q = _project_psd(params.gamma_Q)
     B = _project_psd(params.B)
     kappa = jnp.clip(params.kappa, _KAPPA_MIN, _KAPPA_MAX)
     scale = jnp.clip(params.scale, 0.0, 10.0)
-    return EMParams(
+    return _normalize_scale(EMParams(
         mean_0=params.mean_0,
         gamma_0=gamma_0,
-        gamma_Q=gamma_Q,
         B=B,
         kappa=kappa,
         alpha=params.alpha,
         beta=params.beta,
         scale=scale,
-    )
+    ))
 
 
 def M_step(
@@ -586,9 +599,6 @@ def M_step(
     prev_params: EMParams,
     learning_rate: float,
     n_gradient_steps: int,
-    gamma_q_prior: float = 0.0,
-    gamma_0_prior: float = 0.0,
-    gamma_0_target: jnp.ndarray | None = None,
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
@@ -597,30 +607,17 @@ def M_step(
     of log p(y, X^*). gamma_0 and B are Cholesky-parameterized so they stay
     positive-definite by construction.
 
-    ``gamma_Q`` is intentionally NOT optimized: it is dead weight. Both the
-    transition log-likelihood (``_complete_log_likelihood``) and the filter's
-    covariance trajectory (``compute_gamma_trajectory``) use ``gamma_0`` (the
-    stationary covariance), never ``gamma_Q``. Optimizing it wastes gradient
-    effort on a parameter with zero effect on the objective, so we hold it
-    fixed at ``prev_params.gamma_Q``.
-
     ``scale`` is a free parameter optimized by the M-step (it controls the
     influence of team strength on the goal rates). It is clamped to [0, 10] by
-    ``_constrain``.
-
-    ``gamma_q_prior`` is the strength of a quadratic shrinkage prior on
-    ``gamma_Q`` (see ``loss_fn``), keeping the transition variance bounded.
-
-    ``gamma_0_prior`` / ``gamma_0_target``: a quadratic shrinkage prior on
-    ``gamma_0`` toward the initial regional-correlation prior. This prevents
-    EM from collapsing the stationary state variance to ~0 (which would make
-    team strengths hover near the mean with no spread).
+    ``_constrain``, which also rescales ``gamma_0`` to a fixed reference
+    variance via ``_normalize_scale`` (breaking the gamma_0/scale
+    scale-identifiability degeneracy without a shrinkage prior).
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
         loss_best, loss_trace).
     """
-    num_teams = prev_params.gamma_Q.shape[0]
+    num_teams = prev_params.gamma_0.shape[0]
 
     def _loss_and_grad(carry):
         # Reconstruct PD matrices from free Cholesky factors.
@@ -630,7 +627,6 @@ def M_step(
             EMParams(
                 mean_0=prev_params.mean_0,
                 gamma_0=gamma_0,
-                gamma_Q=prev_params.gamma_Q,  # held fixed (dead parameter)
                 B=B,
                 kappa=carry["kappa"],
                 alpha=carry["alpha"],
@@ -639,15 +635,11 @@ def M_step(
             ),
             smoothed_trajectories,
             model_inputs,
-            gamma_q_prior=gamma_q_prior,
-            gamma_0_prior=gamma_0_prior,
-            gamma_0_target=gamma_0_target,
         )
 
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
 
     # Initial parameter blocks (dict so optax.multi_transform labels align).
-    # Note: no "L_gammaQ" block — gamma_Q is not optimized.
     carry = {
         "L_gamma0": _cholesky_from_psd(prev_params.gamma_0, num_teams),
         "L_B": _cholesky_from_psd(prev_params.B, 2),
@@ -687,7 +679,7 @@ def M_step(
     optimizer = optax.chain(
         # Clip the global gradient norm to prevent the explosive first step
         # (the transition log-density gradient ~ Q^{-1} can be enormous when
-        # gamma_Q is near-singular). This stabilizes the M-step.
+        # gamma_0 is near-singular). This stabilizes the M-step.
         optax.clip_by_global_norm(1.0),
         optax.multi_transform(transforms, param_labels),
         optax.scale_by_schedule(
@@ -726,7 +718,6 @@ def M_step(
     final = _constrain(EMParams(
         mean_0=prev_params.mean_0,
         gamma_0=best_gamma_0,
-        gamma_Q=prev_params.gamma_Q,  # held fixed (dead parameter)
         B=best_B,
         kappa=best_carry["kappa"],
         alpha=best_carry["alpha"],
@@ -749,15 +740,9 @@ def run_EM(
     n_gradient_steps: int = 10,
     learning_rate: float = 1e-3,
     n_trajectories: int = N_TRAJECTORIES,
-    gamma_q_prior: float = 0.0,
-    gamma_0_prior: float = 0.0,
     key: jax.Array = jax.random.PRNGKey(42),
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     params = init_params
-
-    # Target for the gamma_0 shrinkage prior: the initial regional-correlation
-    # prior. This keeps the stationary state variance from collapsing to ~0.
-    gamma_0_target = init_params.gamma_0
 
     log_likelihood_history = []
     mstep_start_history = []
@@ -801,9 +786,6 @@ def run_EM(
             prev_params=params,
             learning_rate=learning_rate,
             n_gradient_steps=n_gradient_steps,
-            gamma_q_prior=gamma_q_prior,
-            gamma_0_prior=gamma_0_prior,
-            gamma_0_target=gamma_0_target,
         )
         mstep_start_history.append(loss_start)
         mstep_end_history.append(loss_best)
@@ -825,7 +807,6 @@ def run_EM(
     print("  beta:", params.beta)
     print("  scale:", params.scale)
     print("  B:", params.B)
-    print("  gamma_Q:", params.gamma_Q.shape)
     print("  gamma_0:", params.gamma_0.shape)
     print("  mean_0:", params.mean_0.shape)
 

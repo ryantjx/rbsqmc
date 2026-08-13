@@ -4,7 +4,7 @@ set -euo pipefail
 # Run rbpf_ou/smoothing_gpu.py on a Colab GPU.
 #
 # Reuses the EM machinery from rbpf_ou/src/smoothing.py (parameter set:
-# estimates gamma_0, gamma_Q, B, alpha, beta; mean_0 fixed) but runs with a
+# estimates gamma_0, B, alpha, beta; mean_0 fixed) but runs with a
 # GPU-oriented configuration.
 #
 # Usage:  ./run_smoothing_colab.sh
@@ -55,7 +55,7 @@ fi
 
 echo "============================================================"
 echo "  COLAB SMOOTHING GPU — RANDOM-WALK MODEL TEST RUN"
-echo "  Reuses rbpf_ou/src/smoothing.py EM (gamma_0, gamma_Q, B, alpha, beta; mean_0 fixed)."
+echo "  Reuses rbpf_ou/src/smoothing.py EM (gamma_0, B, alpha, beta; mean_0 fixed)."
 echo "  ${ACCEL_LABEL}, N=${GPU_N}, start_date=$(read_config start_date), n_epochs=$(read_config n_epochs), teams=$(read_config teams)"
 if [ "$(read_config high_ram)" = "true" ]; then
     echo "  High-RAM: ENABLED (note: set in the Colab UI — the CLI exposes no --high-ram flag)"

@@ -109,7 +109,7 @@ so the Kronecker matvec $(J_{\Gamma,t} \otimes I_2)\,\text{vec}_C(S) = \text{vec
 
 ## 4 Parameter Estimation — Monte Carlo EM (MCEM)
 
-Let $\Theta = (\mu_0, \Gamma_0, \Gamma_Q, B, \kappa, \alpha, \beta)$ be the model parameters. We estimate $\Theta$ by **Monte Carlo Expectation-Maximization** (MCEM).
+Let $\Theta = (\mu_0, \Gamma_0, B, \kappa, \alpha, \beta)$ be the model parameters. We estimate $\Theta$ by **Monte Carlo Expectation-Maximization** (MCEM).
 
 **1 E-step.** Approximate the smoothing distribution $p(X_{0:T} \mid y_{1:T}, \Theta^{(k)})$ via FFBSi (Section 3), then estimate the expected complete log-likelihood by Monte Carlo over the $M$ smoothed trajectories:
 
@@ -119,7 +119,7 @@ The complete-data log-likelihood for one trajectory is
 
 $$\log p(X_{0:T}, y_{1:T} \mid \Theta) = \underbrace{\log p_{\mu_0, \Gamma_0 \otimes B}(X_0)}_{\text{init}} + \sum_{t=1}^{T} \underbrace{\log p_{\kappa, \Gamma_0 \otimes B}(X_t \mid X_{t-1})}_{\text{transition}} + \sum_{t=1}^{T} \underbrace{\log p_{\alpha, \beta}(y_t \mid X_t^{\mathcal{O}_t})}_{\text{observation}}$$
 
-**2 M-step.** Maximize $A(\Theta \mid \Theta^{(k)})$ with respect to $\Theta$ via **scale-aware ADAM** with a cosine schedule and global-norm gradient clipping. The covariance matrices $\Gamma_0, \Gamma_Q, B$ are **Cholesky-parameterized** so they stay positive-definite by construction; $\kappa$ is clamped to $[\text{\_KAPPA\_MIN}, \text{\_KAPPA\_MAX}] = [10^{-3}, 0.1]$ to keep the transition covariance non-degenerate **and** to force a mean-reversion half-life of at least one week ($t_{1/2} = \ln 2 / \kappa \ge 7$ days).
+**2 M-step.** Maximize $A(\Theta \mid \Theta^{(k)})$ with respect to $\Theta$ via **scale-aware ADAM** with a cosine schedule and global-norm gradient clipping. The covariance matrices $\Gamma_0, B$ are **Cholesky-parameterized** so they stay positive-definite by construction; $\kappa$ is clamped to $[\text{\_KAPPA\_MIN}, \text{\_KAPPA\_MAX}] = [10^{-3}, 0.1]$ to keep the transition covariance non-degenerate **and** to force a mean-reversion half-life of at least one week ($t_{1/2} = \ln 2 / \kappa \ge 7$ days).
 
 **Loss scaling.** Each term of the complete-data log-likelihood is divided by the number of dimensions it spans, so the three terms are on a comparable per-dimension scale and summed with equal weight:
 
@@ -129,10 +129,7 @@ $$\log p(X_{0:T}, y_{1:T} \mid \Theta) = \underbrace{\log p_{\mu_0, \Gamma_0 \ot
 
 The observation term's influence is instead controlled by the `scale` hyperparameter: smaller `scale` amplifies the team-strength signal in the goal rates, giving the observation term more gradient weight without a manual loss-weighting hack.
 
-Two quadratic shrinkage priors keep the covariance parameters from collapsing to degenerate (near-zero) values:
-
-- A prior on $\Gamma_Q$ toward a small scaled identity (retained for backward compatibility; $\Gamma_Q$ is currently held fixed in the M-step, so this prior is effectively inert).
-- A prior on $\Gamma_0$ toward the initial regional-correlation prior (`gamma_0_prior`, default 0.1). Without it, EM drives $\Gamma_0 \to 0$, collapsing the stationary state variance so team strengths hover near the mean with almost no spread. This prior is what keeps the attack/defence state variance at a meaningful scale.
+**Scale identifiability.** $\Gamma_0$ and `scale` are jointly unidentifiable: scaling $x \to a x$, $\Gamma_0 \to a^2 \Gamma_0$, `scale` $\to a \cdot$`scale` leaves the likelihood unchanged (team strengths only enter the goal rates as $(x_{\text{att}} - x_{\text{def}})/\text{scale}$, and the Gaussian terms depend on $\Gamma_0$ only through the ratio of the state to its covariance). EM would otherwise exploit this flat direction to shrink $\Gamma_0 \to 0$, collapsing the state variance to ~0. Rather than a shrinkage prior (which would require knowing the initial covariance), the M-step breaks the degeneracy deterministically via `_normalize_scale`: it rescales $\Gamma_0$ so its mean diagonal equals a fixed reference `_GAMMA0_TARGET` and folds the absorbed factor into `scale`. This pins the variance scale with no prior knowledge, leaving the likelihood exactly unchanged.
 
 ---
 
@@ -156,7 +153,6 @@ Two quadratic shrinkage priors keep the covariance parameters from collapsing to
 |-------|-------|---------|------|
 | `mean_0` | $(M, 2)$ | shared initial/stationary mean | zeros |
 | `gamma_0` | $(M, M)$ | stationary team covariance (regional prior) | regional correlation |
-| `gamma_Q` | $(M, M)$ | transition team covariance factor | small scaled identity |
 | `B` | $(2, 2)$ | shared attack/defence covariance | $\begin{bmatrix}1 & 0.2\\0.2 & 1\end{bmatrix}$ |
 | `kappa` | scalar | OU mean-reversion rate (clamped to $[10^{-3}, 0.1]$) | 0.01 |
 | `alpha` | scalar | baseline scoring rate | 0.2 |
@@ -172,7 +168,6 @@ Two quadratic shrinkage priors keep the covariance parameters from collapsing to
 | `n_gradient_steps` | 30 | ADAM steps per M-step |
 | `learning_rate` | 0.01 | base ADAM learning rate |
 | `n_trajectories` | 12 | smoothed trajectories per E-step (MCEM) |
-| `gamma_0_prior` | 0.1 | shrinkage prior on $\Gamma_0$ toward the regional prior (keeps state variance from collapsing) |
 | `teams` | `WORLDCUP_2026_TEAMS` | 48-team set (L4 run) |
 | `hardware` / `gpu_type` | `gpu` / `L4` | Colab L4 |
 
@@ -197,7 +192,7 @@ The A100 run (`outputs_gpu_active/`) originally showed three failure signals: th
 The L4 run (N=300, n_trajectories=12, `scale` free) converged — log marginal `[-5315, ..., -5303]`, ESS healthy (~220/300), prediction mean log-likelihood −3.41 — but the **rankings were still noise** (Egypt, US, Saudi Arabia, Haiti top; Portugal, Belgium, Switzerland bottom). Two root causes, both now addressed:
 
 1. **`kappa` was too large (0.58).** The OU half-life is $t_{1/2} = \ln 2 / \kappa \approx 1.2$ days, so a team's strength reverted to the mean almost immediately between matches (median gap 1 day, mean 5.3 days). This destroys persistence and makes rankings noise. **Fix:** clamp $\kappa$ to `_KAPPA_MAX = 0.1` (half-life ≥ 7 days) in `_constrain`.
-2. **State variance collapsed to ~0.2.** The stationary state variance is $\Gamma_0[i,i] \cdot B[k,k]$. With no prior, EM drove $\Gamma_0 \to 0$, so attack/defence states hovered near the mean with almost no spread. **Fix:** add a quadratic shrinkage prior on $\Gamma_0$ toward the initial regional-correlation prior (`gamma_0_prior = 0.1`), keeping the state variance at a meaningful scale.
+2. **State variance collapsed to ~0.2.** The stationary state variance is $\Gamma_0[i,i] \cdot B[k,k]$. EM drove $\Gamma_0 \to 0$ along the $\Gamma_0$/`scale` scale-identifiability flat direction, so attack/defence states hovered near the mean with almost no spread. **Fix:** `_normalize_scale` rescales $\Gamma_0$ to a fixed reference variance and folds the factor into `scale` after each M-step — breaking the degeneracy deterministically, with no prior knowledge of the initial covariance (see Section 4).
 
 > **Note on $\mu_0$.** $\mu_0$ is unidentifiable from the likelihood: team strengths only appear in *differences* ($x_i^{\text{att}} - x_j^{\text{def}}$), so shifting all teams' strengths by a constant leaves the goal rates unchanged. It is therefore held fixed at zero.
 
@@ -206,7 +201,7 @@ The L4 run (N=300, n_trajectories=12, `scale` free) converged — log marginal `
 The following issues from the original "why EM is not converging" list have been fixed and verified on the L4 run (`outputs_gpu_l4/`):
 
 1. **`N_TRAJECTORIES = 2` was far too low.** The MCEM Q-function estimate was an average over only 2 smoothed trajectories, so it was dominated by Monte Carlo noise. **Fix:** raised to `n_trajectories = 12` in the config (module default `N_TRAJECTORIES = 8`). The L4 run converged with a healthy ESS (~220/300).
-2. **`gamma_Q` was dead weight.** It was estimated in the M-step but never used: both the transition log-likelihood (`_complete_log_likelihood`) and the filter's covariance trajectory (`compute_gamma_trajectory`) use `gamma_0`, not `gamma_Q`. **Fix:** `gamma_Q` is now held fixed in the M-step (removed from the optimizer), so gradient effort is no longer wasted on a parameter with zero effect on the objective.
+2. **`gamma_Q` was dead weight.** It was estimated in the M-step but never used: both the transition log-likelihood (`_complete_log_likelihood`) and the filter's covariance trajectory (`compute_gamma_trajectory`) use `gamma_0`, not `gamma_Q`. **Fix:** `gamma_Q` has been **removed entirely** from the parameter set, the filter, and the M-step — it no longer exists in the model.
 3. **Loss-scaling imbalance.** The transition term was scaled by $2M(T-1) \approx 2.3\text{M}$ dimensions while the observation term was scaled by $2T \approx 10\text{K}$, so the M-step effectively ignored `alpha`/`beta`. **Fix:** each term is now scaled by the number of dimensions it spans (per-dimension scaling), putting the three terms on a comparable scale.
 4. **`learning_rate = 0.001` + global-norm clip too small.** Combined with the noise, the M-step made negligible progress per epoch. **Fix:** raised `learning_rate` to `0.01` in the config.
 5. **`N = 50` particles for $M = 228$ teams was too low.** **Fix:** raised `N` to `300` (and switched to the 48-team `WORLDCUP_2026_TEAMS` set on L4 to avoid OOM).
