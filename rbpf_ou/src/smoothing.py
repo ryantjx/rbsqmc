@@ -50,10 +50,14 @@ _EIGEN_FLOOR = 1e-4
 # reverts to the mean almost immediately between matches — destroying the
 # persistence that makes rankings meaningful. Even kappa = 0.08 (half-life
 # ~8.6 days) is too fast: the filtered states bounce around per-match noise
-# instead of settling into a stable ranking. To make team quality persist
-# over a tournament (weeks to months), we cap kappa at 0.02, giving a
-# half-life of ln(2)/0.02 ~= 35 days.
-_KAPPA_MAX = 0.02
+# instead of settling into a stable ranking.
+#
+# International matches are spaced far apart: the median gap between a team's
+# matches is ~43 days (mean ~125 days). For team quality to persist across
+# that gap, the half-life must be much longer than the gap. We cap kappa at
+# 0.002, giving a half-life of ln(2)/0.002 ~= 347 days (~1 year), so a team's
+# strength retains ~92% of its value after the median 43-day gap.
+_KAPPA_MAX = 0.002
 
 
 # ---------------------------------------------------------------------------

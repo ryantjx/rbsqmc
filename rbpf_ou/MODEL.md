@@ -119,7 +119,7 @@ The complete-data log-likelihood for one trajectory is
 
 $$\log p(X_{0:T}, y_{1:T} \mid \Theta) = \underbrace{\log p_{\mu_0, \Gamma_0 \otimes B}(X_0)}_{\text{init}} + \sum_{t=1}^{T} \underbrace{\log p_{\kappa, \Gamma_0 \otimes B}(X_t \mid X_{t-1})}_{\text{transition}} + \sum_{t=1}^{T} \underbrace{\log p_{\alpha, \beta}(y_t \mid X_t^{\mathcal{O}_t})}_{\text{observation}}$$
 
-**2 M-step.** Maximize $A(\Theta \mid \Theta^{(k)})$ with respect to $\Theta$ via **scale-aware ADAM** with a cosine schedule and global-norm gradient clipping. The covariance matrices $\Gamma_0, B$ are **Cholesky-parameterized** so they stay positive-definite by construction; $\kappa$ is clamped to $[0, \text{\_KAPPA\_MAX}] = [0, 0.02]$ to force a mean-reversion half-life of about a month ($t_{1/2} = \ln 2 / \kappa \approx 35$ days), so team quality persists over a tournament.
+**2 M-step.** Maximize $A(\Theta \mid \Theta^{(k)})$ with respect to $\Theta$ via **scale-aware ADAM** with a cosine schedule and global-norm gradient clipping. The covariance matrices $\Gamma_0, B$ are **Cholesky-parameterized** so they stay positive-definite by construction; $\kappa$ is clamped to $[0, \text{\_KAPPA\_MAX}] = [0, 0.002]$ to force a mean-reversion half-life of about a year ($t_{1/2} = \ln 2 / \kappa \approx 347$ days). International matches are spaced far apart (median gap ~43 days), so a long half-life lets team quality persist across the gap.
 
 **Loss scaling.** Each term of the complete-data log-likelihood is divided by the number of dimensions it spans, so the three terms are on a comparable per-dimension scale and summed with equal weight:
 
@@ -154,7 +154,7 @@ The observation term's influence is instead controlled by the `scale` hyperparam
 | `mean_0` | $(M, 2)$ | shared initial/stationary mean | zeros |
 | `gamma_0` | $(M, M)$ | stationary team covariance (regional prior) | regional correlation |
 | `B` | $(2, 2)$ | shared attack/defence covariance | $\begin{bmatrix}1 & 0.2\\0.2 & 1\end{bmatrix}$ |
-| `kappa` | scalar | OU mean-reversion rate (clamped to $[0, 0.02]$) | 0.01 |
+| `kappa` | scalar | OU mean-reversion rate (clamped to $[0, 0.002]$) | 0.01 |
 | `alpha` | scalar | baseline scoring rate | 0.2 |
 | `beta` | scalar | shared-scoring / correlation rate | −4.0 |
 
@@ -190,7 +190,7 @@ The A100 run (`outputs_gpu_active/`) originally showed three failure signals: th
 
 The L4 run (N=300, n_trajectories=12, `scale` free) converged — log marginal `[-5315, ..., -5303]`, ESS healthy (~220/300), prediction mean log-likelihood −3.41 — but the **rankings were still noise** (Egypt, US, Saudi Arabia, Haiti top; Portugal, Belgium, Switzerland bottom). Two root causes, both now addressed:
 
-1. **`kappa` was too large (0.58).** The OU half-life is $t_{1/2} = \ln 2 / \kappa \approx 1.2$ days, so a team's strength reverted to the mean almost immediately between matches (median gap 1 day, mean 5.3 days). This destroys persistence and makes rankings noise. **Fix:** clamp $\kappa$ to `_KAPPA_MAX = 0.02` (half-life ≈ 35 days) in `_constrain`.
+1. **`kappa` was too large (0.58).** The OU half-life is $t_{1/2} = \ln 2 / \kappa \approx 1.2$ days, so a team's strength reverted to the mean almost immediately between matches (median gap 1 day, mean 5.3 days). This destroys persistence and makes rankings noise. **Fix:** clamp $\kappa$ to `_KAPPA_MAX = 0.002` (half-life ≈ 347 days) in `_constrain`.
 2. **State variance collapsed to ~0.2.** The stationary state variance is $\Gamma_0[i,i] \cdot B[k,k]$. EM drove $\Gamma_0 \to 0$ along the $\Gamma_0$/`scale` scale-identifiability flat direction, so attack/defence states hovered near the mean with almost no spread. **Fix:** `scale` is now fixed at 1.0 (removed as a parameter), cutting off the flat direction so EM keeps $\Gamma_0$ at a meaningful scale (see Section 4).
 
 > **Note on $\mu_0$.** $\mu_0$ is unidentifiable from the likelihood: team strengths only appear in *differences* ($x_i^{\text{att}} - x_j^{\text{def}}$), so shifting all teams' strengths by a constant leaves the goal rates unchanged. It is therefore held fixed at zero.
@@ -222,7 +222,7 @@ A review of `rbpf_ou/` surfaced a number of ad-hoc workarounds, hardcoded consta
 
 **Ad-hoc reparameterizations & clamps.** These pin parameters that EM would otherwise drive to degenerate values:
 
-- `_KAPPA_MAX = 0.02` (`smoothing.py`) — hard-clamps the mean-reversion rate to force a ~1-month half-life so team quality persists. This is a *constraint*, not an estimate: EM is not free to find the true `kappa`. Kept deliberately as a constraint.
+- `_KAPPA_MAX = 0.002` (`smoothing.py`) — hard-clamps the mean-reversion rate to force a ~1-year half-life so team quality persists across the long gaps between international matches. This is a *constraint*, not an estimate: EM is not free to find the true `kappa`. Kept deliberately as a constraint.
 - `_psd_from_cholesky` / `_cholesky_from_psd` softplus diagonal (`smoothing.py`) — Cholesky reparameterization so PD matrices stay PD by construction.
 
 **Loss & optimization hacks.** These make the M-step behave:
