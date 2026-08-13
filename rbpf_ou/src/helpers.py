@@ -123,8 +123,10 @@ def default_init_params(
     The covariance is Kronecker-structured ``Sigma = gamma (x) B`` with a
     *shared* attack/defence factor ``B``. We build:
 
-    - ``gamma_0``: team covariance from the regional correlation prior
-      (the stationary covariance of the OU process).
+    - ``gamma_0``: team covariance initialized as the regional *correlation*
+      matrix ``C0`` (diagonal 1). The absolute variance scale is unidentifiable
+      with ``scale`` (fixed at 1), so we initialize ``gamma_0`` at the
+      correlation scale and let EM estimate the true covariance from the data.
     - ``B``:       shared ``2 x 2`` attack/defence covariance.
     - ``kappa``:   scalar mean-reversion rate of the OU transition.
     """
@@ -132,16 +134,15 @@ def default_init_params(
     if team_id_to_name is not None:
         if len(team_id_to_name) != num_teams:
             raise ValueError("team_id_to_name must contain exactly num_teams entries")
-        C0, state_std = _regional_correlation_matrix(team_id_to_name)
-        sigmas = state_std * jnp.ones(num_teams)
+        C0, _ = _regional_correlation_matrix(team_id_to_name)
     else:
-        sigmas = 0.4 * jnp.ones(num_teams)
         C0 = (
             (1.0 - rho_team) * jnp.eye(num_teams)
             + rho_team * jnp.ones((num_teams, num_teams))
         )
-    D = jnp.diag(sigmas)
-    gamma_0 = D @ C0 @ D
+    # gamma_0 starts as the correlation matrix (diagonal 1); EM estimates the
+    # true covariance scale from the data.
+    gamma_0 = C0
 
     cov_attack_defence = 0.2
     B = jnp.array([
