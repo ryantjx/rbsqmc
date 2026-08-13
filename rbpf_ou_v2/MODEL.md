@@ -107,6 +107,104 @@ cosine schedule, and global-norm clipping. `gamma_0` and `B` are
 Cholesky-parameterized (`L L^T` with a softplus-wrapped diagonal) so they stay
 positive-definite by construction.
 
+### 4.1 Mathematical formulation
+
+Let $\theta = (\mu_0, \Gamma_0, B, \kappa, \alpha, \beta)$ be the model
+parameters. The **marginal likelihood** integrates out the latent states
+$X_{0:T}$:
+
+$$Z(\theta) = p(y_{1:T} \mid \theta) = \int p(x_0 \mid \theta) \prod_{t=1}^{T} p(x_t \mid x_{t-1}, \theta)\, g_t(y_t \mid x_t, \theta)\, dx_{0:T}$$
+
+where $g_t$ is the bivariate-Poisson observation density. The particle filter
+produces a **consistent estimator** $\hat{Z}_N(\theta)$ of this integral — the
+product of the per-step normalizing constants, equivalently the sum of the
+log-weights:
+
+$$\log \hat{Z}_N(\theta) = \sum_{t=1}^{T} \log\!\Bigl(\tfrac{1}{N}\sum_{i=1}^{N} \tilde{w}_t^{(i)}\Bigr), \qquad \tilde{w}_t^{(i)} = w_{t-1}^{(i)}\, g_t\bigl(y_t \mid X_t^{\mathcal{O}_t,(i)}\bigr)$$
+
+v2 minimizes the **negative log marginal likelihood** (a single scalar):
+
+$$\mathcal{L}(\theta) = -\log \hat{Z}_N(\theta) = -\text{filtered.log\_normalizing\_constant}[-1]$$
+
+by **direct gradient descent**:
+
+$$\theta_{k+1} = \theta_k - \eta_k\, \nabla_\theta \mathcal{L}(\theta_k), \qquad \nabla_\theta \mathcal{L}(\theta) = -\nabla_\theta \log \hat{Z}_N(\theta)$$
+
+The gradient is obtained by **backpropagating through the filter** (`jax.grad`
+on the loss), which differentiates the weight recursion and the deterministic
+covariance trajectory `compute_gamma_trajectory` (a clean path through
+$\Gamma_0$ and $\kappa$). The discrete resampling step is non-differentiable,
+so its gradient path is effectively stopped (see §4.3).
+
+### 4.2 Comparison with Monte Carlo EM (v1)
+
+| | **v1 — MCEM** | **v2 — direct GD** |
+|---|---|---|
+| **Objective** | Expected complete-data log-likelihood (Q-function) $-\frac{1}{M}\sum_{i=1}^{M}\log p(X_{0:T}^{(i)}, y_{1:T}\mid\theta)$ | Negative log marginal likelihood $-\log \hat{Z}_N(\theta)$ |
+| **Latent states** | **Sampled** via FFBSi smoothing (E-step) | **Integrated out** by the filter |
+| **Source of the scalar** | Average over $M$ smoothed trajectories | `log_normalizing_constant[-1]` from the filter |
+| **Structure** | Two-stage: E-step / M-step | Single objective, one `grad` call |
+| **Noise** | MCEM noise from finite $M$ trajectories | Fixed-key stochasticity of the filter |
+| **Gradient** | Implicit (M-step optimizes the Q-function) | Explicit (backprop through the filter) |
+| **Smoothing** | Required (FFBSi) | Not needed |
+
+The two objectives are **different objects**: v1 optimizes the *complete-data*
+likelihood (needs the latent states, hence smoothing), while v2 optimizes the
+*marginal* likelihood (the filter's normalizing constant, which already
+marginalizes out the states). This is why v2 can drop smoothing entirely.
+
+### 4.3 Consequences: the biased gradient
+
+The gradient $\nabla_\theta \log \hat{Z}_N(\theta)$ is **biased** for two
+reasons, neither of which the fixed PRNG key removes:
+
+1. **Finite-$N$ log-likelihood bias.** $\log \hat{Z}_N(\theta)$ is a consistent
+   but biased estimator of $\log Z(\theta)$: for finite $N$ it systematically
+   *underestimates* the log marginal likelihood. The gradient of a biased
+   estimator is biased.
+
+2. **Non-differentiable resampling.** The discrete resampling indices are an
+   `argmax`-like operation with no meaningful gradient. Backprop through it is
+   stopped, so the gradient is a surrogate, not the true gradient of the
+   expected log-likelihood.
+
+**What the fixed key does.** Fixing the PRNG key per step
+($\text{key}_k = \text{fold\_in}(\text{seed}, k)$) makes $\hat{Z}_N(\theta)$ a
+deterministic function of $\theta$ for that step. This removes **variance**
+(stable, reproducible gradients) but leaves the **bias** untouched — it merely
+*exposes* it by removing the averaging over randomness. The bias is a property
+of "differentiating through a finite-$N$ particle filter," not of the key.
+
+**Reducing the bias cheaply.** Raising $N$ reduces the bias (asymptotically to
+zero) with no algorithmic change — a one-line config edit. This is the
+recommended first step before any algorithmic change.
+
+### 4.4 Extensions for unbiased gradients
+
+If unbiased gradients are required, the estimator itself must change — not the
+key:
+
+- **Differentiable Particle Filter (DPF, Corenflos et al.).** Replaces the
+  discrete resampling with a **differentiable transport coupling**, giving an
+  **unbiased** gradient. The swap at the call site is small, but it is a
+  *different filter* (the forward pass changes too), must respect the
+  Rao–Blackwellized structure, and is research-grade — a separate experiment,
+  not a drop-in fix.
+- **Score-function / REINFORCE gradient.** Uses the log-derivative trick
+  $\nabla_\theta \mathbb{E}[f] = \mathbb{E}[f\, \nabla_\theta \log q]$ to get an
+  **unbiased** gradient, at the cost of **high variance** (the opposite
+  trade-off from v2's fixed-key stability). Often needs control variates or
+  baselines to be usable.
+
+**Summary of the trade-off.**
+
+| | v2 (systematic + fixed key) | DPF | Score / REINFORCE |
+|---|---|---|---|
+| Gradient | Biased | Unbiased | Unbiased |
+| Variance | Low | Moderate | High |
+| Code change | — | Small swap, real algorithmic work | Moderate |
+| Risk | Stable, works | Could reintroduce instability | Needs variance reduction |
+
 ---
 
 ## 5 Practical Reference
@@ -268,3 +366,51 @@ root causes and fixes:
 - The rankings are much better but not perfect (e.g. Switzerland #2, Turkey
   #8). This is expected for a first stable run; further tuning of `N`, `n_steps`,
   and the LR schedule is the natural next step.
+
+---
+
+## 8 Hyperparameter Sweep (2026-08-13)
+
+A sweep over `N` (particles), team set (dimension), and lookback (start date).
+All runs: `n_steps=200`, `lr=0.001`, `end_date=2025-12-31`, L4 GPU unless noted.
+Metrics: **Δ log Z** = log-marginal improvement over training; **mean ll** =
+prediction mean log-likelihood over 36 scored 2026 WC fixtures; **rankings** =
+top-5 / bottom-5 by total strength (attack+defence).
+
+| Run | `N` | Teams | start | Δ log Z | mean ll | Top-5 | Bottom-5 |
+|-----|-----|-------|-------|---------|---------|-------|----------|
+| baseline | 500 | 48 | 2000 | +174 | **-3.50** | Spain, Switz, France, Neth, Port | Haiti, Egypt, Iraq, C.Verde, DR Congo |
+| N=1000 | 1000 | 48 | 2000 | +256 | -3.67 | Australia, Curaçao, Arg, Morocco, DR Congo | Sweden, Czech, Qatar, Turkey, Egypt |
+| N=1500 | 1500 | 48 | 2000 | +274 | -3.64 | Panama, Arg, Mexico, Colombia, Ecuador | N.Zealand, DR Congo, Turkey, Belgium, Sweden |
+| N=2000 | 2000 | 48 | 2000 | +260 | **-3.37** | France, Spain, Germany, Croatia, Curaçao | S.Africa, Saudi, Egypt, Qatar, Iraq |
+| ACTIVE | 100 | 228 | 2000 | NaN | NaN | — (diverged) | — |
+| lookback 1950 | 500 | 48 | 1950 | +501 | -3.68 | Colombia, Uzbek, Tunisia, Brazil, Japan | Sweden, Norway, Haiti, Czech, Bosnia |
+
+**Findings.**
+
+1. **Higher `N` improves fit but not rankings.** Δ log Z grows with `N`
+   (174 → 256 → 274 → 260), but the rankings get *worse* (weak teams like
+   Curaçao, Panama, Australia creep into the top-5) and mean ll degrades
+   (except N=2000, which is the best at -3.37). This is the **finite-`N`
+   log-likelihood bias** (§4.3): more particles reduce the bias of the
+   objective, but the *rankings* are driven by the observation term, which the
+   biased gradient over-weights. The best overall run is **N=2000** (best mean
+   ll -3.37, mostly sane rankings).
+2. **ACTIVE_TEAMS (228 teams) diverges on GPU.** The forward `log Z` is finite
+   on CPU (-56114) and trains stably on CPU, but produces **NaN at step 0 on
+   GPU** — a **GPU float32 numerical instability** at the larger dimension, not
+   a memory issue (so A100 won't help). Root cause: a tiny negative eigenvalue
+   (-2e-8) in `gamma_0` from float32 rounding makes `jnp.linalg.cholesky` NaN;
+   fixed by jittering in `_cholesky_from_psd`, but the GPU still diverges at
+   228 teams. **A100 is not the fix** — the instability is numerical, not
+   memory-bound.
+3. **Longer lookback (1950) improves fit but not rankings.** Δ log Z jumps to
+   +501 (more data → better fit), but mean ll degrades to -3.68 and rankings
+   are worse (Colombia, Uzbekistan, Tunisia top). More historical data
+   (pre-2000) appears to add noise that hurts the current-strength rankings.
+
+**Recommendation.** The **N=2000, 48-team** config is the best overall (mean ll
+-3.37, sane rankings). The ACTIVE_TEAMS path is blocked by a GPU numerical
+instability, not memory — fixing it requires a numerical fix (e.g. float64, or
+a more robust PSD projection), not a bigger GPU. The lookback sweep suggests
+2000-01-01 is a better start date than 1950 for ranking quality.
