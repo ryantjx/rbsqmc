@@ -432,7 +432,6 @@ def loss_fn(
     params: EMParams,
     smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
     model_inputs: RBPFFootballResults,
-    gamma_0_prior: float = 0.0,
 ):
     """MCEM objective: -average over M trajectories of log p(y, X^*).
 
@@ -445,31 +444,14 @@ def loss_fn(
     ``scale`` is fixed at 1.0 (it is unidentifiable with ``gamma_0``: scaling
     ``x -> a x``, ``gamma_0 -> a^2 gamma_0``, ``scale -> a scale`` leaves the
     likelihood unchanged), so ``gamma_0`` is free to carry the true
-    state-variance scale.
-
-    A **diagonal-only** quadratic shrinkage prior on ``gamma_0`` is added to
-    prevent EM from inflating the cross-team variance scale to chase per-match
-    noise. Only the diagonal (the per-team variance) is penalized, toward 1
-    (the correlation-matrix diagonal); the off-diagonal correlations are left
-    free. The term is normalized by the number of teams so it is on a
-    comparable per-dimension scale to the data term:
-
-        prior = gamma_0_prior * mean_m (gamma_0[m,m] - 1)^2
-
-    ``gamma_0_prior`` is the prior strength (0 disables it).
+    state-variance scale. No shrinkage prior is used: the ``_KAPPA_MIN`` floor
+    keeps the transition covariance non-degenerate, and EM does not inflate
+    ``gamma_0`` (verified empirically).
     """
     init_ll, obs_ll, transition_ll = jax.vmap(
         lambda X: _complete_log_likelihood(params, X, model_inputs)
     )(smoothed_trajectories)  # each (M,)
-    data_loss = -jnp.mean(init_ll + obs_ll + transition_ll)
-
-    # Diagonal-only shrinkage prior on gamma_0 toward the correlation scale (1).
-    if gamma_0_prior > 0:
-        diag = jnp.diag(params.gamma_0)
-        prior = gamma_0_prior * jnp.mean((diag - 1.0) ** 2)
-    else:
-        prior = 0.0
-    return data_loss + prior
+    return -jnp.mean(init_ll + obs_ll + transition_ll)
 
 
 def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
@@ -560,7 +542,6 @@ def M_step(
     prev_params: EMParams,
     learning_rate: float,
     n_gradient_steps: int,
-    gamma_0_prior: float = 0.0,
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
@@ -568,10 +549,6 @@ def M_step(
     The objective is the MCEM loss: -average over the M smoothed trajectories
     of log p(y, X^*). gamma_0 and B are Cholesky-parameterized so they stay
     positive-definite by construction.
-
-    ``gamma_0_prior`` is the strength of a diagonal-only shrinkage prior on
-    ``gamma_0`` (see ``loss_fn``), preventing EM from inflating the cross-team
-    variance scale to chase per-match noise.
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
@@ -594,7 +571,6 @@ def M_step(
             ),
             smoothed_trajectories,
             model_inputs,
-            gamma_0_prior=gamma_0_prior,
         )
 
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
@@ -694,7 +670,6 @@ def run_EM(
     n_gradient_steps: int = 10,
     learning_rate: float = 1e-3,
     n_trajectories: int = N_TRAJECTORIES,
-    gamma_0_prior: float = 0.0,
     key: jax.Array = jax.random.PRNGKey(42),
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     params = init_params
@@ -741,7 +716,6 @@ def run_EM(
             prev_params=params,
             learning_rate=learning_rate,
             n_gradient_steps=n_gradient_steps,
-            gamma_0_prior=gamma_0_prior,
         )
         mstep_start_history.append(loss_start)
         mstep_end_history.append(loss_best)

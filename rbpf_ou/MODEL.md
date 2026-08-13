@@ -131,6 +131,8 @@ The observation term's influence is instead controlled by the `scale` hyperparam
 
 **Scale identifiability (resolved).** $\Gamma_0$ and `scale` are jointly unidentifiable: scaling $x \to a x$, $\Gamma_0 \to a^2 \Gamma_0$, `scale` $\to a \cdot$`scale` leaves the likelihood unchanged (team strengths only enter the goal rates as $(x_{\text{att}} - x_{\text{def}})/\text{scale}$, and the Gaussian terms depend on $\Gamma_0$ only through the ratio of the state to its covariance). EM could otherwise shrink $\Gamma_0 \to 0$ along this flat direction, collapsing the state variance to ~0. **Fix:** `scale` is fixed at 1.0 (removed as a parameter), which cuts off the flat direction — EM can no longer shrink `scale` to compensate, so it is forced to keep $\Gamma_0$ at a meaningful scale. `gamma_0` is now free to be estimated from the data.
 
+**$\Gamma_0$ regularization (removed).** A diagonal-only quadratic shrinkage prior on $\Gamma_0$ was added to prevent EM from inflating the cross-team variance scale, but an experiment comparing `gamma_0_prior = 0` vs `1` showed it had **no effect**: EM does not inflate $\Gamma_0$ (its diagonal stays near 1, the correlation scale) once `scale` is fixed and `_KAPPA_MIN` floors the transition covariance. The prior was therefore removed as redundant. `gamma_0` is free to be estimated from the data.
+
 ---
 
 ## 5 Practical Reference
@@ -222,7 +224,7 @@ A review of `rbpf_ou/` surfaced a number of ad-hoc workarounds, hardcoded consta
 
 **Ad-hoc reparameterizations & clamps.** These pin parameters that EM would otherwise drive to degenerate values:
 
-- `_KAPPA_MAX = 0.002` (`smoothing.py`) — hard-clamps the mean-reversion rate to force a ~1-year half-life so team quality persists across the long gaps between international matches. This is a *constraint*, not an estimate: EM is not free to find the true `kappa`. Kept deliberately as a constraint.
+- `_KAPPA_MAX = 0.00001` (`smoothing.py`) — hard-clamps the mean-reversion rate to force a ~1-year half-life so team quality persists across the long gaps between international matches. This is a *constraint*, not an estimate: EM is not free to find the true `kappa`. Kept deliberately as a constraint.
 - `_psd_from_cholesky` / `_cholesky_from_psd` softplus diagonal (`smoothing.py`) — Cholesky reparameterization so PD matrices stay PD by construction.
 
 **Loss & optimization hacks.** These make the M-step behave:
