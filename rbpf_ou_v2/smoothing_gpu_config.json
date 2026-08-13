@@ -1,5 +1,5 @@
 {
-  "N": 1500,
+  "N": 2000,
   "n_steps": 200,
   "learning_rate": 0.001,
   "start_date": "2000-01-01",
