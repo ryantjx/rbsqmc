@@ -31,8 +31,8 @@ N = 100
 # Number of independent smoothed trajectories sampled in the E-step for MCEM.
 # Averaging the complete-data log-likelihood over these reduces the Monte Carlo
 # noise of the 1-sample estimate (which was the root cause of the M-step being
-# "stuck at step 0").
-N_TRAJECTORIES = 2
+# "stuck at step 0"). Raised from 2 to 8 to cut MCEM Q-function noise.
+N_TRAJECTORIES = 8
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +262,26 @@ def smoother_rts(
     )(keys)  # (M, T, num_teams, 2)
 
 
+def _ess_from_log_weights(log_weights: jnp.ndarray) -> jnp.ndarray:
+    """Effective sample size (ESS) from unnormalized log-weights.
+
+    ``log_weights`` has shape ``(T, N)`` (one row per time step). For each time
+    step we compute the standard ESS estimate
+
+        ESS_t = (sum_i w_i)^2 / sum_i w_i^2
+
+    on the *normalized* weights, using the log-sum-exp trick for numerical
+    stability. Returns ``(T,)``. A healthy filter keeps ESS well above ``1``
+    (ideally a large fraction of ``N``); ESS collapsing toward ``1`` signals
+    weight degeneracy (one particle dominating).
+    """
+    max_log_w = jnp.max(log_weights, axis=1, keepdims=True)
+    w = jnp.exp(log_weights - max_log_w)  # (T, N), stable
+    sum_w = jnp.sum(w, axis=1)  # (T,)
+    ess = sum_w**2 / jnp.sum(w**2, axis=1)  # (T,)
+    return ess
+
+
 def E_step(
     params: EMParams,
     model_inputs: FootballResults,
@@ -272,6 +292,10 @@ def E_step(
 ):
     """
     E-step: Forward Filter Backward Sampling (FFBSi) with M trajectories.
+
+    Returns ``(filtered_states, smoothed_states, log_marginal, augmented_results, ess)``
+    where ``ess`` is the per-time-step effective sample size ``(T,)`` of the
+    forward filter (a weight-degeneracy diagnostic).
     """
     key, filter_key, smoother_key = jax.random.split(key, 3)
     print(f"Running E-step: Forward Filter Backward Sampling (FFBSi)")
@@ -310,20 +334,25 @@ def E_step(
         key=smoother_key,
         n_trajectories=n_trajectories,
     )
-    return filtered_states, smoothed_states, filtered_states.log_normalizing_constant[-1], augmented_results
+    # Weight-degeneracy diagnostic: ESS per time step of the forward filter.
+    ess = _ess_from_log_weights(filtered_states.log_weights)  # (T,)
+    return filtered_states, smoothed_states, filtered_states.log_normalizing_constant[-1], augmented_results, ess
 
 
 def _complete_log_likelihood(
     params: EMParams,
     X: jnp.ndarray,  # (T, num_teams, 2) -- one smoothed trajectory
     model_inputs: RBPFFootballResults,
-) -> jax.Array:
+) -> tuple[jax.Array, jax.Array, jax.Array]:
     """log p(y, X) for a single trajectory X (complete-data log-likelihood).
 
+    Returns the three components separately, ``(init_ll, obs_ll, transition_ll)``,
+    so callers can either sum them (the MCEM objective) or inspect which term
+    drives the loss (the per-epoch diagnostic).
+
     Includes the initial term ``log p(X_0 | mean_0, gamma_0 (x) B)``, the
-    transition terms ``log p(X_t | X_{t-1})`` (random walk,
-    ``Q = gamma_Q (x) B``), and the observation terms ``log p(y_t | X_t)``
-    (bivariate Poisson).
+    transition terms ``log p(X_t | X_{t-1})`` (OU, ``Q = gamma_0 (x) B``), and
+    the observation terms ``log p(y_t | X_t)`` (bivariate Poisson).
 
     Each term is scaled by its size (number of dimensions it spans) so the
     three terms are on a comparable per-dimension scale:
@@ -388,7 +417,7 @@ def _complete_log_likelihood(
 
     transition_ll = jnp.sum(jax.vmap(transition_step)(transition_indices, dts)) / (dim * n_transitions)
 
-    return init_ll + obs_ll + transition_ll
+    return init_ll, obs_ll, transition_ll
 
 
 def loss_fn(
@@ -396,6 +425,7 @@ def loss_fn(
     smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
     model_inputs: RBPFFootballResults,
     gamma_q_prior: float = 0.0,
+    term_weights: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ):
     """MCEM objective: -average over M trajectories of log p(y, X^*).
 
@@ -403,6 +433,14 @@ def loss_fn(
     Q(theta) = E_{p(X|y,theta_old)}[log p(y, X | theta)], averaged over the
     M smoothed trajectories from the E-step. Each term is scaled by its size
     (see ``_complete_log_likelihood``).
+
+    ``term_weights = (w_init, w_obs, w_transition)`` re-weights the three
+    complete-LL components before summing. This is the loss-rebalancing lever:
+    the transition term spans ``2M*(T-1)`` dimensions while the observation
+    term spans only ``2*T``, so by default the M-step gradient is dominated by
+    the transition term and ``alpha``/``beta`` (which appear only in the
+    observation term) barely move. Boosting ``w_obs`` gives the observation
+    parameters meaningful gradient weight.
 
     A quadratic shrinkage prior on ``gamma_Q`` is added to keep the transition
     variance bounded (preventing the random-walk from drifting to extreme
@@ -413,10 +451,13 @@ def loss_fn(
     where ``gamma_target`` is a small scaled identity. ``gamma_q_prior`` is the
     prior strength (0 disables it).
     """
-    per_traj = jax.vmap(
+    w_init, w_obs, w_transition = term_weights
+    init_ll, obs_ll, transition_ll = jax.vmap(
         lambda X: _complete_log_likelihood(params, X, model_inputs)
-    )(smoothed_trajectories)  # (M,)
-    data_loss = -jnp.mean(per_traj)
+    )(smoothed_trajectories)  # each (M,)
+    data_loss = -jnp.mean(
+        w_init * init_ll + w_obs * obs_ll + w_transition * transition_ll
+    )
 
     # Quadratic shrinkage prior on gamma_Q toward a small scaled identity.
     if gamma_q_prior > 0:
@@ -529,16 +570,26 @@ def M_step(
     learning_rate: float,
     n_gradient_steps: int,
     gamma_q_prior: float = 0.0,
+    term_weights: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
 
     The objective is the MCEM loss: -average over the M smoothed trajectories
-    of log p(y, X^*). gamma_0, gamma_Q, and B are Cholesky-parameterized so
-    they stay positive-definite by construction.
+    of log p(y, X^*). gamma_0 and B are Cholesky-parameterized so they stay
+    positive-definite by construction.
+
+    ``gamma_Q`` is intentionally NOT optimized: it is dead weight. Both the
+    transition log-likelihood (``_complete_log_likelihood``) and the filter's
+    covariance trajectory (``compute_gamma_trajectory``) use ``gamma_0`` (the
+    stationary covariance), never ``gamma_Q``. Optimizing it wastes gradient
+    effort on a parameter with zero effect on the objective, so we hold it
+    fixed at ``prev_params.gamma_Q``.
 
     ``gamma_q_prior`` is the strength of a quadratic shrinkage prior on
     ``gamma_Q`` (see ``loss_fn``), keeping the transition variance bounded.
+    ``term_weights`` re-weights the init/obs/transition complete-LL components
+    (see ``loss_fn``).
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
@@ -549,13 +600,12 @@ def M_step(
     def _loss_and_grad(carry):
         # Reconstruct PD matrices from free Cholesky factors.
         gamma_0 = _psd_from_cholesky(carry["L_gamma0"], num_teams)
-        gamma_Q = _psd_from_cholesky(carry["L_gammaQ"], num_teams)
         B = _psd_from_cholesky(carry["L_B"], 2)
         return loss_fn(
             EMParams(
                 mean_0=prev_params.mean_0,
                 gamma_0=gamma_0,
-                gamma_Q=gamma_Q,
+                gamma_Q=prev_params.gamma_Q,  # held fixed (dead parameter)
                 B=B,
                 kappa=carry["kappa"],
                 alpha=carry["alpha"],
@@ -564,14 +614,15 @@ def M_step(
             smoothed_trajectories,
             model_inputs,
             gamma_q_prior=gamma_q_prior,
+            term_weights=term_weights,
         )
 
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
 
     # Initial parameter blocks (dict so optax.multi_transform labels align).
+    # Note: no "L_gammaQ" block — gamma_Q is not optimized.
     carry = {
         "L_gamma0": _cholesky_from_psd(prev_params.gamma_0, num_teams),
-        "L_gammaQ": _cholesky_from_psd(prev_params.gamma_Q, num_teams),
         "L_B": _cholesky_from_psd(prev_params.B, 2),
         "kappa": prev_params.kappa,
         "alpha": prev_params.alpha,
@@ -582,7 +633,6 @@ def M_step(
     base = learning_rate
     lr_mapping = {
         "L_gamma0": base * 1,
-        "L_gammaQ": base * 1,
         "L_B": base * 1,
         "kappa": base * 1.0,
         "alpha": base * 1.0,
@@ -590,7 +640,6 @@ def M_step(
     }
     transforms = {
         "L_gamma0": optax.adam(lr_mapping["L_gamma0"]),
-        "L_gammaQ": optax.adam(lr_mapping["L_gammaQ"]),
         "L_B": optax.adam(lr_mapping["L_B"]),
         "kappa": optax.adam(lr_mapping["kappa"]),
         "alpha": optax.adam(lr_mapping["alpha"]),
@@ -598,7 +647,6 @@ def M_step(
     }
     param_labels = {
         "L_gamma0": "L_gamma0",
-        "L_gammaQ": "L_gammaQ",
         "L_B": "L_B",
         "kappa": "kappa",
         "alpha": "alpha",
@@ -641,12 +689,11 @@ def M_step(
 
     # Reconstruct PD matrices from the best free factors and project onto support.
     best_gamma_0 = _psd_from_cholesky(best_carry["L_gamma0"], num_teams)
-    best_gamma_Q = _psd_from_cholesky(best_carry["L_gammaQ"], num_teams)
     best_B = _psd_from_cholesky(best_carry["L_B"], 2)
     final = _constrain(EMParams(
         mean_0=prev_params.mean_0,
         gamma_0=best_gamma_0,
-        gamma_Q=best_gamma_Q,
+        gamma_Q=prev_params.gamma_Q,  # held fixed (dead parameter)
         B=best_B,
         kappa=best_carry["kappa"],
         alpha=best_carry["alpha"],
@@ -668,6 +715,7 @@ def run_EM(
     learning_rate: float = 1e-3,
     n_trajectories: int = N_TRAJECTORIES,
     gamma_q_prior: float = 0.0,
+    term_weights: tuple[float, float, float] = (1.0, 1.0, 1.0),
     key: jax.Array = jax.random.PRNGKey(42),
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     params = init_params
@@ -676,13 +724,15 @@ def run_EM(
     mstep_start_history = []
     mstep_end_history = []
     mstep_loss_traces = []  # full loss trajectory per epoch (every gradient step)
+    ess_history = []        # per-epoch ESS (T,) of the forward filter
+    ll_component_history = []  # per-epoch (init, obs, transition) complete-LL means
 
     for epoch in tqdm(range(n_epochs)):
         key, e_key = jax.random.split(key)
         print(f"    [EM] Epoch {epoch + 1}/{n_epochs} — E-step starting...")
         # 1. run E step to get M smoothed trajectories
         print("    E-step: Running filtering and backward sampling...")
-        _, smoothed_trajectories, log_marginal, augmented_results = E_step(
+        _, smoothed_trajectories, log_marginal, augmented_results, ess = E_step(
             params=params,
             model_inputs=model_inputs,
             num_teams=num_teams,
@@ -691,7 +741,19 @@ def run_EM(
             n_trajectories=n_trajectories,
         )
         log_likelihood_history.append(log_marginal)
-        print(f"    [EM] Epoch {epoch + 1} E-step done: log_marginal={float(log_marginal):.4f}")
+        ess_history.append(ess)
+        # Per-component complete-LL breakdown (averaged over trajectories).
+        init_ll, obs_ll, transition_ll = jax.vmap(
+            lambda X: _complete_log_likelihood(params, X, augmented_results)
+        )(smoothed_trajectories)
+        ll_component_history.append(
+            (float(jnp.mean(init_ll)), float(jnp.mean(obs_ll)), float(jnp.mean(transition_ll)))
+        )
+        print(f"    [EM] Epoch {epoch + 1} E-step done: log_marginal={float(log_marginal):.4f}, "
+              f"ESS[min/mean]={float(jnp.min(ess)):.1f}/{float(jnp.mean(ess)):.1f}")
+        print(f"         complete-LL components (init/obs/transition): "
+              f"{float(jnp.mean(init_ll)):.4f} / {float(jnp.mean(obs_ll)):.4f} / "
+              f"{float(jnp.mean(transition_ll)):.4f}")
         # 2. run M step to update parameters (MCEM over M trajectories)
         print("    M-step: Updating parameters...")
         params, loss_start, loss_best, loss_trace = M_step(
@@ -701,6 +763,7 @@ def run_EM(
             learning_rate=learning_rate,
             n_gradient_steps=n_gradient_steps,
             gamma_q_prior=gamma_q_prior,
+            term_weights=term_weights,
         )
         mstep_start_history.append(loss_start)
         mstep_end_history.append(loss_best)
@@ -729,6 +792,8 @@ def run_EM(
         "mstep_loss_start": jnp.array(mstep_start_history),
         "mstep_loss_end": jnp.array(mstep_end_history),
         "mstep_loss_trace": mstep_loss_traces,  # list of per-epoch loss lists
+        "ess": ess_history,                     # list of per-epoch (T,) ESS arrays
+        "ll_components": ll_component_history,  # list of (init, obs, transition) tuples
     }
     return params, jnp.array(log_likelihood_history), em_diagnostics
 

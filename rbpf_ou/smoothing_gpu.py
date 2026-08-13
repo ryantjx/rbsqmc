@@ -40,7 +40,8 @@ import time
 # ``colab run`` executes this file as notebook cells, where ``__file__`` is
 # undefined. Fall back to the current working directory in that case.
 _HERE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
-_REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))
+# Repo root is the parent of the rbpf_ou package directory (e.g. .../rbsqmc).
+_REPO_ROOT = os.path.dirname(_HERE)
 # Ensure the repo root is importable even when this file is run directly as a
 # script (in which case sys.path[0] is the script's own directory, not the root).
 if _REPO_ROOT not in sys.path:
@@ -67,7 +68,9 @@ _DEFAULT_CONFIG = {
     "colab_timeout": 3600,
     "repo_url": "https://github.com/ryantjx/rbsqmc.git",
 }
-CONFIG_PATH = os.path.join(_HERE, "smoothing_gpu_config.json")
+CONFIG_PATH = os.environ.get(
+    "RBSQMC_CONFIG", os.path.join(_HERE, "smoothing_gpu_config.json")
+)
 
 
 def _candidate_config_paths() -> list[str]:
@@ -286,6 +289,8 @@ def run_em(n_particles: int, start_date: str):
         n_epochs=int(CONFIG["n_epochs"]),
         n_gradient_steps=int(CONFIG["n_gradient_steps"]),
         learning_rate=float(CONFIG["learning_rate"]),
+        n_trajectories=int(CONFIG.get("n_trajectories", 8)),
+        term_weights=tuple(CONFIG.get("term_weights", [1.0, 1.0, 1.0])),
         key=key,
     )
     print("[EM] EM run completed.")
@@ -302,12 +307,22 @@ def run_em(n_particles: int, start_date: str):
     mstep_trace = [
         np.asarray(trace).tolist() for trace in em_diagnostics["mstep_loss_trace"]
     ]
+    # ESS (effective sample size) per epoch: list of per-time-step (T,) arrays.
+    ess_history = [
+        np.asarray(ess).tolist() for ess in em_diagnostics["ess"]
+    ]
+    # Per-epoch complete-LL component means: list of (init, obs, transition).
+    ll_components = [
+        list(comp) for comp in em_diagnostics["ll_components"]
+    ]
     with open(os.path.join(OUTPUT_DIR, "em_mstep_diagnostics.json"), "w") as f:
         json.dump(
             {
                 "mstep_loss_start": mstep_start,
                 "mstep_loss_end": mstep_end,
                 "mstep_loss_trace": mstep_trace,
+                "ess": ess_history,
+                "ll_components": ll_components,
             },
             f, indent=2,
         )
