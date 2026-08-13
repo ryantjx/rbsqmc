@@ -42,6 +42,15 @@ N_TRAJECTORIES = 8
 # Minimum eigenvalue floor for the projected covariances (see `_project_psd`).
 _EIGEN_FLOOR = 1e-4
 
+# Lower bound for the OU mean-reversion rate kappa.
+#
+# kappa -> 0 makes phi = exp(-kappa*dt) -> 1, so the transition covariance
+# (1-phi^2)*Sigma_0 -> 0 (a degenerate transition). Flooring kappa away from
+# zero keeps the transition covariance meaningfully non-singular, preventing
+# the transition log-likelihood from exploding (a tiny transition covariance
+# makes any state movement between matches look extremely unlikely).
+_KAPPA_MIN = 0.001
+
 # Upper bound for the OU mean-reversion rate kappa.
 #
 # kappa controls how fast a team's strength reverts to the population mean:
@@ -57,7 +66,7 @@ _EIGEN_FLOOR = 1e-4
 # that gap, the half-life must be much longer than the gap. We cap kappa at
 # 0.002, giving a half-life of ln(2)/0.002 ~= 347 days (~1 year), so a team's
 # strength retains ~92% of its value after the median 43-day gap.
-_KAPPA_MAX = 0.00001
+_KAPPA_MAX = 0.002
 
 
 # ---------------------------------------------------------------------------
@@ -521,8 +530,9 @@ def _constrain(params: EMParams) -> EMParams:
     """Apply validity constraints so parameters stay in their support.
 
     - alpha, beta unconstrained real.
-    - kappa clamped to [0, _KAPPA_MAX] (forces a mean-reversion half-life of at
-      least one week so team strengths persist between matches).
+    - kappa clamped to [_KAPPA_MIN, _KAPPA_MAX] (keeps the transition covariance
+      non-degenerate while forcing a long mean-reversion half-life so team
+      strengths persist between matches).
     - gamma_0, B projected onto the positive-definite cone (full-rank, so the
       transition covariance Q and the smoother covariances stay invertible
       and their log-determinants finite).
@@ -533,7 +543,7 @@ def _constrain(params: EMParams) -> EMParams:
     """
     gamma_0 = _project_psd(params.gamma_0)
     B = _project_psd(params.B)
-    kappa = jnp.clip(params.kappa, 0.0, _KAPPA_MAX)
+    kappa = jnp.clip(params.kappa, _KAPPA_MIN, _KAPPA_MAX)
     return EMParams(
         mean_0=params.mean_0,
         gamma_0=gamma_0,
