@@ -143,7 +143,7 @@ replaces `rbpf_ou/src/smoothing.py` (the MCEM machinery).
 {
   "N": 500,
   "n_steps": 200,
-  "learning_rate": 0.01,
+  "learning_rate": 0.001,
   "start_date": "2000-01-01",
   "end_date": "2025-12-31",
   "teams": "WORLDCUP_2026_TEAMS",
@@ -156,7 +156,8 @@ replaces `rbpf_ou/src/smoothing.py` (the MCEM machinery).
 
 The v1 config keys `n_epochs`, `n_gradient_steps`, and `n_trajectories` are
 **gone** — v2 has a single `n_steps` (total gradient steps) and no
-`n_trajectories` (no smoothing).
+`n_trajectories` (no smoothing). `learning_rate` is `0.001` (the `0.01` default
+was unstable — see §7).
 
 ### 5.3 Outputs
 
@@ -213,6 +214,57 @@ gradient descent on `-log Z(θ)` replacing MCEM. The model, filter, and data
 pipeline are unchanged; only the training objective differs. The v1 EM diverged
 (log marginal declined every epoch) and produced noise rankings; v2's single
 scalar objective is designed to address both the MCEM noise and the loss-scaling
-imbalance. **Status: not yet run.** The first step is to run
-`./run_smoothing_colab.sh` and check that `gd_log_marginal_history.json` rises
-(and `gd_loss_history.json` falls) across steps, and that the rankings are sane.
+imbalance.
+
+**2026-08-13 — v2 run (L4, N=500, n_steps=200, lr=0.001).** The pipeline ran
+end-to-end and produced **sane results** — a clear improvement over v1.
+
+**Fixes required to get a stable run.** The first local runs produced NaN. The
+root causes and fixes:
+
+1. **`optax.multi_transform` label mismatch.** `mean_0` was in the `carry` dict
+   but missing from `param_labels`, so `optimizer.init` raised. **Fix:** add
+   `mean_0` with `optax.set_to_zero()` (it is fixed).
+2. **NaN gradients from non-differentiable samplers.** `kron_sample_psd` and
+   `_sample_psd_gaussian` used `eigh`/`clip`/`sqrt`, whose gradient is NaN at
+   the zero-variance boundary (observed teams). **Fix:** replaced both with a
+   differentiable **Cholesky + jitter** reparameterization (`L L^T` of
+   `covariance + 1e-6 I`), which has a finite gradient.
+3. **NaN from negative `kappa`.** The optimizer updated `kappa` freely; a
+   negative `kappa` makes `phi = exp(-kappa*dt) > 1` and the transition
+   covariance `(1-phi^2)*gamma_0` negative → NaN. **Fix:** clamp `kappa` to
+   `[_KAPPA_MIN, _KAPPA_MAX]` inside the training loop (not just at the end).
+4. **NaN from singular `pinv`.** `jnp.linalg.pinv(gamma_EE)` has a NaN gradient
+   when `gamma_EE` is singular. **Fix:** jitter `gamma_EE` to strictly-PD.
+5. **`learning_rate = 0.01` unstable.** The loss exploded to NaN within a few
+   steps. **Fix:** `learning_rate = 0.001` (stable).
+6. **NaN guard.** The training loop now checks the loss *before* applying the
+   update and stops early, keeping the last finite parameters.
+
+**Results (L4, N=500, 200 steps).**
+
+- **Log marginal improved** from **-5764 → -5590** (+174) over 200 steps. This
+  is the key win: v1's EM *diverged* (log marginal declined every epoch), while
+  v2's direct GD *improves* the fit.
+- **Rankings are sane.** Top teams: Spain (+1.67), Switzerland (+1.39), France
+  (+1.36), Netherlands (+1.29), Portugal (+1.11), Belgium (+0.98), Austria
+  (+0.92), Turkey (+0.89), Croatia (+0.87), England (+0.85), Germany (+0.83).
+  Bottom: Haiti (-1.58), Egypt (-1.29), Iraq (-1.21), Cape Verde (-1.20), DR
+  Congo (-1.19), Qatar (-1.10), Ghana (-1.03), Saudi Arabia (-0.90). This is a
+  dramatic improvement over v1, where France was negative and weak teams were
+  overrated.
+- **Predictions.** Mean log-likelihood **-3.50** over 36 scored matches (v1's
+  best was -3.41, latest was -4.69). Several strong calls: Spain 4-0 Saudi
+  Arabia (ll=-1.94), Mexico 2-0 South Africa (ll=-1.89), Haiti 0-1 Scotland
+  (ll=-1.58). Some misses remain (e.g. Canada 6-0 Qatar, ll=-9.20).
+
+**Remaining observations.**
+
+- The log marginal is still noisy (fixed-key stochasticity with N=500), so the
+  per-step values bounce around even as the trend improves. A larger `N` or a
+  cosine LR schedule would smooth this.
+- `kappa` sits at the `_KAPPA_MIN` floor (0.001), meaning the optimizer wants
+  even slower mean reversion. This is consistent with the persistence goal.
+- The rankings are much better but not perfect (e.g. Switzerland #2, Turkey
+  #8). This is expected for a first stable run; further tuning of `N`, `n_steps`,
+  and the LR schedule is the natural next step.
