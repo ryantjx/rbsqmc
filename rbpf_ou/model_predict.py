@@ -190,8 +190,10 @@ def main():
         actual_home = fx.get("home_score")
         actual_away = fx.get("away_score")
         loglik = None
+        predicted_likelihood = None
         if actual_home is not None and actual_away is not None:
             loglik = float(jnp.log(grid[actual_home, actual_away]))
+            predicted_likelihood = float(grid[actual_home, actual_away])
             total_loglik += loglik
             n_scored += 1
 
@@ -209,6 +211,8 @@ def main():
             "actual_score": (f"{actual_home}-{actual_away}"
                              if actual_home is not None and actual_away is not None else ""),
             "log_likelihood": (round(loglik, 4) if loglik is not None else None),
+            "predicted_likelihood": (round(predicted_likelihood, 4)
+                                     if predicted_likelihood is not None else None),
         })
 
     # --- 3. Write outputs ---
@@ -234,13 +238,13 @@ def main():
     # CSV summary.
     csv_path = os.path.join(args.output_dir, "predictions.csv")
     with open(csv_path, "w") as f:
-        f.write("date,home,away,p_home_win,p_draw,p_away_win,most_likely_score,p_most_likely,expected_goals_home,expected_goals_away,actual_score,log_likelihood\n")
+        f.write("date,home,away,p_home_win,p_draw,p_away_win,most_likely_score,p_most_likely,expected_goals_home,expected_goals_away,actual_score,log_likelihood,predicted_likelihood\n")
         for p in predictions:
             f.write(
                 f"{p['date']},{p['home']},{p['away']},{p['p_home_win']},{p['p_draw']},"
                 f"{p['p_away_win']},{p['most_likely_score']},{p['p_most_likely']},"
                 f"{p['expected_goals_home']},{p['expected_goals_away']},"
-                f"{p['actual_score']},{p['log_likelihood']}\n"
+                f"{p['actual_score']},{p['log_likelihood']},{p['predicted_likelihood']}\n"
             )
     print(f"Saved predictions CSV to {csv_path}")
 
@@ -249,12 +253,13 @@ def main():
     for p in predictions:
         actual = f"actual {p['actual_score']}" if p["actual_score"] else "no actual"
         ll = f"ll={p['log_likelihood']:.2f}" if p["log_likelihood"] is not None else ""
+        pl = f"p={p['predicted_likelihood']:.3f}" if p["predicted_likelihood"] is not None else ""
         print(
             f"{p['date']}  {p['home']:>20} vs {p['away']:<20}  "
             f"W{p['p_home_win']:.2f} D{p['p_draw']:.2f} L{p['p_away_win']:.2f}  "
             f"most likely {p['most_likely_score']} ({p['p_most_likely']:.2f})  "
             f"xG {p['expected_goals_home']:.2f}-{p['expected_goals_away']:.2f}  "
-            f"{actual} {ll}"
+            f"{actual} {ll} {pl}"
         )
 
 
