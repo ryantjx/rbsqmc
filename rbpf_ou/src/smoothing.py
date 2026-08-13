@@ -389,7 +389,7 @@ def _complete_log_likelihood(
             alpha=params.alpha,
             beta=params.beta,
             max_goals=MAX_GOALS,
-            scale=1.0,
+            scale=params.scale,
         )
     obs_ll = jnp.sum(jax.vmap(obs_step)(observation_indices)) / (2.0 * n_observations)
 
@@ -425,22 +425,14 @@ def loss_fn(
     smoothed_trajectories: jnp.ndarray,  # (M, T, num_teams, 2)
     model_inputs: RBPFFootballResults,
     gamma_q_prior: float = 0.0,
-    term_weights: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ):
     """MCEM objective: -average over M trajectories of log p(y, X^*).
 
     This is a proper Monte Carlo estimate of the EM objective
     Q(theta) = E_{p(X|y,theta_old)}[log p(y, X | theta)], averaged over the
     M smoothed trajectories from the E-step. Each term is scaled by its size
-    (see ``_complete_log_likelihood``).
-
-    ``term_weights = (w_init, w_obs, w_transition)`` re-weights the three
-    complete-LL components before summing. This is the loss-rebalancing lever:
-    the transition term spans ``2M*(T-1)`` dimensions while the observation
-    term spans only ``2*T``, so by default the M-step gradient is dominated by
-    the transition term and ``alpha``/``beta`` (which appear only in the
-    observation term) barely move. Boosting ``w_obs`` gives the observation
-    parameters meaningful gradient weight.
+    (see ``_complete_log_likelihood``), so the three terms are on a comparable
+    per-dimension scale and summed with equal weight.
 
     A quadratic shrinkage prior on ``gamma_Q`` is added to keep the transition
     variance bounded (preventing the random-walk from drifting to extreme
@@ -451,13 +443,10 @@ def loss_fn(
     where ``gamma_target`` is a small scaled identity. ``gamma_q_prior`` is the
     prior strength (0 disables it).
     """
-    w_init, w_obs, w_transition = term_weights
     init_ll, obs_ll, transition_ll = jax.vmap(
         lambda X: _complete_log_likelihood(params, X, model_inputs)
     )(smoothed_trajectories)  # each (M,)
-    data_loss = -jnp.mean(
-        w_init * init_ll + w_obs * obs_ll + w_transition * transition_ll
-    )
+    data_loss = -jnp.mean(init_ll + obs_ll + transition_ll)
 
     # Quadratic shrinkage prior on gamma_Q toward a small scaled identity.
     if gamma_q_prior > 0:
@@ -560,6 +549,7 @@ def _constrain(params: EMParams) -> EMParams:
         kappa=kappa,
         alpha=params.alpha,
         beta=params.beta,
+        scale=params.scale,
     )
 
 
@@ -570,7 +560,6 @@ def M_step(
     learning_rate: float,
     n_gradient_steps: int,
     gamma_q_prior: float = 0.0,
-    term_weights: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ):
     """
     M-step: Update parameters via scale-aware ADAM with a cosine schedule.
@@ -586,10 +575,11 @@ def M_step(
     effort on a parameter with zero effect on the objective, so we hold it
     fixed at ``prev_params.gamma_Q``.
 
+    ``scale`` is a hyperparameter (not optimized): it controls the influence of
+    team strength on the goal rates and is held fixed at ``prev_params.scale``.
+
     ``gamma_q_prior`` is the strength of a quadratic shrinkage prior on
     ``gamma_Q`` (see ``loss_fn``), keeping the transition variance bounded.
-    ``term_weights`` re-weights the init/obs/transition complete-LL components
-    (see ``loss_fn``).
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
@@ -610,11 +600,11 @@ def M_step(
                 kappa=carry["kappa"],
                 alpha=carry["alpha"],
                 beta=carry["beta"],
+                scale=prev_params.scale,  # held fixed (hyperparameter)
             ),
             smoothed_trajectories,
             model_inputs,
             gamma_q_prior=gamma_q_prior,
-            term_weights=term_weights,
         )
 
     value_and_grad_fn = jax.jit(jax.value_and_grad(_loss_and_grad, argnums=0))
@@ -698,6 +688,7 @@ def M_step(
         kappa=best_carry["kappa"],
         alpha=best_carry["alpha"],
         beta=best_carry["beta"],
+        scale=prev_params.scale,  # held fixed (hyperparameter)
     ))
     best_step = int(jnp.argmin(loss_trace))
     print(f"      M-step done: loss {float(loss_best):.4f} -> best at step {best_step}, "
@@ -715,7 +706,6 @@ def run_EM(
     learning_rate: float = 1e-3,
     n_trajectories: int = N_TRAJECTORIES,
     gamma_q_prior: float = 0.0,
-    term_weights: tuple[float, float, float] = (1.0, 1.0, 1.0),
     key: jax.Array = jax.random.PRNGKey(42),
 ) -> tuple[EMParams, jnp.ndarray, dict]:
     params = init_params
@@ -763,7 +753,6 @@ def run_EM(
             learning_rate=learning_rate,
             n_gradient_steps=n_gradient_steps,
             gamma_q_prior=gamma_q_prior,
-            term_weights=term_weights,
         )
         mstep_start_history.append(loss_start)
         mstep_end_history.append(loss_best)
@@ -804,6 +793,7 @@ def main():
         end_date="2025-12-31",
         max_goals=MAX_GOALS,
         teams_only=WORLDCUP_2026_TEAMS,
+        include_friendly=False,
     )
     NUM_TEAMS = len(team_id_to_name)
     key = jax.random.PRNGKey(42)

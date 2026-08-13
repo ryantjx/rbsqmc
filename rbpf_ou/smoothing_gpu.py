@@ -272,6 +272,9 @@ def run_em(n_particles: int, start_date: str):
     key = jax.random.PRNGKey(42)
     print("[EM] Initializing parameters...")
     params = default_init_params(num_teams, team_id_to_name=team_id_to_name)
+    # `scale` is a hyperparameter tuned in the config (not optimized by EM).
+    params = params._replace(scale=float(CONFIG.get("scale", 1.0)))
+    print(f"[EM] scale hyperparameter = {float(params.scale)}")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(os.path.join(OUTPUT_DIR, "em_params_init.json"), "w") as f:
@@ -290,7 +293,6 @@ def run_em(n_particles: int, start_date: str):
         n_gradient_steps=int(CONFIG["n_gradient_steps"]),
         learning_rate=float(CONFIG["learning_rate"]),
         n_trajectories=int(CONFIG.get("n_trajectories", 8)),
-        term_weights=tuple(CONFIG.get("term_weights", [1.0, 1.0, 1.0])),
         key=key,
     )
     print("[EM] EM run completed.")

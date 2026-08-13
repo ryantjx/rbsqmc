@@ -121,11 +121,13 @@ $$\log p(X_{0:T}, y_{1:T} \mid \Theta) = \underbrace{\log p_{\mu_0, \Gamma_0 \ot
 
 **2 M-step.** Maximize $A(\Theta \mid \Theta^{(k)})$ with respect to $\Theta$ via **scale-aware ADAM** with a cosine schedule and global-norm gradient clipping. The covariance matrices $\Gamma_0, \Gamma_Q, B$ are **Cholesky-parameterized** so they stay positive-definite by construction; $\kappa$ is floored at `_KAPPA_MIN = 1e-3` to keep the transition covariance non-degenerate.
 
-**Loss scaling.** Each term of the complete-data log-likelihood is divided by the number of dimensions it spans, so the three terms are on a comparable per-dimension scale:
+**Loss scaling.** Each term of the complete-data log-likelihood is divided by the number of dimensions it spans, so the three terms are on a comparable per-dimension scale and summed with equal weight:
 
 - `init_ll`: a single $2M$-dim Gaussian, scaled by $2M$.
 - `obs_ll`: $T$ observations, each 2-dim (home + away goals), scaled by $2T$.
 - `transition_ll`: $T-1$ transitions, each $2M$-dim, scaled by $2M(T-1)$.
+
+The observation term's influence is instead controlled by the `scale` hyperparameter: smaller `scale` amplifies the team-strength signal in the goal rates, giving the observation term more gradient weight without a manual loss-weighting hack.
 
 A quadratic shrinkage prior on $\Gamma_Q$ toward a small scaled identity is added to keep the transition variance bounded.
 
@@ -156,6 +158,7 @@ A quadratic shrinkage prior on $\Gamma_Q$ toward a small scaled identity is adde
 | `kappa` | scalar | OU mean-reversion rate | 0.01 |
 | `alpha` | scalar | baseline scoring rate | 0.2 |
 | `beta` | scalar | shared-scoring / correlation rate | −4.0 |
+| `scale` | scalar | team-strength influence on goal rates (hyperparameter, fixed) | 1.0 |
 
 ### 5.3 Training configuration (`smoothing_gpu_config.json`)
 
@@ -166,9 +169,9 @@ A quadratic shrinkage prior on $\Gamma_Q$ toward a small scaled identity is adde
 | `n_gradient_steps` | 30 | ADAM steps per M-step |
 | `learning_rate` | 0.01 | base ADAM learning rate |
 | `n_trajectories` | 8 | smoothed trajectories per E-step (MCEM) |
-| `term_weights` | `[1, 5, 1]` | init/obs/transition loss rebalancing |
-| `teams` | `ACTIVE_TEAMS` | 228-team set |
-| `hardware` / `gpu_type` | `gpu` / `A100` | Colab A100 |
+| `scale` | 0.2 | team-strength influence on goal rates (hyperparameter) |
+| `teams` | `WORLDCUP_2026_TEAMS` | 48-team set (L4 run) |
+| `hardware` / `gpu_type` | `gpu` / `L4` | Colab L4 |
 
 The number of smoothed trajectories per E-step, `N_TRAJECTORIES = 8`, is a **module-level constant** in `src/smoothing.py` (the config's `n_trajectories` overrides it via `run_EM`).
 

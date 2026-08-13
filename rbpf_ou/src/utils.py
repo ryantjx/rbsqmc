@@ -69,6 +69,9 @@ class EMParams(NamedTuple):
     - kappa:   scalar mean-reversion rate of the OU transition.
     - alpha:   scalar baseline scoring rate.
     - beta:    scalar shared-scoring / correlation parameter.
+    - scale:   scalar hyperparameter controlling the influence of team strength
+      on the goal rates (``log_lambda = alpha + (x_att - x_def)/scale``). Held
+      fixed during EM; tuned in the config.
     """
     mean_0: jax.Array      # (M, 2)
     gamma_0: jax.Array     # (M, M)
@@ -77,3 +80,4 @@ class EMParams(NamedTuple):
     kappa: float
     alpha: float
     beta: float
+    scale: float

@@ -115,12 +115,13 @@ def _log_potential(
     model_inputs: RBPFFootballResults,
     alpha: float,
     beta: float,
+    scale: float,
     max_goals: int,
 ) -> jax.Array:
     y = jnp.array([model_inputs.home_score, model_inputs.away_score])
     x_i = state.x[model_inputs.home_team_id]
     x_j = state.x[model_inputs.away_team_id]
-    return loglik(y, x_i, x_j, alpha=alpha, beta=beta, max_goals=max_goals, scale=1.0)
+    return loglik(y, x_i, x_j, alpha=alpha, beta=beta, max_goals=max_goals, scale=scale)
 
 
 def build_rbpf_filter(
@@ -145,6 +146,7 @@ def build_rbpf_filter(
             _log_potential,
             alpha=params.alpha,
             beta=params.beta,
+            scale=params.scale,
             max_goals=MAX_GOALS,
         ),
         n_filter_particles=n,

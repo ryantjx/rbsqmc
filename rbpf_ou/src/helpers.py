@@ -22,6 +22,7 @@ def params_to_dict(params: EMParams) -> dict:
         "kappa": float(params.kappa),
         "alpha": float(params.alpha),
         "beta": float(params.beta),
+        "scale": float(params.scale),
     }
 
 
@@ -35,6 +36,7 @@ def params_from_dict(d: dict) -> EMParams:
         kappa=d["kappa"],
         alpha=d["alpha"],
         beta=d["beta"],
+        scale=d.get("scale", 1.0),  # backward-compatible default
     )
 
 
@@ -146,6 +148,7 @@ def default_init_params(
         kappa=0.01,
         alpha=0.2,
         beta=-4.0,
+        scale=1.0,
     )
 
 
