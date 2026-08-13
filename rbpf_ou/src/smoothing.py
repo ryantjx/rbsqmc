@@ -34,6 +34,16 @@ N = 100
 # "stuck at step 0"). Raised from 2 to 8 to cut MCEM Q-function noise.
 N_TRAJECTORIES = 8
 
+# Minimum eigenvalue floor for the projected covariances (see `_project_psd`).
+_EIGEN_FLOOR = 1e-4
+
+# Lower bound for the OU mean-reversion rate kappa.
+#
+# kappa -> 0 makes phi = exp(-kappa*dt) -> 1, so the transition covariance
+# (1-phi^2)*Sigma_0 -> 0 (a degenerate transition). Flooring kappa away from
+# zero keeps the transition covariance meaningfully non-singular.
+_KAPPA_MIN = 1e-3
+
 
 # ---------------------------------------------------------------------------
 # Kronecker-aware helpers (avoid materializing the full (2M, 2M) covariance).
@@ -463,10 +473,6 @@ def _symmetrize(x: jnp.ndarray) -> jnp.ndarray:
     return 0.5 * (x + x.T)
 
 
-# Minimum eigenvalue floor for the projected covariances.
-_EIGEN_FLOOR = 1e-4
-
-
 def _project_psd(x: jnp.ndarray, floor: float = _EIGEN_FLOOR) -> jnp.ndarray:
     """Project a symmetric matrix onto the positive-definite cone.
 
@@ -514,14 +520,6 @@ def _cholesky_from_psd(A: jnp.ndarray, n: int) -> jnp.ndarray:
         jnp.log(jnp.exp(diag) - 1.0 + 1e-10)
     )
     return L_free
-
-
-# Lower bound for the OU mean-reversion rate kappa.
-#
-# kappa -> 0 makes phi = exp(-kappa*dt) -> 1, so the transition covariance
-# (1-phi^2)*Sigma_0 -> 0 (a degenerate transition). Flooring kappa away from
-# zero keeps the transition covariance meaningfully non-singular.
-_KAPPA_MIN = 1e-3
 
 
 def _constrain(params: EMParams) -> EMParams:
