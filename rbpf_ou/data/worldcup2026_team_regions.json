@@ -114,6 +114,6 @@
   },
   "correlation": {
     "within_region": 0.5,
-    "between_regions": -0.4
+    "between_regions": -0.1
   }
 }
