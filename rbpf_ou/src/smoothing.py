@@ -529,6 +529,9 @@ def _constrain(params: EMParams) -> EMParams:
 
     - alpha, beta unconstrained real.
     - kappa >= _KAPPA_MIN (keeps the OU transition covariance non-degenerate).
+    - scale clamped to [0, 1] (team-strength influence on goal rates; a
+      negative scale would flip the sign of the strength effect, and scale > 1
+      would dilute it below the baseline).
     - gamma_0, gamma_Q, B projected onto the positive-definite cone
       (full-rank, so the transition covariance Q and the smoother covariances
       stay invertible and their log-determinants finite).
@@ -541,6 +544,7 @@ def _constrain(params: EMParams) -> EMParams:
     gamma_Q = _project_psd(params.gamma_Q)
     B = _project_psd(params.B)
     kappa = jnp.maximum(params.kappa, _KAPPA_MIN)
+    scale = jnp.clip(params.scale, 0.0, 1.0)
     return EMParams(
         mean_0=params.mean_0,
         gamma_0=gamma_0,
@@ -549,7 +553,7 @@ def _constrain(params: EMParams) -> EMParams:
         kappa=kappa,
         alpha=params.alpha,
         beta=params.beta,
-        scale=params.scale,
+        scale=scale,
     )
 
 

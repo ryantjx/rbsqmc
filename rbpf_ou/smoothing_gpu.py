@@ -272,8 +272,9 @@ def run_em(n_particles: int, start_date: str):
     key = jax.random.PRNGKey(42)
     print("[EM] Initializing parameters...")
     params = default_init_params(num_teams, team_id_to_name=team_id_to_name)
-    # `scale` is a hyperparameter tuned in the config (not optimized by EM).
-    params = params._replace(scale=float(CONFIG.get("scale", 1.0)))
+    # `scale` is a hyperparameter tuned in the config (not optimized by EM),
+    # clamped to [0, 1] (see `_constrain`).
+    params = params._replace(scale=float(jnp.clip(CONFIG.get("scale", 1.0), 0.0, 1.0)))
     print(f"[EM] scale hyperparameter = {float(params.scale)}")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
