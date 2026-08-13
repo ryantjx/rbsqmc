@@ -110,7 +110,13 @@ def _cholesky_from_psd(A: jnp.ndarray, n: int) -> jnp.ndarray:
     ``L`` is a lower-triangular Cholesky factor of the PD ``A`` with a
     softplus-wrapped diagonal, padded to a full ``n x n`` free array (upper
     triangle is arbitrary/zero and ignored by ``_psd_from_cholesky``).
+
+    A small diagonal jitter is added before the Cholesky so the map is robust
+    to tiny negative eigenvalues that float32 rounding can leave in a
+    PSD-projected matrix (e.g. ``gamma_0`` at 228 teams). Without it,
+    ``jnp.linalg.cholesky`` returns NaN on a not-quite-PD input.
     """
+    A = 0.5 * (A + A.T) + _EIGEN_FLOOR * jnp.eye(n)
     L = jnp.linalg.cholesky(A)  # lower-triangular, positive diagonal
     diag = L[jnp.diag_indices(n)]
     L_free = jnp.zeros_like(A)
