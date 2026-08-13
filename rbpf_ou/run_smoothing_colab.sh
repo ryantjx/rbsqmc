@@ -107,8 +107,18 @@ if [ -f "$TRAINED_PARAMS" ]; then
         --output-dir "${GRAPHIC_OUTDIR}" ) || \
         echo "  WARNING: model_trained.py failed"
     echo "  Graphics written under ${GRAPHIC_OUTDIR}/"
+
+    # --- Prediction step (runs AFTER model_trained.py) ---
+    # Predict the 2026 World Cup group-stage fixtures from the trained params.
+    PREDICT_OUTDIR="${PREDICT_OUTDIR:-${LOCAL_OUTPUTS}/predictions}"
+    echo "  Prediction output: ${PREDICT_OUTDIR}"
+    ( cd "${REPO_ROOT}" && uv run python -u "${HERE}/model_predict.py" \
+        --params-path "${TRAINED_PARAMS}" \
+        --output-dir "${PREDICT_OUTDIR}" ) || \
+        echo "  WARNING: model_predict.py failed"
+    echo "  Predictions written under ${PREDICT_OUTDIR}/"
 else
-    echo "  WARNING: ${TRAINED_PARAMS} not found; skipping filter/graphics step"
+    echo "  WARNING: ${TRAINED_PARAMS} not found; skipping filter/graphics/prediction step"
 fi
 
 # --- Final status report ---
@@ -136,5 +146,14 @@ if [ -d "${GRAPHIC_OUTDIR}" ]; then
     done
 else
     echo "    [MISS] no graphics in ${GRAPHIC_OUTDIR}"
+fi
+echo ""
+echo "  Predictions:"
+if [ -d "${PREDICT_OUTDIR}" ]; then
+    for f in "${PREDICT_OUTDIR}"/*.json "${PREDICT_OUTDIR}"/*.csv; do
+        [ -f "$f" ] && echo "    [OK]   $(basename "${f}")"
+    done
+else
+    echo "    [MISS] no predictions in ${PREDICT_OUTDIR}"
 fi
 echo "============================================================"
