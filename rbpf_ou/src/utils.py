@@ -68,8 +68,11 @@ class EMParams(NamedTuple):
     - kappa:   scalar mean-reversion rate of the OU transition.
     - alpha:   scalar baseline scoring rate.
     - beta:    scalar shared-scoring / correlation parameter.
-    - scale:   scalar controlling the influence of team strength on the goal
-      rates (``log_lambda = alpha + (x_att - x_def)/scale``). Free during EM.
+
+    ``scale`` is fixed at 1.0 (not a parameter): it is unidentifiable with
+    ``gamma_0`` (scaling ``x -> a x``, ``gamma_0 -> a^2 gamma_0``, ``scale -> a scale``
+    leaves the likelihood unchanged), so fixing it at 1 breaks the degeneracy and
+    lets ``gamma_0`` carry the true state-variance scale.
     """
     mean_0: jax.Array      # (M, 2)
     gamma_0: jax.Array     # (M, M)
@@ -77,4 +80,3 @@ class EMParams(NamedTuple):
     kappa: float
     alpha: float
     beta: float
-    scale: float

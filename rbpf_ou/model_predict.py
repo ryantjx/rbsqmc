@@ -74,7 +74,6 @@ def _score_distribution(
     x_away: jnp.ndarray,
     alpha: float,
     beta: float,
-    scale: float,
     max_goals: int = MAX_GOALS,
 ) -> jnp.ndarray:
     """Return the (max_goals+1, max_goals+1) matrix of P(home_goals, away_goals).
@@ -84,7 +83,7 @@ def _score_distribution(
     """
     log_grid = loglik_grid(
         x_i=x_home, x_j=x_away, alpha=alpha, beta=beta,
-        max_goals=max_goals, scale=scale,
+        max_goals=max_goals, scale=1.0,
     )
     log_grid = log_grid - jax.scipy.special.logsumexp(log_grid)
     return jnp.exp(log_grid)
@@ -117,7 +116,7 @@ def main():
     print(f"Loaded {len(data)} matches from {data['date'].min()} to {data['date'].max()}")
 
     params = load_params(args.params_path)
-    print(f"Loaded params: kappa={params.kappa}, alpha={params.alpha}, beta={params.beta}, scale={params.scale}")
+    print(f"Loaded params: kappa={params.kappa}, alpha={params.alpha}, beta={params.beta}")
 
     gamma_updated, gamma_pred, kalman_gain = compute_gamma_trajectory(
         model_inputs=model_inputs,
@@ -165,7 +164,7 @@ def main():
         x_away = jnp.asarray(final_mean[team_name_to_id[away_name]])
 
         grid = _score_distribution(
-            x_home, x_away, params.alpha, params.beta, params.scale
+            x_home, x_away, params.alpha, params.beta
         )  # (G+1, G+1)
 
         # Win / draw / loss probabilities.

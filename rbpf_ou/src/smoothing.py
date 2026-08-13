@@ -381,7 +381,7 @@ def _complete_log_likelihood(
             alpha=params.alpha,
             beta=params.beta,
             max_goals=MAX_GOALS,
-            scale=params.scale,
+            scale=1.0,  # scale is fixed at 1 (unidentifiable with gamma_0)
         )
     obs_ll = jnp.sum(jax.vmap(obs_step)(observation_indices)) / (2.0 * n_observations)
 
@@ -425,11 +425,10 @@ def loss_fn(
     (see ``_complete_log_likelihood``), so the three terms are on a comparable
     per-dimension scale and summed with equal weight.
 
-    No shrinkage priors are used. Note that ``gamma_0`` and ``scale`` are
-    jointly unidentifiable (scaling ``x -> a x``, ``gamma_0 -> a^2 gamma_0``,
-    ``scale -> a scale`` leaves the likelihood unchanged), so EM can shrink
-    ``gamma_0 -> 0`` along a flat direction; see Section 6.4 for this open
-    hurdle.
+    No shrinkage priors are used. ``scale`` is fixed at 1.0 (it is unidentifiable
+    with ``gamma_0``: scaling ``x -> a x``, ``gamma_0 -> a^2 gamma_0``,
+    ``scale -> a scale`` leaves the likelihood unchanged), so ``gamma_0`` is
+    free to carry the true state-variance scale.
     """
     init_ll, obs_ll, transition_ll = jax.vmap(
         lambda X: _complete_log_likelihood(params, X, model_inputs)
@@ -497,9 +496,6 @@ def _constrain(params: EMParams) -> EMParams:
     - alpha, beta unconstrained real.
     - kappa clamped to [0, _KAPPA_MAX] (forces a mean-reversion half-life of at
       least one week so team strengths persist between matches).
-    - scale clamped to [0, 10] (team-strength influence on goal rates; a
-      negative scale would flip the sign of the strength effect, and a large
-      scale dilutes the strength signal toward the baseline).
     - gamma_0, B projected onto the positive-definite cone (full-rank, so the
       transition covariance Q and the smoother covariances stay invertible
       and their log-determinants finite).
@@ -511,7 +507,6 @@ def _constrain(params: EMParams) -> EMParams:
     gamma_0 = _project_psd(params.gamma_0)
     B = _project_psd(params.B)
     kappa = jnp.clip(params.kappa, 0.0, _KAPPA_MAX)
-    scale = jnp.clip(params.scale, 0.0, 10.0)
     return EMParams(
         mean_0=params.mean_0,
         gamma_0=gamma_0,
@@ -519,7 +514,6 @@ def _constrain(params: EMParams) -> EMParams:
         kappa=kappa,
         alpha=params.alpha,
         beta=params.beta,
-        scale=scale,
     )
 
 
@@ -536,10 +530,6 @@ def M_step(
     The objective is the MCEM loss: -average over the M smoothed trajectories
     of log p(y, X^*). gamma_0 and B are Cholesky-parameterized so they stay
     positive-definite by construction.
-
-    ``scale`` is a free parameter optimized by the M-step (it controls the
-    influence of team strength on the goal rates). It is clamped to [0, 10] by
-    ``_constrain``.
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
@@ -559,7 +549,6 @@ def M_step(
                 kappa=carry["kappa"],
                 alpha=carry["alpha"],
                 beta=carry["beta"],
-                scale=carry["scale"],  # free parameter (clamped by _constrain)
             ),
             smoothed_trajectories,
             model_inputs,
@@ -574,7 +563,6 @@ def M_step(
         "kappa": prev_params.kappa,
         "alpha": prev_params.alpha,
         "beta": prev_params.beta,
-        "scale": prev_params.scale,
     }
 
     # --- Per-parameter learning rates (scale-aware) ---
@@ -585,7 +573,6 @@ def M_step(
         "kappa": base * 1.0,
         "alpha": base * 1.0,
         "beta": base * 1.0,
-        "scale": base * 1.0,
     }
     transforms = {
         "L_gamma0": optax.adam(lr_mapping["L_gamma0"]),
@@ -593,7 +580,6 @@ def M_step(
         "kappa": optax.adam(lr_mapping["kappa"]),
         "alpha": optax.adam(lr_mapping["alpha"]),
         "beta": optax.adam(lr_mapping["beta"]),
-        "scale": optax.adam(lr_mapping["scale"]),
     }
     param_labels = {
         "L_gamma0": "L_gamma0",
@@ -601,7 +587,6 @@ def M_step(
         "kappa": "kappa",
         "alpha": "alpha",
         "beta": "beta",
-        "scale": "scale",
     }
     # --- Optimizer ---
     optimizer = optax.chain(
@@ -650,12 +635,10 @@ def M_step(
         kappa=best_carry["kappa"],
         alpha=best_carry["alpha"],
         beta=best_carry["beta"],
-        scale=best_carry["scale"],  # free parameter (clamped by _constrain)
     ))
     best_step = int(jnp.argmin(loss_trace))
     print(f"      M-step done: loss {float(loss_best):.4f} -> best at step {best_step}, "
-          f"kappa={float(final.kappa):.5f} alpha={float(final.alpha):.5f} beta={float(final.beta):.5f} "
-          f"scale={float(final.scale):.5f}")
+          f"kappa={float(final.kappa):.5f} alpha={float(final.alpha):.5f} beta={float(final.beta):.5f}")
     return final, float(loss_start), float(loss_best), loss_trace
 
 
@@ -733,7 +716,6 @@ def run_EM(
     print("  kappa:", params.kappa)
     print("  alpha:", params.alpha)
     print("  beta:", params.beta)
-    print("  scale:", params.scale)
     print("  B:", params.B)
     print("  gamma_0:", params.gamma_0.shape)
     print("  mean_0:", params.mean_0.shape)

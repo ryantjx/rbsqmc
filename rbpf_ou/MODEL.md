@@ -38,7 +38,7 @@ where
 
 $$\lambda_1 = \exp\!\Bigl(\alpha + \tfrac{x_t^{\text{att},\text{h}} - x_t^{\text{def},\text{a}}}{\text{scale}}\Bigr), \qquad \lambda_2 = \exp\!\Bigl(\alpha + \tfrac{x_t^{\text{att},\text{a}} - x_t^{\text{def},\text{h}}}{\text{scale}}\Bigr), \qquad \lambda_3 = \exp(\beta)$$
 
-with $\text{scale} = 1.0$ in the current code. Since only $X_t^{\mathcal{O}_t} = (X_t^{\text{h}}, X_t^{\text{a}})$ enter the likelihood, the remaining latent states are represented analytically as a Gaussian conditional (Rao–Blackwellization).
+with $\text{scale} = 1.0$ fixed (it is unidentifiable with $\Gamma_0$ — see Section 4). Since only $X_t^{\mathcal{O}_t} = (X_t^{\text{h}}, X_t^{\text{a}})$ enter the likelihood, the remaining latent states are represented analytically as a Gaussian conditional (Rao–Blackwellization).
 
 ---
 
@@ -129,7 +129,7 @@ $$\log p(X_{0:T}, y_{1:T} \mid \Theta) = \underbrace{\log p_{\mu_0, \Gamma_0 \ot
 
 The observation term's influence is instead controlled by the `scale` hyperparameter: smaller `scale` amplifies the team-strength signal in the goal rates, giving the observation term more gradient weight without a manual loss-weighting hack.
 
-**Scale identifiability (open hurdle).** $\Gamma_0$ and `scale` are jointly unidentifiable: scaling $x \to a x$, $\Gamma_0 \to a^2 \Gamma_0$, `scale` $\to a \cdot$`scale` leaves the likelihood unchanged (team strengths only enter the goal rates as $(x_{\text{att}} - x_{\text{def}})/\text{scale}$, and the Gaussian terms depend on $\Gamma_0$ only through the ratio of the state to its covariance). EM can therefore shrink $\Gamma_0 \to 0$ along a flat direction, collapsing the state variance to ~0. This is a known open hurdle — see Section 6.4.
+**Scale identifiability (resolved).** $\Gamma_0$ and `scale` are jointly unidentifiable: scaling $x \to a x$, $\Gamma_0 \to a^2 \Gamma_0$, `scale` $\to a \cdot$`scale` leaves the likelihood unchanged (team strengths only enter the goal rates as $(x_{\text{att}} - x_{\text{def}})/\text{scale}$, and the Gaussian terms depend on $\Gamma_0$ only through the ratio of the state to its covariance). EM could otherwise shrink $\Gamma_0 \to 0$ along this flat direction, collapsing the state variance to ~0. **Fix:** `scale` is fixed at 1.0 (removed as a parameter), which cuts off the flat direction — EM can no longer shrink `scale` to compensate, so it is forced to keep $\Gamma_0$ at a meaningful scale. `gamma_0` is now free to be estimated from the data.
 
 ---
 
@@ -157,7 +157,6 @@ The observation term's influence is instead controlled by the `scale` hyperparam
 | `kappa` | scalar | OU mean-reversion rate (clamped to $[10^{-3}, 0.1]$) | 0.01 |
 | `alpha` | scalar | baseline scoring rate | 0.2 |
 | `beta` | scalar | shared-scoring / correlation rate | −4.0 |
-| `scale` | scalar | team-strength influence on goal rates (free param, clamped to $[0, 10]$) | 1.0 |
 
 ### 5.3 Training configuration (`smoothing_gpu_config.json`)
 
@@ -192,7 +191,7 @@ The A100 run (`outputs_gpu_active/`) originally showed three failure signals: th
 The L4 run (N=300, n_trajectories=12, `scale` free) converged — log marginal `[-5315, ..., -5303]`, ESS healthy (~220/300), prediction mean log-likelihood −3.41 — but the **rankings were still noise** (Egypt, US, Saudi Arabia, Haiti top; Portugal, Belgium, Switzerland bottom). Two root causes, both now addressed:
 
 1. **`kappa` was too large (0.58).** The OU half-life is $t_{1/2} = \ln 2 / \kappa \approx 1.2$ days, so a team's strength reverted to the mean almost immediately between matches (median gap 1 day, mean 5.3 days). This destroys persistence and makes rankings noise. **Fix:** clamp $\kappa$ to `_KAPPA_MAX = 0.1` (half-life ≥ 7 days) in `_constrain`.
-2. **State variance collapsed to ~0.2.** The stationary state variance is $\Gamma_0[i,i] \cdot B[k,k]$. EM drove $\Gamma_0 \to 0$ along the $\Gamma_0$/`scale` scale-identifiability flat direction, so attack/defence states hovered near the mean with almost no spread. This is an **open hurdle** (see Section 6.4); the previous `_normalize_scale` reparameterization was removed as a hard-coded constant.
+2. **State variance collapsed to ~0.2.** The stationary state variance is $\Gamma_0[i,i] \cdot B[k,k]$. EM drove $\Gamma_0 \to 0$ along the $\Gamma_0$/`scale` scale-identifiability flat direction, so attack/defence states hovered near the mean with almost no spread. **Fix:** `scale` is now fixed at 1.0 (removed as a parameter), cutting off the flat direction so EM keeps $\Gamma_0$ at a meaningful scale (see Section 4).
 
 > **Note on $\mu_0$.** $\mu_0$ is unidentifiable from the likelihood: team strengths only appear in *differences* ($x_i^{\text{att}} - x_j^{\text{def}}$), so shifting all teams' strengths by a constant leaves the goal rates unchanged. It is therefore held fixed at zero.
 
@@ -224,7 +223,6 @@ A review of `rbpf_ou/` surfaced a number of ad-hoc workarounds, hardcoded consta
 **Ad-hoc reparameterizations & clamps.** These pin parameters that EM would otherwise drive to degenerate values:
 
 - `_KAPPA_MAX = 0.1` (`smoothing.py`) — hard-clamps the mean-reversion rate to force a ≥1-week half-life. This is a *constraint*, not an estimate: EM is not free to find the true `kappa`. Kept deliberately as a constraint.
-- `scale` clamped to `[0, 10]` in `_constrain` (`smoothing.py`) — arbitrary range for the strength-influence parameter.
 - `_psd_from_cholesky` / `_cholesky_from_psd` softplus diagonal (`smoothing.py`) — Cholesky reparameterization so PD matrices stay PD by construction.
 
 **Loss & optimization hacks.** These make the M-step behave:
@@ -256,12 +254,10 @@ A review of `rbpf_ou/` surfaced a number of ad-hoc workarounds, hardcoded consta
 
 **Config hacks.** Hardcoded date ranges (`2000-01-01` → `2025-12-31`), `max_goals = 8`, and team sets in the JSON configs; `run_smoothing_colab.sh` parses JSON with `python3` (no `jq` dependency).
 
-> **Note.** Several of these (the eigenvalue floors, PSD-aware sampling, Cholesky reparameterization, `dt == 0` branch) are legitimate numerical robustness measures for a Kronecker-structured filter in float32, not hacks per se. The ones that most warrant revisiting are the per-dimension loss scaling (and the dead per-parameter LR) and the open scale-identifiability hurdle — see Section 6.4.
+> **Note.** Several of these (the eigenvalue floors, PSD-aware sampling, Cholesky reparameterization, `dt == 0` branch) are legitimate numerical robustness measures for a Kronecker-structured filter in float32, not hacks per se. The one that most warrants revisiting is the per-dimension loss scaling (and the dead per-parameter LR) — see Section 6.4.
 
 ### 6.4 Open hurdles
 
-**1. Per-parameter learning rates (key hurdle).** The M-step currently uses a single `learning_rate` for every parameter (`lr_mapping` sets all multipliers to `1.0`), so the "scale-aware" per-parameter LR is effectively dead. The natural improvement is to give each parameter its own learning rate — e.g. a smaller LR for the covariance factors (`gamma_0`, `B`) and a larger one for the scalar observation parameters (`alpha`, `beta`, `scale`, `kappa`). The key hurdle is that the **per-dimension loss scaling** (Section 6.3) already reweights the three loss terms, so the effective gradient magnitudes per parameter are a *combination* of the loss scaling and the LR. Tuning per-parameter LRs therefore interacts with the loss scaling, and the two must be considered together — you cannot set sensible per-parameter LRs without first deciding whether the loss scaling is the right objective.
+**1. Per-parameter learning rates (key hurdle).** The M-step currently uses a single `learning_rate` for every parameter (`lr_mapping` sets all multipliers to `1.0`), so the "scale-aware" per-parameter LR is effectively dead. The natural improvement is to give each parameter its own learning rate — e.g. a smaller LR for the covariance factors (`gamma_0`, `B`) and a larger one for the scalar observation parameters (`alpha`, `beta`, `kappa`). The key hurdle is that the **per-dimension loss scaling** (Section 6.3) already reweights the three loss terms, so the effective gradient magnitudes per parameter are a *combination* of the loss scaling and the LR. Tuning per-parameter LRs therefore interacts with the loss scaling, and the two must be considered together — you cannot set sensible per-parameter LRs without first deciding whether the loss scaling is the right objective.
 
-**2. Scale identifiability of $\Gamma_0$ and `scale`.** $\Gamma_0$ and `scale` are jointly unidentifiable (scaling $x \to a x$, $\Gamma_0 \to a^2 \Gamma_0$, `scale` $\to a \cdot$`scale` leaves the likelihood unchanged), so EM can shrink $\Gamma_0 \to 0$ along a flat direction, collapsing the state variance to ~0. The previous `_normalize_scale` reparameterization (which pinned $\Gamma_0$ to a hard-coded `_GAMMA0_TARGET`) was removed as a hard-coded constant. Options to revisit: a soft prior on the variance scale, or a reparameterization that makes the scale identifiable without a fixed constant.
-
-**3. Collapsed `init_sample` (resolved).** `init_sample` previously returned all particles exactly at `mean_0` with no dispersion, so the filter was fully collapsed at `t=0`. `cuthbert`'s `init_prepare` vmaps `init_sample` over `n_filter_particles` keys, so it is called once per particle — the fix draws each particle from the prior $X_0 \sim \mathcal{N}(\mu_0, \Gamma_0 \otimes B)$ via `kron_sample_psd`, giving independent dispersion across particles. Propagation is handled separately by `propagate_sample` at each subsequent time step.
+**2. Collapsed `init_sample` (resolved).** `init_sample` previously returned all particles exactly at `mean_0` with no dispersion, so the filter was fully collapsed at `t=0`. `cuthbert`'s `init_prepare` vmaps `init_sample` over `n_filter_particles` keys, so it is called once per particle — the fix draws each particle from the prior $X_0 \sim \mathcal{N}(\mu_0, \Gamma_0 \otimes B)$ via `kron_sample_psd`, giving independent dispersion across particles. Propagation is handled separately by `propagate_sample` at each subsequent time step.
