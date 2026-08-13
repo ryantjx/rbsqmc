@@ -154,6 +154,8 @@ def main():
     print(f"Loaded {len(fixtures)} fixtures")
 
     predictions = []
+    total_loglik = 0.0
+    n_scored = 0
     for fx in fixtures:
         home_name = fx["home"]
         away_name = fx["away"]
@@ -184,6 +186,15 @@ def main():
         exp_home = float(jnp.sum(goals * jnp.sum(grid, axis=1)))
         exp_away = float(jnp.sum(goals * jnp.sum(grid, axis=0)))
 
+        # Actual score (if present in the fixture) and its log-likelihood.
+        actual_home = fx.get("home_score")
+        actual_away = fx.get("away_score")
+        loglik = None
+        if actual_home is not None and actual_away is not None:
+            loglik = float(jnp.log(grid[actual_home, actual_away]))
+            total_loglik += loglik
+            n_scored += 1
+
         predictions.append({
             "date": fx["date"],
             "home": home_name,
@@ -195,36 +206,55 @@ def main():
             "p_most_likely": round(p_most_likely, 4),
             "expected_goals_home": round(exp_home, 3),
             "expected_goals_away": round(exp_away, 3),
+            "actual_score": (f"{actual_home}-{actual_away}"
+                             if actual_home is not None and actual_away is not None else ""),
+            "log_likelihood": (round(loglik, 4) if loglik is not None else None),
         })
 
     # --- 3. Write outputs ---
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # Aggregate evaluation metrics (only over fixtures with actual scores).
+    eval_metrics = {}
+    if n_scored > 0:
+        eval_metrics = {
+            "n_matches_scored": n_scored,
+            "total_log_likelihood": round(total_loglik, 4),
+            "mean_log_likelihood": round(total_loglik / n_scored, 4),
+        }
+        print(f"\n=== EVALUATION (over {n_scored} scored matches) ===")
+        print(f"  total log-likelihood = {total_loglik:.4f}")
+        print(f"  mean log-likelihood   = {total_loglik / n_scored:.4f}")
+
     json_path = os.path.join(args.output_dir, "predictions.json")
     with open(json_path, "w") as f:
-        json.dump(predictions, f, indent=2)
+        json.dump({"evaluation": eval_metrics, "predictions": predictions}, f, indent=2)
     print(f"Saved predictions to {json_path}")
 
     # CSV summary.
     csv_path = os.path.join(args.output_dir, "predictions.csv")
     with open(csv_path, "w") as f:
-        f.write("date,home,away,p_home_win,p_draw,p_away_win,most_likely_score,p_most_likely,expected_goals_home,expected_goals_away\n")
+        f.write("date,home,away,p_home_win,p_draw,p_away_win,most_likely_score,p_most_likely,expected_goals_home,expected_goals_away,actual_score,log_likelihood\n")
         for p in predictions:
             f.write(
                 f"{p['date']},{p['home']},{p['away']},{p['p_home_win']},{p['p_draw']},"
                 f"{p['p_away_win']},{p['most_likely_score']},{p['p_most_likely']},"
-                f"{p['expected_goals_home']},{p['expected_goals_away']}\n"
+                f"{p['expected_goals_home']},{p['expected_goals_away']},"
+                f"{p['actual_score']},{p['log_likelihood']}\n"
             )
     print(f"Saved predictions CSV to {csv_path}")
 
     # Console summary.
     print("\n=== PREDICTIONS ===")
     for p in predictions:
+        actual = f"actual {p['actual_score']}" if p["actual_score"] else "no actual"
+        ll = f"ll={p['log_likelihood']:.2f}" if p["log_likelihood"] is not None else ""
         print(
             f"{p['date']}  {p['home']:>20} vs {p['away']:<20}  "
             f"W{p['p_home_win']:.2f} D{p['p_draw']:.2f} L{p['p_away_win']:.2f}  "
             f"most likely {p['most_likely_score']} ({p['p_most_likely']:.2f})  "
-            f"xG {p['expected_goals_home']:.2f}-{p['expected_goals_away']:.2f}"
+            f"xG {p['expected_goals_home']:.2f}-{p['expected_goals_away']:.2f}  "
+            f"{actual} {ll}"
         )
 
 
