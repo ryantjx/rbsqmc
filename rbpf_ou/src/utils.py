@@ -1,5 +1,26 @@
 import jax
+import jax.numpy as jnp
 from typing import NamedTuple
+
+
+def kron_sample_psd(key, mean, A, B):
+    """Sample from N(mean, A (x) B) without forming A (x) B.
+
+    mean: (M*K,) flattened vec_C of an (M, K) matrix. A: (M, M), B: (K, K).
+    Returns (M*K,). Eigenvalues of A and B are clipped to >= 0 so observed
+    (zero-variance) teams stay exactly at their mean (PSD-aware).
+    """
+    M = A.shape[0]
+    K = B.shape[0]
+    mean_MK = mean.reshape(M, K)
+    eigvals_A, eigvecs_A = jnp.linalg.eigh(A)
+    eigvals_A = jnp.clip(eigvals_A, 0.0)
+    eigvals_B, eigvecs_B = jnp.linalg.eigh(B)
+    eigvals_B = jnp.clip(eigvals_B, 0.0)
+    z = jax.random.normal(key, (M, K))
+    Z_A = (eigvecs_A * jnp.sqrt(eigvals_A)[None, :]) @ z
+    X = Z_A @ (eigvecs_B * jnp.sqrt(eigvals_B)[None, :]).T
+    return (mean_MK + X).reshape(-1)
 
 
 class FootballResults(NamedTuple):

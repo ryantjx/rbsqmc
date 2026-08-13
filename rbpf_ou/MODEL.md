@@ -239,7 +239,7 @@ A review of `rbpf_ou/` surfaced a number of ad-hoc workarounds, hardcoded consta
 - `N_TRAJECTORIES = 8` (module default) / `n_trajectories = 12` (config) (`smoothing.py`) — number of smoothed trajectories per E-step.
 - `N = 100` (`smoothing.py`) / `N = 10` (`model.py`) / `N = 300` (config) — filter particle counts, hand-tuned.
 
-**Filter initialization hack.** ⚠️ `init_sample` returns `RBPFState(x=init_mean)` with **no dispersion** (`model.py`) — all particles start exactly at the mean, so the filter is fully collapsed at `t=0` and relies on the transition to spread particles.
+**Filter initialization.** `init_sample` now draws each particle from the prior $X_0 \sim \mathcal{N}(\mu_0, \Gamma_0 \otimes B)$ via `kron_sample_psd` (`model.py`). Previously it returned the mean with no dispersion, so all particles started identical and the filter was fully collapsed at `t=0`.
 
 **Memory workarounds.** `del smoothed_trajectories, augmented_results; jax.clear_caches()` between epochs (`smoothing.py`) — explicit buffer dropping to avoid OOM at `M=228`. Also `XLA_PYTHON_CLIENT_PREALLOCATE=false` / `ALLOCATOR=platform` in `smoothing_gpu.py`. This is safe: dropping the Python references frees the JAX device buffers, and `clear_caches()` only forces a recompile on the next call.
 
@@ -256,7 +256,7 @@ A review of `rbpf_ou/` surfaced a number of ad-hoc workarounds, hardcoded consta
 
 **Config hacks.** Hardcoded date ranges (`2000-01-01` → `2025-12-31`), `max_goals = 8`, and team sets in the JSON configs; `run_smoothing_colab.sh` parses JSON with `python3` (no `jq` dependency).
 
-> **Note.** Several of these (the eigenvalue floors, PSD-aware sampling, Cholesky reparameterization, `dt == 0` branch) are legitimate numerical robustness measures for a Kronecker-structured filter in float32, not hacks per se. The ones that most warrant revisiting are the per-dimension loss scaling (and the dead per-parameter LR), the collapsed `init_sample`, and the open scale-identifiability hurdle — see Section 6.4.
+> **Note.** Several of these (the eigenvalue floors, PSD-aware sampling, Cholesky reparameterization, `dt == 0` branch) are legitimate numerical robustness measures for a Kronecker-structured filter in float32, not hacks per se. The ones that most warrant revisiting are the per-dimension loss scaling (and the dead per-parameter LR) and the open scale-identifiability hurdle — see Section 6.4.
 
 ### 6.4 Open hurdles
 
@@ -264,4 +264,4 @@ A review of `rbpf_ou/` surfaced a number of ad-hoc workarounds, hardcoded consta
 
 **2. Scale identifiability of $\Gamma_0$ and `scale`.** $\Gamma_0$ and `scale` are jointly unidentifiable (scaling $x \to a x$, $\Gamma_0 \to a^2 \Gamma_0$, `scale` $\to a \cdot$`scale` leaves the likelihood unchanged), so EM can shrink $\Gamma_0 \to 0$ along a flat direction, collapsing the state variance to ~0. The previous `_normalize_scale` reparameterization (which pinned $\Gamma_0$ to a hard-coded `_GAMMA0_TARGET`) was removed as a hard-coded constant. Options to revisit: a soft prior on the variance scale, or a reparameterization that makes the scale identifiable without a fixed constant.
 
-**3. Collapsed `init_sample`.** `init_sample` returns all particles exactly at `mean_0` with no dispersion, so the filter is fully collapsed at `t=0`. Whether this matters depends on the filter's initialization: if `init_sample` is called once and the same state is broadcast to all `N` particles, they all start identical and only spread via the transition. If instead it is called per-particle (or the transition is applied at the first step), sampling/propagating during `init_sample` would give each particle a distinct draw from $\mathcal{N}(\mu_0, \Gamma_0 \otimes B)$ — the correct bootstrap initialization. This should be verified against how `cuthbert` invokes `init_sample`.
+**3. Collapsed `init_sample` (resolved).** `init_sample` previously returned all particles exactly at `mean_0` with no dispersion, so the filter was fully collapsed at `t=0`. `cuthbert`'s `init_prepare` vmaps `init_sample` over `n_filter_particles` keys, so it is called once per particle — the fix draws each particle from the prior $X_0 \sim \mathcal{N}(\mu_0, \Gamma_0 \otimes B)$ via `kron_sample_psd`, giving independent dispersion across particles. Propagation is handled separately by `propagate_sample` at each subsequent time step.

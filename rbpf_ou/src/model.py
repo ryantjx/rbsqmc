@@ -8,7 +8,7 @@ from functools import partial
 from rbpf_ou.src.bivariate_poisson import loglik
 from rbpf_ou.src.data import get_results, FootballResults
 from rbpf_ou.src.helpers import default_init_params
-from rbpf_ou.src.utils import RBPFState, RBPFFootballResults, EMParams
+from rbpf_ou.src.utils import RBPFState, RBPFFootballResults, EMParams, kron_sample_psd
 
 # Default to CPU locally, but allow the GPU pipeline to force a device via
 # the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).
@@ -24,8 +24,19 @@ def init_sample(
     key: jax.Array,
     model_inputs: FootballResults,
     init_mean: jnp.ndarray,
+    gamma_0: jnp.ndarray,
+    B: jnp.ndarray,
 ) -> RBPFState:
-    return RBPFState(x=init_mean)
+    """Sample the initial state from the prior X_0 ~ N(init_mean, gamma_0 (x) B).
+
+    ``cuthbert``'s ``init_prepare`` vmaps this over ``n_filter_particles`` keys,
+    so each particle gets an independent draw from the prior. Without the
+    dispersion the filter would start fully collapsed at the mean.
+    """
+    num_teams = init_mean.shape[0]
+    K = init_mean.shape[1]  # 2 (attack/defence)
+    x = kron_sample_psd(key, init_mean.flatten(), gamma_0, B).reshape(num_teams, K)
+    return RBPFState(x=x)
 
 
 def _sample_psd_gaussian(
@@ -132,6 +143,8 @@ def build_rbpf_filter(
         init_sample=partial(
             init_sample,
             init_mean=params.mean_0,
+            gamma_0=params.gamma_0,
+            B=params.B,
         ),
         propagate_sample=partial(
             propagate_sample,

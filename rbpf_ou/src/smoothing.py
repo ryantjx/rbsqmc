@@ -4,7 +4,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from rbpf_ou.src.utils import RBPFFootballResults, EMParams, FootballResults
+from rbpf_ou.src.utils import (
+    RBPFFootballResults,
+    EMParams,
+    FootballResults,
+    kron_sample_psd,
+)
 from rbpf_ou.src.data import WORLDCUP_2026_TEAMS, get_results, ACTIVE_TEAMS
 from rbpf_ou.src.helpers import default_init_params, generate_augmented_data, params_to_dict
 from rbpf_ou.src.model import (
@@ -114,31 +119,6 @@ def _pinv_psd(x: jnp.ndarray, floor: float = 1e-6) -> jnp.ndarray:
     return (eigvecs * inv_eigvals) @ eigvecs.T
 
 
-def _kron_sample_psd(key, mean, A, B):
-    """Sample from N(mean, A (x) B) without forming A (x) B.
-
-    mean: (M*K,) flattened vec_C of an (M, K) matrix. A: (M, M), B: (K, K).
-    Returns (M*K,). Eigenvalues of A and B are clipped to >= 0 so observed
-    (zero-variance) teams stay exactly at their mean (PSD-aware, matching
-    ``_sample_psd_gaussian``).
-    """
-    M = A.shape[0]
-    K = B.shape[0]
-    mean_MK = mean.reshape(M, K)
-    eigvals_A, eigvecs_A = jnp.linalg.eigh(A)
-    eigvals_A = jnp.clip(eigvals_A, 0.0)
-    eigvals_B, eigvecs_B = jnp.linalg.eigh(B)
-    eigvals_B = jnp.clip(eigvals_B, 0.0)
-    z = jax.random.normal(key, (M, K))
-    # We want vec(X) ~ N(0, A (x) B). Using the Kronecker eigendecomposition
-    #   A (x) B = (U_A (x) U_B)(L_A (x) L_B)(U_A (x) U_B)^T,
-    # a draw is vec(X) = (U_A sqrt(L_A) (x) U_B sqrt(L_B)) z, which equals
-    #   X = U_A sqrt(L_A) Z' sqrt(L_B) U_B^T,  Z' ~ N(0, I) of shape (M, K).
-    Z_A = (eigvecs_A * jnp.sqrt(eigvals_A)[None, :]) @ z  # U_A sqrt(L_A) Z'  (M, K)
-    X = Z_A @ (eigvecs_B * jnp.sqrt(eigvals_B)[None, :]).T  # ... sqrt(L_B) U_B^T  (M, K)
-    return (mean_MK + X).reshape(-1)
-
-
 def _smoother_rts_single(
     filtered_states: cuthbertlib.types.ArrayTree,
     model_inputs: RBPFFootballResults,
@@ -167,7 +147,7 @@ def _smoother_rts_single(
     # marginalization). Use the PSD-aware Kronecker sampler so observed teams
     # stay at their mean instead of jittering (no (2M, 2M) matrix is formed).
     mu_T = filtered_states.particles.x[-1, I_T]  # (M, 2)
-    X_T_STAR = _kron_sample_psd(
+    X_T_STAR = kron_sample_psd(
         sample_key, mu_T.flatten(), gamma_T, params.B
     ).reshape(num_teams, K)  # (M, 2)
 
@@ -226,7 +206,7 @@ def _smoother_rts_single(
         X_t_star = jax.lax.cond(
             deterministic,
             lambda _: X_next_star,  # dt == 0: preserve the state exactly
-            lambda _: _kron_sample_psd(
+            lambda _: kron_sample_psd(
                 sample_key, mu_RTS.flatten(), Gamma_RTS, params.B
             ).reshape(num_teams, K),  # dt > 0: sample from the RTS posterior
             operand=sample_key,
