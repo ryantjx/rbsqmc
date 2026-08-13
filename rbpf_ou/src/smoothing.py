@@ -37,13 +37,6 @@ N_TRAJECTORIES = 8
 # Minimum eigenvalue floor for the projected covariances (see `_project_psd`).
 _EIGEN_FLOOR = 1e-4
 
-# Lower bound for the OU mean-reversion rate kappa.
-#
-# kappa -> 0 makes phi = exp(-kappa*dt) -> 1, so the transition covariance
-# (1-phi^2)*Sigma_0 -> 0 (a degenerate transition). Flooring kappa away from
-# zero keeps the transition covariance meaningfully non-singular.
-_KAPPA_MIN = 1e-3
-
 # Upper bound for the OU mean-reversion rate kappa.
 #
 # kappa controls how fast a team's strength reverts to the population mean:
@@ -53,17 +46,6 @@ _KAPPA_MIN = 1e-3
 # persistence that makes rankings meaningful. To force a half-life of at
 # least one week we need kappa <= ln(2)/7 ~= 0.099, so we cap it at 0.1.
 _KAPPA_MAX = 0.1
-
-# Reference mean-diagonal for gamma_0 after each M-step (see _normalize_scale).
-#
-# gamma_0 and scale are jointly unidentifiable: scaling x -> a x, gamma_0 ->
-# a^2 gamma_0, scale -> a scale leaves the likelihood unchanged. EM exploits
-# this flat direction by shrinking gamma_0 -> 0 (collapsing the state variance
-# to ~0). _normalize_scale rescales gamma_0 so its mean diagonal equals this
-# target and folds the factor into scale, pinning the variance scale with no
-# prior knowledge of the initial covariance. The value is arbitrary (it only
-# sets the units of the latent state); 0.16 corresponds to a state std of 0.4.
-_GAMMA0_TARGET = 0.16
 
 
 # ---------------------------------------------------------------------------
@@ -463,11 +445,11 @@ def loss_fn(
     (see ``_complete_log_likelihood``), so the three terms are on a comparable
     per-dimension scale and summed with equal weight.
 
-    No shrinkage priors are used. The ``gamma_0``/``scale`` scale-identifiability
-    degeneracy (scaling ``x -> a x``, ``gamma_0 -> a^2 gamma_0``, ``scale -> a scale``
-    leaves the likelihood unchanged) is instead broken by a deterministic
-    reparameterization in ``_normalize_scale``, which pins the variance scale
-    without any prior knowledge of the initial covariance.
+    No shrinkage priors are used. Note that ``gamma_0`` and ``scale`` are
+    jointly unidentifiable (scaling ``x -> a x``, ``gamma_0 -> a^2 gamma_0``,
+    ``scale -> a scale`` leaves the likelihood unchanged), so EM can shrink
+    ``gamma_0 -> 0`` along a flat direction; see Section 6.4 for this open
+    hurdle.
     """
     init_ll, obs_ll, transition_ll = jax.vmap(
         lambda X: _complete_log_likelihood(params, X, model_inputs)
@@ -529,50 +511,18 @@ def _cholesky_from_psd(A: jnp.ndarray, n: int) -> jnp.ndarray:
     return L_free
 
 
-def _normalize_scale(params: EMParams) -> EMParams:
-    """Break the ``gamma_0``/``scale`` scale-identifiability degeneracy.
-
-    The likelihood is invariant to the joint rescaling
-    ``x -> a x``, ``gamma_0 -> a^2 gamma_0``, ``scale -> a scale`` (team
-    strengths only enter the goal rates as ``(x_att - x_def)/scale``, and the
-    Gaussian terms depend on ``gamma_0`` only through the ratio of the state
-    to its covariance). EM therefore has a flat direction along which it can
-    shrink ``gamma_0 -> 0`` while ``scale -> 0``, collapsing the state variance
-    to ~0 with no change in fit.
-
-    We break this degeneracy deterministically, with no prior knowledge of the
-    initial covariance: after each M-step we rescale ``gamma_0`` so its mean
-    diagonal equals ``_GAMMA0_TARGET`` (a fixed, arbitrary reference scale) and
-    absorb the absorbed factor into ``scale``. This pins the variance scale
-    while leaving the likelihood exactly unchanged, so the fitted state
-    variance is meaningful and ``scale`` carries the true magnitude.
-    """
-    # Mean diagonal of gamma_0 (a scalar measure of the state-variance scale).
-    mean_diag = jnp.mean(jnp.diag(params.gamma_0))
-    # Rescale gamma_0 so its mean diagonal hits the target, and fold the
-    # inverse factor into scale (scale -> scale * sqrt(mean_diag / target)).
-    factor = jnp.sqrt(mean_diag / _GAMMA0_TARGET)
-    gamma_0 = params.gamma_0 / (factor**2)
-    scale = params.scale * factor
-    return params._replace(gamma_0=gamma_0, scale=scale)
-
-
 def _constrain(params: EMParams) -> EMParams:
     """Apply validity constraints so parameters stay in their support.
 
     - alpha, beta unconstrained real.
-    - kappa clamped to [_KAPPA_MIN, _KAPPA_MAX] (keeps the OU transition
-      covariance non-degenerate while forcing a half-life of at least one
-      week so team strengths persist between matches).
+    - kappa clamped to [0, _KAPPA_MAX] (forces a mean-reversion half-life of at
+      least one week so team strengths persist between matches).
     - scale clamped to [0, 10] (team-strength influence on goal rates; a
       negative scale would flip the sign of the strength effect, and a large
       scale dilutes the strength signal toward the baseline).
     - gamma_0, B projected onto the positive-definite cone (full-rank, so the
       transition covariance Q and the smoother covariances stay invertible
       and their log-determinants finite).
-    - gamma_0 rescaled to a fixed reference variance via ``_normalize_scale``
-      (breaks the gamma_0/scale scale-identifiability degeneracy without a
-      shrinkage prior).
 
     Note: during the M-step these are Cholesky-parameterized (so they stay PD
     automatically); this projection is retained as a safety net for params
@@ -580,9 +530,9 @@ def _constrain(params: EMParams) -> EMParams:
     """
     gamma_0 = _project_psd(params.gamma_0)
     B = _project_psd(params.B)
-    kappa = jnp.clip(params.kappa, _KAPPA_MIN, _KAPPA_MAX)
+    kappa = jnp.clip(params.kappa, 0.0, _KAPPA_MAX)
     scale = jnp.clip(params.scale, 0.0, 10.0)
-    return _normalize_scale(EMParams(
+    return EMParams(
         mean_0=params.mean_0,
         gamma_0=gamma_0,
         B=B,
@@ -590,7 +540,7 @@ def _constrain(params: EMParams) -> EMParams:
         alpha=params.alpha,
         beta=params.beta,
         scale=scale,
-    ))
+    )
 
 
 def M_step(
@@ -609,9 +559,7 @@ def M_step(
 
     ``scale`` is a free parameter optimized by the M-step (it controls the
     influence of team strength on the goal rates). It is clamped to [0, 10] by
-    ``_constrain``, which also rescales ``gamma_0`` to a fixed reference
-    variance via ``_normalize_scale`` (breaking the gamma_0/scale
-    scale-identifiability degeneracy without a shrinkage prior).
+    ``_constrain``.
 
     Returns:
         tuple[EMParams, float, float, list[float]]: (final_params, loss_start,
