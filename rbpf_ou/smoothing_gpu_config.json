@@ -3,7 +3,7 @@
   "n_epochs": 10,
   "n_gradient_steps": 30,
   "learning_rate": 0.01,
-  "n_trajectories": 8,
+  "n_trajectories": 4,
   "term_weights": [1.0, 5.0, 1.0],
   "start_date": "2000-01-01",
   "end_date": "2025-12-31",
