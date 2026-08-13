@@ -2,7 +2,7 @@
   "description": "Regional prior correlation structure for ACTIVE national teams (current FIFA / confederation members) in the international results dataset from 1872-11-30 onwards.",
   "correlation": {
     "within_region": 0.5,
-    "between_regions": -0.2
+    "between_regions": -0.3
   },
   "teams": [
     "Afghanistan",
