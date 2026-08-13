@@ -8,6 +8,7 @@
   {"date": "2026-06-13", "home": "Spain", "away": "Portugal"},
   {"date": "2026-06-13", "home": "Germany", "away": "Netherlands"},
   {"date": "2026-06-13", "home": "Belgium", "away": "Austria"},
+  {"date": "2026-06-13", "home": "Croatia", "away": "Scotland"},
   {"date": "2026-06-14", "home": "Switzerland", "away": "Norway"},
   {"date": "2026-06-14", "home": "Japan", "away": "South Korea"},
   {"date": "2026-06-14", "home": "Australia", "away": "New Zealand"},
@@ -20,6 +21,7 @@
   {"date": "2026-06-16", "home": "DR Congo", "away": "South Africa"},
   {"date": "2026-06-16", "home": "Turkey", "away": "Czech Republic"},
   {"date": "2026-06-16", "home": "Ecuador", "away": "Paraguay"},
+  {"date": "2026-06-16", "home": "Sweden", "away": "Norway"},
   {"date": "2026-06-17", "home": "Mexico", "away": "United States"},
   {"date": "2026-06-17", "home": "Canada", "away": "Panama"},
   {"date": "2026-06-17", "home": "Argentina", "away": "Brazil"},
@@ -32,7 +34,5 @@
   {"date": "2026-06-19", "home": "Iran", "away": "Saudi Arabia"},
   {"date": "2026-06-19", "home": "Ivory Coast", "away": "Senegal"},
   {"date": "2026-06-20", "home": "Uruguay", "away": "Colombia"},
-  {"date": "2026-06-20", "home": "Brazil", "away": "Argentina"},
-  {"date": "2026-06-21", "home": "Germany", "away": "Spain"},
-  {"date": "2026-06-21", "home": "Netherlands", "away": "Portugal"}
+  {"date": "2026-06-20", "home": "Brazil", "away": "Argentina"}
 ]
