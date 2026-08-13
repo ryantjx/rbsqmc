@@ -219,3 +219,25 @@ dispersion were ported from OU v2 so gradients flow through
 params move); **not yet run on GPU.** The first test is N=5000, ACTIVE_TEAMS
 (228 teams) on L4 — note that ACTIVE_TEAMS diverged on GPU for OU v2 due to a
 float32 numerical instability, so the RW model may hit the same issue.
+
+**2026-08-13 — GPU test (L4, ACTIVE_TEAMS 228 teams).**
+
+- **N=5000 OOM'd.** Requested 47.81 GiB on the L4 (~24 GB) — a genuine memory
+  limit, not a numerical issue. N=5000 × 228 teams is too large for the L4.
+  **Fix:** reduced `N` to 500.
+- **N=500 ran to completion** (no NaN, params written to
+  `outputs/n500_active/`), but the **log marginal diverged**: start -59936 →
+  end -90891 (Δ -30955, min -151007). This is the opposite of OU v2, which
+  *improved* (+313 at N=5000). The random-walk direct-GD is **not converging**.
+- **Graphics/prediction OOM'd locally** (exit 137, SIGKILL) when running
+  `model_trained.py`/`model_predict.py` at N=500, 228 teams, 15954 matches —
+  the filter + plotting exceeded local memory.
+
+**Diagnosis.** The RW direct-GD diverges where OU v2 converges. Likely causes:
+(1) the random-walk has **no mean reversion**, so `gamma_Q` (the transition
+variance) can grow without bound and the state drifts to extreme values,
+exploding the bivariate-Poisson likelihood; (2) the OU model's `kappa` clamp
+acted as a regularizer that the RW lacks. The `_GAMMA_Q_FLOOR` only floors
+`gamma_Q` from below — it does not cap it from above. A natural next step is to
+**cap `gamma_Q`** (analogous to `_KAPPA_MAX`) or add a shrinkage prior, so the
+transition variance stays bounded and the state doesn't drift.
