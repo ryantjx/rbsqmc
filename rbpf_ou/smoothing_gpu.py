@@ -273,8 +273,8 @@ def run_em(n_particles: int, start_date: str):
     print("[EM] Initializing parameters...")
     params = default_init_params(num_teams, team_id_to_name=team_id_to_name)
     # `scale` is a free parameter optimized by EM, initialized from the config
-    # and clamped to [0, 1] (see `_constrain`).
-    params = params._replace(scale=float(jnp.clip(CONFIG.get("scale", 1.0), 0.0, 1.0)))
+    # and clamped to [0, 10] (see `_constrain`).
+    params = params._replace(scale=float(jnp.clip(CONFIG.get("scale", 1.0), 0.0, 10.0)))
     print(f"[EM] scale init = {float(params.scale)}")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)

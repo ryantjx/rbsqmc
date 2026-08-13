@@ -527,9 +527,9 @@ def _constrain(params: EMParams) -> EMParams:
 
     - alpha, beta unconstrained real.
     - kappa >= _KAPPA_MIN (keeps the OU transition covariance non-degenerate).
-    - scale clamped to [0, 1] (team-strength influence on goal rates; a
-      negative scale would flip the sign of the strength effect, and scale > 1
-      would dilute it below the baseline).
+    - scale clamped to [0, 10] (team-strength influence on goal rates; a
+      negative scale would flip the sign of the strength effect, and a large
+      scale dilutes the strength signal toward the baseline).
     - gamma_0, gamma_Q, B projected onto the positive-definite cone
       (full-rank, so the transition covariance Q and the smoother covariances
       stay invertible and their log-determinants finite).
@@ -542,7 +542,7 @@ def _constrain(params: EMParams) -> EMParams:
     gamma_Q = _project_psd(params.gamma_Q)
     B = _project_psd(params.B)
     kappa = jnp.maximum(params.kappa, _KAPPA_MIN)
-    scale = jnp.clip(params.scale, 0.0, 1.0)
+    scale = jnp.clip(params.scale, 0.0, 10.0)
     return EMParams(
         mean_0=params.mean_0,
         gamma_0=gamma_0,
@@ -649,6 +649,7 @@ def M_step(
         "beta": "beta",
         "scale": "scale",
     }
+    # --- Optimizer ---
     optimizer = optax.chain(
         # Clip the global gradient norm to prevent the explosive first step
         # (the transition log-density gradient ~ Q^{-1} can be enormous when
@@ -676,6 +677,7 @@ def M_step(
         best_loss = jnp.where(improved, loss, best_loss)
         return (opt_state, params_carry, best_carry, best_loss), loss
 
+    # run the gradient-descent loop, tracking the best parameters and loss
     init_carry = (opt_state, carry, carry, jnp.inf)
     (_, _, best_carry, best_loss), loss_trace = jax.lax.scan(
         _step, init_carry, jnp.arange(n_gradient_steps)
