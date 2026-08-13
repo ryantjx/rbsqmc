@@ -577,8 +577,9 @@ def M_step(
     effort on a parameter with zero effect on the objective, so we hold it
     fixed at ``prev_params.gamma_Q``.
 
-    ``scale`` is a hyperparameter (not optimized): it controls the influence of
-    team strength on the goal rates and is held fixed at ``prev_params.scale``.
+    ``scale`` is a free parameter optimized by the M-step (it controls the
+    influence of team strength on the goal rates). It is clamped to [0, 1] by
+    ``_constrain``.
 
     ``gamma_q_prior`` is the strength of a quadratic shrinkage prior on
     ``gamma_Q`` (see ``loss_fn``), keeping the transition variance bounded.
@@ -602,7 +603,7 @@ def M_step(
                 kappa=carry["kappa"],
                 alpha=carry["alpha"],
                 beta=carry["beta"],
-                scale=prev_params.scale,  # held fixed (hyperparameter)
+                scale=carry["scale"],  # free parameter (clamped by _constrain)
             ),
             smoothed_trajectories,
             model_inputs,
@@ -619,6 +620,7 @@ def M_step(
         "kappa": prev_params.kappa,
         "alpha": prev_params.alpha,
         "beta": prev_params.beta,
+        "scale": prev_params.scale,
     }
 
     # --- Per-parameter learning rates (scale-aware) ---
@@ -629,6 +631,7 @@ def M_step(
         "kappa": base * 1.0,
         "alpha": base * 1.0,
         "beta": base * 1.0,
+        "scale": base * 1.0,
     }
     transforms = {
         "L_gamma0": optax.adam(lr_mapping["L_gamma0"]),
@@ -636,6 +639,7 @@ def M_step(
         "kappa": optax.adam(lr_mapping["kappa"]),
         "alpha": optax.adam(lr_mapping["alpha"]),
         "beta": optax.adam(lr_mapping["beta"]),
+        "scale": optax.adam(lr_mapping["scale"]),
     }
     param_labels = {
         "L_gamma0": "L_gamma0",
@@ -643,6 +647,7 @@ def M_step(
         "kappa": "kappa",
         "alpha": "alpha",
         "beta": "beta",
+        "scale": "scale",
     }
     optimizer = optax.chain(
         # Clip the global gradient norm to prevent the explosive first step
@@ -690,11 +695,12 @@ def M_step(
         kappa=best_carry["kappa"],
         alpha=best_carry["alpha"],
         beta=best_carry["beta"],
-        scale=prev_params.scale,  # held fixed (hyperparameter)
+        scale=best_carry["scale"],  # free parameter (clamped by _constrain)
     ))
     best_step = int(jnp.argmin(loss_trace))
     print(f"      M-step done: loss {float(loss_best):.4f} -> best at step {best_step}, "
-          f"kappa={float(final.kappa):.5f} alpha={float(final.alpha):.5f} beta={float(final.beta):.5f}")
+          f"kappa={float(final.kappa):.5f} alpha={float(final.alpha):.5f} beta={float(final.beta):.5f} "
+          f"scale={float(final.scale):.5f}")
     return final, float(loss_start), float(loss_best), loss_trace
 
 
@@ -774,6 +780,7 @@ def run_EM(
     print("  kappa:", params.kappa)
     print("  alpha:", params.alpha)
     print("  beta:", params.beta)
+    print("  scale:", params.scale)
     print("  B:", params.B)
     print("  gamma_Q:", params.gamma_Q.shape)
     print("  gamma_0:", params.gamma_0.shape)
