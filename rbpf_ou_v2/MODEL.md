@@ -383,6 +383,7 @@ top-5 / bottom-5 by total strength (attack+defence).
 | N=1000 | 1000 | 48 | 2000 | +256 | -3.67 | Australia, Curaçao, Arg, Morocco, DR Congo | Sweden, Czech, Qatar, Turkey, Egypt |
 | N=1500 | 1500 | 48 | 2000 | +274 | -3.64 | Panama, Arg, Mexico, Colombia, Ecuador | N.Zealand, DR Congo, Turkey, Belgium, Sweden |
 | N=2000 | 2000 | 48 | 2000 | +260 | **-3.37** | France, Spain, Germany, Croatia, Curaçao | S.Africa, Saudi, Egypt, Qatar, Iraq |
+| N=5000 | 5000 | 48 | 2000 | +313 | **-3.44** | Spain, Portugal, France, Argentina, Ecuador | Qatar, Sweden, Haiti, Iraq, Norway |
 | ACTIVE | 100 | 228 | 2000 | NaN | NaN | — (diverged) | — |
 | lookback 1950 | 500 | 48 | 1950 | +501 | -3.68 | Colombia, Uzbek, Tunisia, Brazil, Japan | Sweden, Norway, Haiti, Czech, Bosnia |
 
@@ -414,3 +415,13 @@ top-5 / bottom-5 by total strength (attack+defence).
 instability, not memory — fixing it requires a numerical fix (e.g. float64, or
 a more robust PSD projection), not a bigger GPU. The lookback sweep suggests
 2000-01-01 is a better start date than 1950 for ranking quality.
+
+**N=5000 follow-up (2026-08-13).** Pushed `N` to 5000 (48 teams, lookback 2000,
+L4, `outputs/n5000_48teams`). Δ log Z improved further to **+313** (best fit),
+and the rankings are the **most sane yet** (Spain, Portugal, France, Argentina,
+Ecuador top; Qatar, Sweden, Haiti, Iraq, Norway bottom). Mean ll **-3.44** is
+slightly worse than N=2000's -3.37 but better than N=1000/1500. The trend
+confirms: **more particles → better fit and better rankings**, with mean ll
+roughly flat around -3.4. N=5000 is a strong production choice; the marginal
+improvement over N=2000 is small, so N=2000–5000 is a reasonable operating
+range.
