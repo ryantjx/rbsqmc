@@ -73,8 +73,13 @@ def load_params(path: str) -> EMParams:
 def _regional_correlation_matrix(
     team_id_to_name: dict[int, str],
     path: str = TEAM_CORRELATION_PATH,
-) -> tuple[jnp.ndarray, float]:
-    """Build a team correlation matrix from a regional JSON specification."""
+) -> jnp.ndarray:
+    """Build a team correlation matrix from a regional JSON specification.
+
+    Returns the correlation matrix ``C0`` (diagonal 1). The absolute variance
+    scale is not part of the prior: ``gamma_0`` is initialized at the correlation
+    scale and EM estimates the true covariance from the data.
+    """
     with open(path, "r") as f:
         config = json.load(f)
 
@@ -100,7 +105,6 @@ def _regional_correlation_matrix(
     correlation = config["correlation"]
     within = float(correlation["within_region"])
     between = float(correlation["between_regions"])
-    state_std = float(correlation["state_standard_deviation"])
 
     C0 = jnp.full((len(team_names), len(team_names)), between)
     C0 = C0.at[jnp.diag_indices(len(team_names))].set(1.0)
@@ -111,7 +115,30 @@ def _regional_correlation_matrix(
         for j, name_j in enumerate(team_names):
             if i != j and region_i == region_by_team.get(name_j):
                 C0 = C0.at[i, j].set(within)
-    return C0, state_std
+    return C0
+
+
+def _project_psd_correlation(C: jnp.ndarray) -> jnp.ndarray:
+    """Project a symmetric matrix onto the PSD cone and renormalize to a
+    correlation matrix (diagonal 1).
+
+    A correlation matrix must be positive-semidefinite (all eigenvalues >= 0).
+    A strongly negative ``between_regions`` value (e.g. -0.4 with 6 regions)
+    can make the raw regional matrix indefinite (min eigenvalue < 0), which
+    breaks the Cholesky factorization used by the filter and M-step. This
+    clamps negative eigenvalues to 0, then rescales each row/column so the
+    diagonal is 1, yielding a valid correlation matrix.
+    """
+    C = 0.5 * (C + C.T)  # symmetrize
+    eigvals, eigvecs = jnp.linalg.eigh(C)
+    eigvals = jnp.maximum(eigvals, 0.0)  # clamp to PSD cone
+    C_psd = (eigvecs * eigvals) @ eigvecs.T
+    # Renormalize the diagonal to 1 (correlation scale).
+    d = jnp.sqrt(jnp.diag(C_psd))
+    d = jnp.maximum(d, 1e-8)  # avoid division by zero
+    C_corr = C_psd / jnp.outer(d, d)
+    C_corr = 0.5 * (C_corr + C_corr.T)
+    return C_corr
 
 
 def default_init_params(
@@ -124,7 +151,8 @@ def default_init_params(
     *shared* attack/defence factor ``B``. We build:
 
     - ``gamma_0``: team covariance initialized as the regional *correlation*
-      matrix ``C0`` (diagonal 1). The absolute variance scale is unidentifiable
+      matrix ``C0`` (diagonal 1), projected onto the PSD cone so it is always
+      a valid correlation matrix. The absolute variance scale is unidentifiable
       with ``scale`` (fixed at 1), so we initialize ``gamma_0`` at the
       correlation scale and let EM estimate the true covariance from the data.
     - ``B``:       shared ``2 x 2`` attack/defence covariance.
@@ -134,15 +162,16 @@ def default_init_params(
     if team_id_to_name is not None:
         if len(team_id_to_name) != num_teams:
             raise ValueError("team_id_to_name must contain exactly num_teams entries")
-        C0, _ = _regional_correlation_matrix(team_id_to_name)
+        C0 = _regional_correlation_matrix(team_id_to_name)
     else:
         C0 = (
             (1.0 - rho_team) * jnp.eye(num_teams)
             + rho_team * jnp.ones((num_teams, num_teams))
         )
-    # gamma_0 starts as the correlation matrix (diagonal 1); EM estimates the
-    # true covariance scale from the data.
-    gamma_0 = C0
+    # gamma_0 starts as the correlation matrix (diagonal 1), projected onto the
+    # PSD cone so it is always a valid correlation matrix; EM estimates the true
+    # covariance scale from the data.
+    gamma_0 = _project_psd_correlation(C0)
 
     cov_attack_defence = 0.2
     B = jnp.array([
