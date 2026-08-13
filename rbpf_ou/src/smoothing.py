@@ -48,9 +48,12 @@ _EIGEN_FLOOR = 1e-4
 # the OU half-life is t_1/2 = ln(2)/kappa. A large kappa (e.g. 0.58 from a
 # previous run) gives a half-life of ~1.2 days, so a team's attack/defence
 # reverts to the mean almost immediately between matches — destroying the
-# persistence that makes rankings meaningful. To force a half-life of at
-# least one week we need kappa <= ln(2)/7 ~= 0.099, so we cap it at 0.1.
-_KAPPA_MAX = 0.1
+# persistence that makes rankings meaningful. Even kappa = 0.08 (half-life
+# ~8.6 days) is too fast: the filtered states bounce around per-match noise
+# instead of settling into a stable ranking. To make team quality persist
+# over a tournament (weeks to months), we cap kappa at 0.02, giving a
+# half-life of ln(2)/0.02 ~= 35 days.
+_KAPPA_MAX = 0.02
 
 
 # ---------------------------------------------------------------------------
