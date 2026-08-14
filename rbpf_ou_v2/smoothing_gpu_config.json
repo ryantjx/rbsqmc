@@ -1,7 +1,7 @@
 {
   "N": 100,
-  "n_steps": 200,
-  "learning_rate": 0.001,
+  "n_steps": 25,
+  "learning_rate": 0.01,
   "start_date": "1950-01-01",
   "end_date": "2025-12-31",
   "teams": "ACTIVE_TEAMS",
