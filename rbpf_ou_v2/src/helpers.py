@@ -7,9 +7,16 @@ import os
 import pandas as pd
 
 
-TEAM_CORRELATION_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "data", "worldcup2026_team_regions.json"
-)
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+
+# Regional-correlation config files. ``worldcup2026_team_regions.json`` covers
+# only the 48 World Cup teams; ``active_teams.json`` also carries a complete
+# ``regions`` map for all ~228 ACTIVE national teams. The regional prior is
+# only meaningful when *every* team has a region, so we auto-select the config
+# with the best coverage of the requested team set (preferring full coverage).
+TEAM_CORRELATION_PATH = os.path.join(_DATA_DIR, "worldcup2026_team_regions.json")
+ACTIVE_TEAMS_REGION_PATH = os.path.join(_DATA_DIR, "active_teams.json")
+_REGION_CONFIG_CANDIDATES = [TEAM_CORRELATION_PATH, ACTIVE_TEAMS_REGION_PATH]
 
 
 # Smallest eigenvalue floor for reconstructed / jittered covariance matrices.
@@ -108,19 +115,10 @@ def load_params(path: str) -> EMParams:
     return params_from_dict(d)
 
 
-def _regional_correlation_matrix(
-    team_id_to_name: dict[int, str],
-    path: str = TEAM_CORRELATION_PATH,
-) -> jnp.ndarray:
-    """Build a team correlation matrix from a regional JSON specification.
-
-    Returns the correlation matrix ``C0`` (diagonal 1). The absolute variance
-    scale is not part of the prior: ``gamma_0`` is initialized at the correlation
-    scale and the model estimates the true covariance from the data.
-    """
+def _load_regional_config(path: str) -> tuple[dict[str, list[str]], float, float]:
+    """Load a regional config file and return (region->teams, within, between)."""
     with open(path, "r") as f:
         config = json.load(f)
-
     regions = config["regions"]
     region_by_team = {
         team: region
@@ -128,7 +126,64 @@ def _regional_correlation_matrix(
         for team in teams
     }
     if len(region_by_team) != sum(len(teams) for teams in regions.values()):
-        raise ValueError("A team appears in more than one regional group")
+        raise ValueError(f"{path}: a team appears in more than one regional group")
+    correlation = config["correlation"]
+    return regions, float(correlation["within_region"]), float(correlation["between_regions"])
+
+
+def _pick_regional_config(
+    team_id_to_name: dict[int, str],
+    candidates: list[str] = _REGION_CONFIG_CANDIDATES,
+) -> tuple[dict[str, list[str]], float, float]:
+    """Pick the regional config with the best coverage of the requested teams.
+
+    The regional prior is only meaningful when every team has an assigned
+    region. Among the candidate config files we choose the one that covers the
+    most of the requested ``team_id_to_name`` (falling back to the first config
+    in a tie, e.g. the 48-team file when the team set is a subset of it). This
+    makes ``active_teams.json``'s full ~228-team region map the natural choice
+    for ACTIVE_TEAMS runs instead of silently dropping 182 teams to the baseline
+    between-region correlation.
+    """
+    team_names = {team_id_to_name[i] for i in range(len(team_id_to_name))}
+    best: tuple[str, dict[str, list[str]], float, float] | None = None
+    best_missing: int | None = None
+    for path in candidates:
+        regions, within, between = _load_regional_config(path)
+        covered = set().union(*(set(teams) for teams in regions.values()))
+        missing = team_names - covered
+        if best is None or best_missing is None or len(missing) < best_missing:
+            best = (path, regions, within, between)
+            best_missing = len(missing)
+        if best_missing == 0:
+            break  # full coverage; no better config exists
+    assert best is not None, "no regional config candidates provided"
+    return best[1], best[2], best[3]
+
+
+def _regional_correlation_matrix(
+    team_id_to_name: dict[int, str],
+    path: str | None = None,
+) -> jnp.ndarray:
+    """Build a team correlation matrix from a regional JSON specification.
+
+    Returns the correlation matrix ``C0`` (diagonal 1). The absolute variance
+    scale is not part of the prior: ``gamma_0`` is initialized at the correlation
+    scale and the model estimates the true covariance from the data.
+
+    If ``path`` is given, that config is used verbatim; otherwise the config
+    with the best coverage of ``team_id_to_name`` is selected automatically
+    (see ``_pick_regional_config``).
+    """
+    if path is not None:
+        regions, within, between = _load_regional_config(path)
+    else:
+        regions, within, between = _pick_regional_config(team_id_to_name)
+    region_by_team = {
+        team: region
+        for region, teams in regions.items()
+        for team in teams
+    }
 
     team_names = [team_id_to_name[i] for i in range(len(team_id_to_name))]
     # Teams not present in the regional config (e.g. defunct/non-FIFA sides)
@@ -139,10 +194,6 @@ def _regional_correlation_matrix(
             f"Warning: {len(missing)} teams not in regional config; "
             f"using baseline between-region correlation: {missing}"
         )
-
-    correlation = config["correlation"]
-    within = float(correlation["within_region"])
-    between = float(correlation["between_regions"])
 
     C0 = jnp.full((len(team_names), len(team_names)), between)
     C0 = C0.at[jnp.diag_indices(len(team_names))].set(1.0)
@@ -157,19 +208,22 @@ def _regional_correlation_matrix(
 
 
 def _project_psd_correlation(C: jnp.ndarray) -> jnp.ndarray:
-    """Project a symmetric matrix onto the PSD cone and renormalize to a
-    correlation matrix (diagonal 1).
+    """Project a symmetric matrix onto the positive-definite cone and renormalize
+    to a correlation matrix (diagonal 1).
 
     A correlation matrix must be positive-semidefinite (all eigenvalues >= 0).
-    A strongly negative ``between_regions`` value (e.g. -0.4 with 6 regions)
+    A strongly negative ``between_regions`` value (e.g. -0.3 with 6 regions)
     can make the raw regional matrix indefinite (min eigenvalue < 0), which
     breaks the Cholesky factorization used by the filter. This clamps negative
-    eigenvalues to 0, then rescales each row/column so the diagonal is 1,
-    yielding a valid correlation matrix.
+    eigenvalues to a small **positive** floor ``_EIGEN_FLOOR`` (not 0), so the
+    result is strictly positive-definite and stays PD even after float32
+    rounding during the diagonal renormalization (clamping to exactly 0.0 can
+    leave a tiny negative eigenvalue, e.g. -1.5e-6, which re-triggers the
+    Cholesky instability). Then rescales each row/column so the diagonal is 1.
     """
     C = 0.5 * (C + C.T)  # symmetrize
     eigvals, eigvecs = jnp.linalg.eigh(C)
-    eigvals = jnp.maximum(eigvals, 0.0)  # clamp to PSD cone
+    eigvals = jnp.maximum(eigvals, _EIGEN_FLOOR)  # strictly PD (floor > 0)
     C_psd = (eigvecs * eigvals) @ eigvecs.T
     # Renormalize the diagonal to 1 (correlation scale).
     d = jnp.sqrt(jnp.diag(C_psd))

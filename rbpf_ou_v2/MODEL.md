@@ -470,3 +470,22 @@ Cholesky PD in GPU float32 at 228 teams. Replaced the fixed jitter with a
 `1e-4 * max(1, max|diag|)`, differentiable, condition number ≤ ~1e4). If the
 float32 floor still isn't enough, the definitive fix is float64
 (`jax_enable_x64=True`). See §8 Finding 2 for the full write-up.
+
+**2026-08-14 — ACTIVE_TEAMS regional prior now covers all teams (fixes the
+"182 teams not in regional config" warning).** When running `ACTIVE_TEAMS`
+(~228 teams), `_regional_correlation_matrix` was hardwired to the **48-team**
+`worldcup2026_team_regions.json`, so 182 teams silently fell back to the
+baseline between-region correlation and the prior lost its regional structure.
+Fix in `helpers.py`:
+
+- `_pick_regional_config` auto-selects the regional config with the **best
+  coverage** of the requested team set among `worldcup2026_team_regions.json`
+  and `active_teams.json` (which already carries a complete ~228-team `regions`
+  map), preferring full coverage.
+- `_project_psd_correlation` now clamps eigenvalues to `_EIGEN_FLOOR > 0`
+  (was `0.0`), so the projected correlation matrix is strictly PD and stays PD
+  after float32 renormalization (clamping to 0 left a `-1.5e-6` eigenvalue that
+  could re-trigger the Cholesky instability).
+
+After the fix, all 230 ACTIVE teams get a regional assignment (no warning), and
+`gamma_0` is strictly PD (eigmin ~8.7e-5, Cholesky factors cleanly).
