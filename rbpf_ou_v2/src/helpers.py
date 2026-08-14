@@ -12,6 +12,32 @@ TEAM_CORRELATION_PATH = os.path.join(
 )
 
 
+# Smallest eigenvalue floor for reconstructed / jittered covariance matrices.
+# Must match train.py's ``_EIGEN_FLOOR`` so every PSD path uses the same scale.
+#
+# float32 epsilon is ~1e-7. If a matrix's smallest eigenvalue is near that
+# (e.g. ~1e-8, which is what ``_psd_from_cholesky``'s 1e-4 *diagonal* floor on
+# ``L`` leaves after ``L L^T`` squares it), then ``jnp.linalg.cholesky`` sees a
+# matrix that is effectively singular in float32 and returns NaN — and the GPU
+# (which computes in float32 by default) is far more likely to hit this than a
+# CPU XLA run with higher intermediate precision. Flooring eigenvalues at 1e-4
+# keeps the condition number <= ~1e4, which Cholesky factors robustly.
+_EIGEN_FLOOR = 1e-4
+
+
+def _scale_aware_jitter(A: jnp.ndarray) -> jnp.ndarray:
+    """A scale-aware diagonal jitter for a (near-)PSD matrix ``A``.
+
+    ``jitter = _EIGEN_FLOOR * max(1, max|diag(A)|)``. Adding ``jitter * I`` to a
+    (near-)PSD matrix makes its smallest eigenvalue >= jitter, guaranteeing a
+    condition number that ``jnp.linalg.cholesky`` can factor robustly in float32.
+    The floor is built with differentiable ops only (no eigendecomposition), so
+    it is safe to use *inside* the differentiable filter path.
+    """
+    scale = jnp.maximum(1.0, jnp.max(jnp.abs(jnp.diag(A))))
+    return _EIGEN_FLOOR * scale
+
+
 def kron_sample_psd(key, mean, A, B):
     """Sample from N(mean, A (x) B) without forming A (x) B.
 
@@ -24,12 +50,19 @@ def kron_sample_psd(key, mean, A, B):
     keeps the gradient through ``A``/``B`` well-defined, which the direct-GD
     trainer needs to learn ``gamma_0``/``B``. The jitter is small enough that
     zero-variance directions stay essentially at the mean.
+
+    The jitter is **scale-aware** (``_EIGEN_FLOOR * max(1, max|diag|)``) rather
+    than the fixed ``1e-6`` it historically used. At large team counts (e.g.
+    228 ACTIVE_TEAMS) ``gamma_0`` reconstructed from ``_psd_from_cholesky`` has
+    eigenvalues as small as ``1e-4**2 = 1e-8``, and a ``1e-6`` jitter was too
+    small to keep the ``M x M`` Cholesky positive-definite in GPU float32,
+    producing a NaN gradient at step 0 (finite on CPU, NaN on GPU).
     """
     M = A.shape[0]
     K = B.shape[0]
     mean_MK = mean.reshape(M, K)
-    A = 0.5 * (A + A.T) + 1e-6 * jnp.eye(M)
-    B = 0.5 * (B + B.T) + 1e-6 * jnp.eye(K)
+    A = 0.5 * (A + A.T) + _scale_aware_jitter(A) * jnp.eye(M)
+    B = 0.5 * (B + B.T) + _scale_aware_jitter(B) * jnp.eye(K)
     L_A = jnp.linalg.cholesky(A)
     L_B = jnp.linalg.cholesky(B)
     z = jax.random.normal(key, (M, K))

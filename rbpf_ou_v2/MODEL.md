@@ -405,6 +405,39 @@ top-5 / bottom-5 by total strength (attack+defence).
    fixed by jittering in `_cholesky_from_psd`, but the GPU still diverges at
    228 teams. **A100 is not the fix** — the instability is numerical, not
    memory-bound.
+
+   **Fix (2026-08-14) — scale-aware jitter.** The residual GPU divergence at
+   228 teams had a specific root cause. The free Cholesky factors are rebuilt
+   with `_psd_from_cholesky`, whose **diagonal** floor is `_EIGEN_FLOOR = 1e-4`
+   on `L`. Squaring (`L Lᵀ`) therefore leaves `gamma_0` with eigenvalues as
+   small as `1e-4² = 1e-8` — below float32 epsilon (~1e-7). Every downstream
+   PSD path then added only a **fixed `1e-6` jitter** before its Cholesky/pinv:
+   - `kron_sample_psd` (init + the 228×228 Cholesky in `_sample_psd_gaussian`)
+   - `_sample_psd_gaussian` (the observed-block sampler)
+   - `compute_gamma_trajectory`'s `pinv(gamma_EE)` (the Kalman gain)
+
+   On a CPU XLA run (higher intermediate precision) this survived; on GPU
+   float32 the `1e-6` jitter was too small to lift the `~1e-8` eigenvalue above
+   the Cholesky failure threshold, so the **gradient** (which backprops through
+   every one of these matrices over all T timesteps) produced NaN at step 0.
+
+   The fix replaces the fixed `1e-6` jitter with a **scale-aware jitter**
+   `_scale_aware_jitter(A) = 1e-4 * max(1, max|diag(A)|)`, applied uniformly in
+   `kron_sample_psd`, `_sample_psd_gaussian`, and the `compute_gamma_trajectory`
+   Kalman `pinv`. This floors the smallest eigenvalue at ~1e-4 (condition number
+   ≤ ~1e4, robustly Cholesky-factorable in float32) and is built only from
+   differentiable ops (no eigendecomposition), so it stays inside the
+   differentiable filter path. At the 48-team scale the effect is negligible
+   (diagonals are ~1, so the jitter is essentially the same 1e-4 scale as the
+   previous `_EIGEN_FLOOR`), but at 228 teams it keeps the Cholesky/pinv PD on
+   the GPU.
+
+   **If scale-aware jitter still doesn't converge at 228 teams**, the remaining
+   lever is **float64**: set `jax.config.update("jax_enable_x64", True)` (and
+   `jnp.linalg.cholesky`/`pinv` become exact at ~1e-16), which removes the
+   float32 rounding entirely at ~2× memory. The documented `-2e-8` negative
+   eigenvalue is a float32 artifact, so x64 is the definitive fix if the
+   float32 scale-aware floor proves insufficient.
 3. **Longer lookback (1950) improves fit but not rankings.** Δ log Z jumps to
    +501 (more data → better fit), but mean ll degrades to -3.68 and rankings
    are worse (Colombia, Uzbekistan, Tunisia top). More historical data
@@ -425,3 +458,15 @@ confirms: **more particles → better fit and better rankings**, with mean ll
 roughly flat around -3.4. N=5000 is a strong production choice; the marginal
 improvement over N=2000 is small, so N=2000–5000 is a reasonable operating
 range.
+
+**2026-08-14 — ACTIVE_TEAMS GPU instability fixed (scale-aware jitter).**
+Root-caused and fixed the 228-team GPU NaN described in §8 Finding 2: the free
+Cholesky factors rebuilt by `_psd_from_cholesky` leave `gamma_0` eigenvalues as
+small as `1e-4² = 1e-8` (below float32 epsilon), and the three downstream PSD
+paths (`kron_sample_psd`, `_sample_psd_gaussian`, and `compute_gamma_trajectory`'s
+Kalman `pinv`) each added only a **fixed `1e-6` jitter** — too small to keep the
+Cholesky PD in GPU float32 at 228 teams. Replaced the fixed jitter with a
+**scale-aware** `_scale_aware_jitter` (floors the smallest eigenvalue at
+`1e-4 * max(1, max|diag|)`, differentiable, condition number ≤ ~1e4). If the
+float32 floor still isn't enough, the definitive fix is float64
+(`jax_enable_x64=True`). See §8 Finding 2 for the full write-up.

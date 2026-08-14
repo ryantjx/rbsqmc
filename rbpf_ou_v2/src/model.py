@@ -7,7 +7,7 @@ from functools import partial
 
 from rbpf_ou_v2.src.bivariate_poisson import loglik
 from rbpf_ou_v2.src.data import get_results, FootballResults
-from rbpf_ou_v2.src.helpers import default_init_params, kron_sample_psd
+from rbpf_ou_v2.src.helpers import default_init_params, kron_sample_psd, _scale_aware_jitter
 from rbpf_ou_v2.src.utils import RBPFState, RBPFFootballResults, EMParams
 
 # Default to CPU locally, but allow the GPU pipeline to force a device via
@@ -62,8 +62,12 @@ def _sample_psd_gaussian(
     """
     covariance = 0.5 * (covariance + covariance.T)
     n = covariance.shape[0]
-    # Jitter to a strictly-PD matrix so the Cholesky gradient is finite.
-    covariance = covariance + 1e-6 * jnp.eye(n)
+    # Scale-aware jitter to a strictly-PD matrix so the Cholesky gradient is
+    # finite (an eigendecomposition-based sampler has a NaN gradient at the
+    # zero-variance boundary). A fixed 1e-6 jitter was too small to keep the
+    # Cholesky PD in GPU float32 at large dimensions; this floors the smallest
+    # eigenvalue at ~1e-4 * scale, which factors robustly.
+    covariance = covariance + _scale_aware_jitter(covariance) * jnp.eye(n)
     L = jnp.linalg.cholesky(covariance)
     noise = jax.random.normal(key, mean.shape)
     return mean + L @ noise
@@ -214,9 +218,13 @@ def compute_gamma_trajectory(
         gamma_RE = gamma_pred[:, obs_indices]
 
         # Handles both positive-definite and structurally singular gamma_EE.
-        # Jitter to a strictly-PD matrix so the pinv gradient is finite (the
-        # direct-GD trainer backprops through this Kalman gain).
-        gamma_EE = gamma_EE + 1e-6 * jnp.eye(2)
+        # Scale-aware jitter to a strictly-PD matrix so the pinv gradient is
+        # finite (the direct-GD trainer backprops through this Kalman gain).
+        # This runs for *every* timestep in a lax.scan over the whole match
+        # history, so it is the hottest PSD path at 228 teams; a scale-aware
+        # floor (instead of the old fixed 1e-6) keeps the 2x2 pinv stable in
+        # GPU float32 without affecting the conditioning of the result.
+        gamma_EE = gamma_EE + _scale_aware_jitter(gamma_EE) * jnp.eye(2)
         K = gamma_RE @ jnp.linalg.pinv(gamma_EE)
 
         gamma_updated = gamma_pred - K @ gamma_RE.T
