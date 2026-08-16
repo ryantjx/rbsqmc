@@ -170,6 +170,14 @@ def plot_top_filter_states(
         2, 1, figsize=(14, 9), sharex=True,
     )
 
+    # If the timestamps are datetime-like, format the x-axis as dates.
+    is_datetime = np.asarray(timestamps).dtype.kind in {"M", "O"}
+    if is_datetime:
+        import matplotlib.dates as mdates
+        attack_ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+        attack_ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        fig.autofmt_xdate()
+
     for team_idx, name, color in zip(top_indices, names, colors):
         attack_ax.plot(
             timestamps, filter_means[:, team_idx, 0],
@@ -188,7 +196,7 @@ def plot_top_filter_states(
     attack_ax.set_title(f"Top {top_n} Teams by Final Filtered {rank_label}")
     attack_ax.set_ylabel("Attack state")
     defense_ax.set_ylabel("Defense state")
-    defense_ax.set_xlabel("Time")
+    defense_ax.set_xlabel("Date" if is_datetime else "Time")
     for axis in (attack_ax, defense_ax):
         axis.grid(True, alpha=0.3)
         axis.legend(loc="best")
@@ -618,8 +626,15 @@ def plot_gd_performance(
     plt.close(fig)
 
 
-def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_path):
-    """Generate all plots and save them to the outputs/graphic directory."""
+def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_path,
+             timestamps=None):
+    """Generate all plots and save them to the outputs/graphic directory.
+
+    Args:
+        timestamps: optional x-axis values (e.g. match dates) for the
+            ``top_filter_states`` plot. If None, falls back to the filter's
+            numeric timestamps.
+    """
     os.makedirs(save_path, exist_ok=True)
     num_teams = len(team_id_to_name)
     plot_top_strengths(filtered_states, team_id_to_name,
@@ -627,6 +642,7 @@ def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_pa
                        save_path=os.path.join(save_path, "top_strengths.png"))
     plot_top_filter_states(filtered_states, team_id_to_name,
                            top_n=top_n,
+                           timestamps=timestamps,
                            save_path=os.path.join(save_path, "top_filter_states.png"))
     plot_correlation_matrix(augmented_results, team_id_to_name, num_teams=num_teams,
                             save_path=os.path.join(save_path, "correlation_matrix.png"))

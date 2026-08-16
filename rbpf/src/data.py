@@ -5,7 +5,8 @@ import numpy as np
 from typing import NamedTuple
 import jax
 from rbpf.src.utils import FootballResults
-from rbpf.src.helpers import to_jax_data
+from rbpf.src.helpers import generate_results_jax
+from datetime import datetime
 
 RAW_URL="https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")  # rbpf/data/
@@ -19,6 +20,31 @@ with open(WORLDCUP_2026_PATH) as f:
 with open(ACITVE_TEAMS_PATH) as f:
     ACTIVE_TEAMS: set[str] = set(json.load(f)['teams'])
 
+
+def _validate_one_match_per_team_per_day(data: pd.DataFrame) -> None:
+    """Raise when a team appears in more than one match on the same date."""
+    home_appearances = data[["date", "home_team"]].rename(
+        columns={"home_team": "team"}
+    )
+    away_appearances = data[["date", "away_team"]].rename(
+        columns={"away_team": "team"}
+    )
+    team_appearances = pd.concat(
+        [home_appearances, away_appearances],
+        ignore_index=True,
+    )
+
+    conflicts = team_appearances[
+        team_appearances.duplicated(subset=["date", "team"], keep=False)
+    ].sort_values(["date", "team"])
+
+    if not conflicts.empty:
+        raise ValueError(
+            "A team cannot play more than once on the same day:\n"
+            f"{conflicts.to_string(index=False)}"
+        )
+
+
 def get_results(
     start_date: str = "1872-11-30",  # date of first game
     end_date: str | None = None,
@@ -26,7 +52,7 @@ def get_results(
     include_friendly: bool = False,
     teams_only: set[str] | None = None,
     download: bool = False,
-) -> tuple[pd.DataFrame, FootballResults, dict[int, str]]:
+):
     """
     Fetch and process international football results.
 
@@ -44,9 +70,32 @@ def get_results(
         data = pd.read_csv(RAW_URL, date_format="%Y-%m-%d")
     else:
         data = pd.read_parquet(PARQUET_PATH)
-    # Ensure 'date' is parsed as datetime (parquet may store it as a string)
-    data["date"] = pd.to_datetime(data["date"])
 
+    start_datetime = pd.to_datetime(start_date)
+    end_datetime = pd.to_datetime(end_date) if end_date else None
+    data["date"] = pd.to_datetime(data["date"])
+    data.sort_values(by="date", inplace=True)
+    # filter data by date range
+    data = data[
+        (data["date"] >= start_datetime)
+        & (data["date"] <= end_datetime if end_datetime is not None else True)
+    ]
+    # filter data by max_goals
+    data = data[
+        (data["home_score"] <= max_goals) & (data["away_score"] <= max_goals)
+    ]
+    # filter out friendly matches if include_friendly is False
+    data["friendly"] = data["tournament"].str.contains(
+        "Friendly", case=False, na=False
+    )
+    # filter by teams_only if provided
+    if teams_only is not None:
+        data = data[
+            data["home_team"].isin(teams_only) & data["away_team"].isin(teams_only)
+        ]
+    if not include_friendly:
+        data = data[~data["friendly"]]
+    data = data.reset_index(drop=True)
     # Fix dates
     if data["date"].min() >= pd.Timestamp("2026-01-18"):
         data.loc[
@@ -55,55 +104,54 @@ def get_results(
             & (data["date"] == "2026-01-18"),
             ["home_score", "away_score"],
         ] = [0, 1]
-    # Fix Congo names
 
-    # Process time data into days since origin date
-    data = data[
-        (data["date"] >= start_date)
-        & (data["date"] <= end_date if end_date else True)
-    ]
-    data.sort_values(by="date", inplace=True)
-    data["timestamp"] = (data["date"] - data["date"].min()).dt.days
-    data["friendly"] = data["tournament"].str.contains(
-        "Friendly", case=False, na=False
-    )
-    if not include_friendly:
-        data = data[~data["friendly"]]
+    # future games have nan scores - fill with -1
     data[["home_score", "away_score"]] = (
         data[["home_score", "away_score"]].fillna(-1).astype(int)
     )
-    data = data[
-        (data["home_score"] <= max_goals) & (data["away_score"] <= max_goals)
-    ]
+    _validate_one_match_per_team_per_day(data)
 
-    if teams_only is not None:
-        data = data[
-            data["home_team"].isin(teams_only) & data["away_team"].isin(teams_only)
-        ]
-    data["timestamp_prev"] = data["timestamp"].shift(1).fillna(0).astype(int)
-    data = data.reset_index(drop=True)
-
+    # Create mapping of team names to integer IDs
     all_teams = pd.unique(data[["home_team", "away_team"]].values.ravel())
     # Create a stable mapping: team_name -> team_id
     team_name_to_id = {name: i for i, name in enumerate(sorted(all_teams))}
     team_id_to_name = {i: name for i, name in enumerate(sorted(all_teams))}
 
     # Assign integer IDs back to the dataframe
-    data["home_team_id"] = data["home_team"].map(team_name_to_id)
-    data["away_team_id"] = data["away_team"].map(team_name_to_id)
-    return data, to_jax_data(data), team_id_to_name
+    data["home_id"] = data["home_team"].map(team_name_to_id)
+    data["away_id"] = data["away_team"].map(team_name_to_id)
+
+    # timestamp is days since start_date (start_date is the reference point)
+    data["timestamp"] = (data["date"] - start_datetime).dt.days
+
+    # group by date and convert each matches to jax array
+    # then add in timestamp and timestamp_prev columns
+    df, football_results = generate_results_jax(data)
+
+    return df, football_results, team_id_to_name
 
 def main():
-    data, results, team_id_to_name = get_results(
-        start_date="2020-01-01", max_goals=8, download=True
+    df, results_jax, team_id_to_name = get_results(
+        start_date="2020-01-01", end_date="2026-12-31", max_goals=8, download=True
     )
     print("DataFrame head:")
-    print(data[['date', 'home_team', 'away_team', 'timestamp', 'timestamp_prev']].head())
-    print("\nFootballResults named tuple:")
-    print(results)
-    print("\nTeam ID to Name mapping:")
-    print(f"ID 1 : {team_id_to_name[1]}")
-    print(f"ID 2 : {team_id_to_name[2]}")
+    print(df[["date", "timestamp", "timestamp_prev", "matches"]].head(5))
+    last = df.iloc[-1]["matches"][-1]
+    print("Last match details:")
+    print("   Date:       ", df.iloc[-1]["date"])
+    print("   Timestamp:  ", df.iloc[-1]["timestamp"])
+    print("   Timestamp Prev: ", df.iloc[-1]["timestamp_prev"])
+    print("   Home Team:  ", last["home_team"])
+    print("   Away Team:  ", last["away_team"])
+    print("   Home Score: ", last["home_score"])
+    print("   Away Score: ", last["away_score"])
+    print("   Tournament: ", last["tournament"])
+    # print(df[['date', 'timestamp', 'timestamp_prev', 'matches']].tail(5))
+    # # print("\nFootballResults named tuple:")
+    # # print(results_jax)
+    # print("\nTeam ID to Name mapping:")
+    # print(f"ID 1 : {team_id_to_name[1]}")
+    # print(f"ID 2 : {team_id_to_name[2]}")
 
 if __name__ == "__main__":
     main()

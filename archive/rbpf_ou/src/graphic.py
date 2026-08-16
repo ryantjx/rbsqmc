@@ -4,8 +4,13 @@ Functions:
   - plot_top_strengths: bar chart of top-N attack/defense strengths
   - plot_top_filter_states: attack and defense filter trajectories for top teams
   - plot_correlation_matrix: heatmap of between-team correlation at final state
+  - plot_correlation_extremes: bar chart of top/bottom team-pair correlations
   - plot_log_normalizing_constant: line plot of filter log marginal likelihood
   - plot_em_convergence: line plot of EM log marginal likelihood across epochs
+  - plot_log_likelihood_history: EM log-likelihood values and epoch changes
+  - plot_mstep_diagnostics: M-step objective per epoch (start vs best)
+  - plot_em_diagnostics: E-step score + M-step optimization score (full traces)
+  - plot_all: generate all plots and save them
 """
 
 import os
@@ -13,7 +18,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs", "graphic")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "outputs", "graphic")
 
 
 def plot_top_strengths(filtered_states, team_id_to_name, top_n=10,
@@ -66,11 +71,10 @@ def plot_top_strengths(filtered_states, team_id_to_name, top_n=10,
     ax3.set_title(f"Top {top_n} Total Strengths")
     ax3.invert_yaxis()
 
-    # plt.tight_layout()
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    # plt.show()
+    plt.close(fig)
 
 
 def plot_top_filter_states(
@@ -83,9 +87,9 @@ def plot_top_filter_states(
 ):
     """Plot attack and defense filtered states over time for the top teams.
 
-    Teams are selected using their final filtered posterior mean.  Particle
+    Teams are selected using their final filtered posterior mean. Particle
     log weights are used when they are available; otherwise the particle mean
-    is used.  The selected teams are then shown in both the attack and defense
+    is used. The selected teams are then shown in both the attack and defense
     panels so their two state components can be compared directly.
 
     Args:
@@ -96,9 +100,7 @@ def plot_top_filter_states(
         top_n: number of teams to plot.
         rank_by: final state component used to select teams: ``"attack"``,
             ``"defense"``, or ``"total"`` (attack + defense).
-        timestamps: optional x-axis values. If omitted, timestamps from
-            ``filtered_states.model_inputs`` are used when they align with
-            the state history; otherwise integer time steps are used.
+        timestamps: optional x-axis values.
         save_path: if given, save the figure to this path.
 
     Returns:
@@ -120,9 +122,6 @@ def plot_top_filter_states(
     if rank_by not in {"attack", "defense", "total"}:
         raise ValueError("rank_by must be 'attack', 'defense', or 'total'")
 
-    # Compute the filtered posterior mean at every time step.  The fallback
-    # keeps this helper usable with lightweight state objects that only expose
-    # particles.x (and matches the convention used by plot_top_strengths).
     log_weights = np.asarray(getattr(filtered_states, "log_weights", None))
     if log_weights.shape == (n_steps, n_particles):
         finite_log_weights = np.where(np.isfinite(log_weights), log_weights, -np.inf)
@@ -203,20 +202,34 @@ def plot_top_filter_states(
     return fig, (attack_ax, defense_ax)
 
 
-def plot_correlation_matrix(augmented_results, team_id_to_name, save_path=os.path.join(OUTPUT_DIR, "correlation_matrix.png")):
+def _team_correlation_from_gamma(gamma_final):
+    """Normalize an (M, M) team covariance to a correlation matrix.
+
+    With the Kronecker structure, ``gamma_t`` is already the ``M x M`` team
+    covariance (the attack/defence factor ``B`` is shared and does not affect
+    between-team correlation). We normalize its diagonal to a correlation.
+    """
+    std = np.sqrt(np.diag(gamma_final))
+    std_safe = np.where(std > 1e-10, std, 1.0)
+    corr = gamma_final / np.outer(std_safe, std_safe)
+    corr = np.clip(corr, -1, 1)
+    return corr, std
+
+
+def plot_correlation_matrix(augmented_results, team_id_to_name, num_teams=None,
+                            save_path=os.path.join(OUTPUT_DIR, "correlation_matrix.png")):
     """Heatmap of between-team correlation matrix at final timestep.
 
     Args:
         augmented_results: RBPFFootballResults with gamma_t shape (T+1, M, M)
         team_id_to_name: dict mapping team_id -> team name
+        num_teams: number of teams (inferred from team_id_to_name if None)
         save_path: if given, save figure to this path
     """
+    if num_teams is None:
+        num_teams = len(team_id_to_name)
     gamma_final = np.array(augmented_results.gamma_t[-1])  # (M, M)
-
-    std = np.sqrt(np.diag(gamma_final))
-    std_safe = np.where(std > 1e-10, std, 1.0)
-    corr = gamma_final / np.outer(std_safe, std_safe)
-    corr = np.clip(corr, -1, 1)
+    corr, std = _team_correlation_from_gamma(gamma_final)
 
     active = std > 1e-10
     active_idx = np.where(active)[0]
@@ -231,14 +244,14 @@ def plot_correlation_matrix(augmented_results, team_id_to_name, save_path=os.pat
     ax.set_yticklabels(names, fontsize=6)
     ax.set_title("Team Correlation Matrix (Final State)")
     fig.colorbar(im, ax=ax, label="Correlation")
-    # plt.tight_layout()
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    # plt.show()
+    plt.close(fig)
 
 
 def plot_correlation_extremes(augmented_results, team_id_to_name, top_n=5,
+                              num_teams=None,
                               save_path=os.path.join(OUTPUT_DIR, "correlation_extremes.png")):
     """Bar chart of top-N and bottom-N team pair correlations at final timestep.
 
@@ -246,14 +259,13 @@ def plot_correlation_extremes(augmented_results, team_id_to_name, top_n=5,
         augmented_results: RBPFFootballResults with gamma_t shape (T+1, M, M)
         team_id_to_name: dict mapping team_id -> team name
         top_n: number of pairs to show for highest and lowest correlations
+        num_teams: number of teams (inferred from team_id_to_name if None)
         save_path: if given, save figure to this path
     """
+    if num_teams is None:
+        num_teams = len(team_id_to_name)
     gamma_final = np.array(augmented_results.gamma_t[-1])  # (M, M)
-
-    std = np.sqrt(np.diag(gamma_final))
-    std_safe = np.where(std > 1e-10, std, 1.0)
-    corr = gamma_final / np.outer(std_safe, std_safe)
-    corr = np.clip(corr, -1, 1)
+    corr, std = _team_correlation_from_gamma(gamma_final)
 
     active = std > 1e-10
     active_idx = np.where(active)[0]
@@ -272,7 +284,6 @@ def plot_correlation_extremes(augmented_results, team_id_to_name, top_n=5,
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-    # Top correlations
     labels = [f"{team_id_to_name[i]} / {team_id_to_name[j]}" for _, i, j in top_pairs]
     vals = [c for c, _, _ in top_pairs]
     ax1.barh(labels, vals, color="darkred")
@@ -280,7 +291,6 @@ def plot_correlation_extremes(augmented_results, team_id_to_name, top_n=5,
     ax1.set_title(f"Top {top_n} Team Correlations")
     ax1.invert_yaxis()
 
-    # Bottom correlations
     labels = [f"{team_id_to_name[i]} / {team_id_to_name[j]}" for _, i, j in bottom_pairs]
     vals = [c for c, _, _ in bottom_pairs]
     ax2.barh(labels, vals, color="navy")
@@ -292,7 +302,7 @@ def plot_correlation_extremes(augmented_results, team_id_to_name, top_n=5,
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    # plt.show()
+    plt.close(fig)
 
 
 def plot_log_normalizing_constant(filtered_states, save_path=os.path.join(OUTPUT_DIR, "log_normalizing_constant.png")):
@@ -310,11 +320,10 @@ def plot_log_normalizing_constant(filtered_states, save_path=os.path.join(OUTPUT
     ax.set_ylabel("Log Normalizing Constant")
     ax.set_title("Filter Log Marginal Likelihood")
     ax.grid(True, alpha=0.3)
-    # plt.tight_layout()
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    # plt.show()
+    plt.close(fig)
 
 
 def plot_em_convergence(log_marginal_history, save_path=os.path.join(OUTPUT_DIR, "em_convergence.png")):
@@ -332,11 +341,10 @@ def plot_em_convergence(log_marginal_history, save_path=os.path.join(OUTPUT_DIR,
     ax.set_ylabel("Log Marginal Likelihood")
     ax.set_title("EM Convergence")
     ax.grid(True, alpha=0.3)
-    # plt.tight_layout()
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    # plt.show()
+    plt.close(fig)
 
 
 def plot_log_likelihood_history(
@@ -398,6 +406,7 @@ def plot_log_likelihood_history(
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
+
 def plot_mstep_diagnostics(
     loss_start: list[float],
     loss_end: list[float],
@@ -408,9 +417,8 @@ def plot_mstep_diagnostics(
 
     The M-step minimizes ``loss = -log L`` (the negative log-likelihood of the
     smoothed states under the current parameters). For each EM epoch this shows
-    the objective at the *start* of the M-step (i.e. evaluated at the previous
-    epoch's returned params) and at the *best point reached* during that epoch's
-    gradient loop, plus the within-epoch improvement.
+    the objective at the *start* of the M-step and at the *best point reached*
+    during that epoch's gradient loop, plus the within-epoch improvement.
 
     Args:
         loss_start: M-step objective evaluated at the start of each epoch.
@@ -438,7 +446,6 @@ def plot_mstep_diagnostics(
     ax_value.grid(True, alpha=0.3)
     ax_value.legend(loc="best")
 
-    # Overlay E-step log marginal likelihood on a twin axis if provided.
     if log_marginal_history is not None and len(log_marginal_history) == len(epochs):
         ax_log = ax_value.twinx()
         ax_log.plot(epochs, np.asarray(log_marginal_history), "s-", color="tab:green",
@@ -447,7 +454,6 @@ def plot_mstep_diagnostics(
         ax_log.tick_params(axis="y", labelcolor="tab:green")
         ax_log.legend(loc="lower left")
 
-    # Annotate the within-epoch change on the loss curve.
     for ep, chg in zip(epochs, changes):
         ax_value.annotate(
             f"{chg:.0f}", (ep, loss_end[ep - 1]),
@@ -461,19 +467,93 @@ def plot_mstep_diagnostics(
     plt.close(fig)
 
 
+def plot_em_diagnostics(
+    log_marginal_history: list[float],
+    mstep_loss_start: list[float],
+    mstep_loss_end: list[float],
+    mstep_loss_trace: list[list[float]],
+    output_path: str = os.path.join(OUTPUT_DIR, "em_diagnostics.png"),
+) -> None:
+    """Comprehensive EM diagnostics: E-step score + M-step optimization score.
+
+    Two stacked panels:
+
+    1. **E-step score** (top): the log marginal likelihood ``log p(y | theta)``
+       evaluated by the particle filter at each EM epoch. This is the quantity
+       EM is supposed to monotonically increase (up to MC noise). A rising
+       trend confirms the E-step is improving the model fit.
+
+    2. **M-step optimization score** (bottom): the full per-gradient-step loss
+       trajectory ``-log L`` for every epoch, overlaid. Each epoch's M-step
+       should descend from its start value to a lower best value; the gap
+       between consecutive epochs' start values shows the E-step's contribution.
+
+    Args:
+        log_marginal_history: per-epoch E-step log marginal likelihood.
+        mstep_loss_start: M-step objective at the start of each epoch.
+        mstep_loss_end: best M-step objective reached in each epoch.
+        mstep_loss_trace: full per-gradient-step loss trajectory per epoch.
+        output_path: where to save the figure.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    epochs = np.arange(1, len(log_marginal_history) + 1)
+    lm = np.asarray(log_marginal_history, dtype=float)
+    loss_start = np.asarray(mstep_loss_start, dtype=float)
+    loss_end = np.asarray(mstep_loss_end, dtype=float)
+
+    fig, (ax_estep, ax_mstep) = plt.subplots(
+        2, 1, figsize=(10, 9), sharex=True,
+        gridspec_kw={"height_ratios": [1, 1.4]},
+    )
+
+    # --- Panel 1: E-step score (log marginal likelihood) ---
+    ax_estep.plot(epochs, lm, "o-", color="tab:blue", linewidth=1.8, markersize=6,
+                  label="E-step log marginal L")
+    ax_estep.set_ylabel("E-step score\n(log marginal likelihood)")
+    ax_estep.grid(True, alpha=0.3)
+    ax_estep.legend(loc="best")
+    ax_estep.set_title("EM diagnostics: E-step score and M-step optimization")
+
+    # --- Panel 2: M-step optimization score (full gradient traces) ---
+    cmap = plt.get_cmap("viridis")
+    n_epochs = len(mstep_loss_trace)
+    for i, trace in enumerate(mstep_loss_trace):
+        trace = np.asarray(trace, dtype=float)
+        color = cmap(i / max(n_epochs - 1, 1))
+        ax_mstep.plot(trace, "-", color=color, linewidth=1.0,
+                      label=f"epoch {i + 1}" if i in (0, n_epochs - 1) else None)
+    # Mark start/end of each epoch's M-step.
+    ax_mstep.plot(epochs - 1, loss_start, "o", color="tab:red", markersize=5,
+                  label="M-step loss (start)")
+    ax_mstep.plot(epochs - 1, loss_end, "s", color="tab:green", markersize=5,
+                  label="M-step loss (best)")
+    ax_mstep.set_xlabel("M-step gradient step (epochs overlaid)")
+    ax_mstep.set_ylabel("M-step objective (-log L)")
+    ax_mstep.grid(True, alpha=0.3)
+    ax_mstep.legend(loc="best", fontsize=8)
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_path):
     """Generate all plots and save them to the outputs/graphic directory."""
     os.makedirs(save_path, exist_ok=True)
+    num_teams = len(team_id_to_name)
     plot_top_strengths(filtered_states, team_id_to_name,
                        top_n=top_n,
                        save_path=os.path.join(save_path, "top_strengths.png"))
     plot_top_filter_states(filtered_states, team_id_to_name,
                            top_n=top_n,
                            save_path=os.path.join(save_path, "top_filter_states.png"))
-    plot_correlation_matrix(augmented_results, team_id_to_name,
+    plot_correlation_matrix(augmented_results, team_id_to_name, num_teams=num_teams,
                             save_path=os.path.join(save_path, "correlation_matrix.png"))
     plot_log_normalizing_constant(filtered_states,
                                   save_path=os.path.join(save_path, "log_normalizing_constant.png"))
     plot_correlation_extremes(augmented_results, team_id_to_name,
-                              top_n=top_n,
+                              top_n=top_n, num_teams=num_teams,
                               save_path=os.path.join(save_path, "correlation_extremes.png"))

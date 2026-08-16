@@ -126,6 +126,7 @@ def main():
     )
     plot_top_filter_states(
         filtered_states, team_id_to_name, top_n=5,
+        timestamps=data["date"].values,
         save_path=os.path.join(args.output_dir, "top_filter_states.png"),
     )
     plot_correlation_matrix(

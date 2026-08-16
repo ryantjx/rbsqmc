@@ -1,17 +1,17 @@
-"""Run the RBPF EM on a GPU/TPU accelerator, locally or on Colab.
+"""Run the RBPF EM (random-walk model) on a GPU/TPU accelerator, locally or on Colab.
 
 This single script combines:
   * the Colab bootstrap (clone repo, install deps, verify accelerator), and
   * the EM core (forward-filter + RTS smoothing + M-step).
 
-It reuses the EM machinery from ``rbpf/src/smoothing.py`` (unchanged parameter
-set: estimates ``gamma_0``, ``B``, ``kappa``, ``alpha``, ``beta``; ``mean_0``
+It reuses the EM machinery from ``rbpf_ou/src/smoothing.py`` (parameter set:
+estimates ``gamma_0``, ``B``, ``alpha``, ``beta``; ``mean_0``
 fixed). Runtime configuration (N, epochs, dates, teams, hardware) is read from
 ``smoothing_gpu_config.json``.
 
-On Colab the repo is cloned/updated and the ``rbpf`` package is made importable
-*after* the bootstrap, which is why ``rbpf`` imports happen lazily inside the EM
-function rather than at module top level.
+On Colab the repo is cloned/updated and the ``rbpf_ou`` package is made
+importable *after* the bootstrap, which is why ``rbpf_ou`` imports happen
+lazily inside the EM function rather than at module top level.
 
 Usage:
     # Local (repo already present):
@@ -21,10 +21,11 @@ Usage:
     colab run --gpu T4 --keep smoothing_gpu.py [GPU_N] [START_DATE]
     colab run --tpu v5e1 --keep smoothing_gpu.py [GPU_N] [START_DATE]
 
-Writes (into ``rbpf/outputs_gpu``):
+Writes (into ``rbpf_ou/outputs_gpu``):
   - em_params_init.json
   - em_params_final.json
   - em_log_marginal_history.json
+  - em_mstep_diagnostics.json
 """
 
 import json
@@ -39,6 +40,7 @@ import time
 # ``colab run`` executes this file as notebook cells, where ``__file__`` is
 # undefined. Fall back to the current working directory in that case.
 _HERE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+# Repo root is the parent of the rbpf_ou package directory (e.g. .../rbsqmc).
 _REPO_ROOT = os.path.dirname(_HERE)
 # Ensure the repo root is importable even when this file is run directly as a
 # script (in which case sys.path[0] is the script's own directory, not the root).
@@ -46,49 +48,49 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 REPO_DIR = "/content/rbsqmc"
-RBPF_DIR = os.path.join(REPO_DIR, "rbpf")
+TEST_DIR = os.path.join(REPO_DIR, "rbpf_ou")
 
 # Defaults so the module imports even when the config file is absent (which is
 # the case on a fresh Colab VM, where `colab run` uploads only this script).
 _DEFAULT_CONFIG = {
-    "N": 1000,
+    "N": 200,
     "n_epochs": 5,
-    "n_gradient_steps": 5,
+    "n_gradient_steps": 20,
     "learning_rate": 0.01,
     "start_date": "1950-01-01",
     "end_date": "2025-12-31",
-    "teams": "ACTIVE_TEAMS",
+    "teams": "WORLDCUP_2026_TEAMS",
     "max_goals": 8,
-    "output_dir": "rbpf/outputs_gpu",
+    "output_dir": "rbpf_ou/outputs_gpu",
     "hardware": "gpu",
     "gpu_type": "T4",
     "tpu_type": "v5e1",
     "colab_timeout": 3600,
     "repo_url": "https://github.com/ryantjx/rbsqmc.git",
 }
-CONFIG_PATH = os.path.join(_HERE, "smoothing_gpu_config.json")
+CONFIG_PATH = os.environ.get(
+    "RBSQMC_CONFIG", os.path.join(_HERE, "smoothing_gpu_config.json")
+)
 
 
 def _candidate_config_paths() -> list[str]:
     """Locations to look for the config file, in priority order.
 
-    ``_HERE`` is the directory of this uploaded script (used locally). After
-    ``bootstrap`` clones the repo on Colab, the config also lives at
-    ``RBPF_DIR``; checking both lets us pick up the committed config.
+    On Colab, ``colab run`` uploads this script to ``/content/`` and may leave a
+    *stale* ``/content/smoothing_gpu_config.json`` from a previous run. The
+    committed config in the cloned repo (``TEST_DIR``) is authoritative, so it
+    is checked FIRST. ``CONFIG_PATH`` (the uploaded script's directory) is only
+    a fallback for local runs where the repo config is not present.
     """
-    paths = [CONFIG_PATH]
-    if os.path.abspath(RBPF_DIR) != os.path.abspath(_HERE):
-        paths.append(os.path.join(RBPF_DIR, "smoothing_gpu_config.json"))
+    paths = []
+    if os.path.abspath(TEST_DIR) != os.path.abspath(_HERE):
+        paths.append(os.path.join(TEST_DIR, "smoothing_gpu_config.json"))
+    paths.append(CONFIG_PATH)
     return paths
 
 
 def _load_config() -> dict:
-    """Load the config JSON, falling back to defaults if it is unavailable.
-
-    On a fresh Colab VM the config file is not present until the repo has been
-    cloned (in ``bootstrap``), so we must tolerate it being missing here and
-    re-load it once the repo is on disk.
-    """
+    """Load the config JSON, falling back to defaults if it is unavailable."""
     for path in _candidate_config_paths():
         if os.path.exists(path):
             with open(path, "r") as _f:
@@ -160,7 +162,7 @@ def is_colab() -> bool:
 
 
 def bootstrap():
-    """Clone/update the repo, install deps, and cd into the rbpf package dir.
+    """Clone/update the repo, install deps, and cd into the test package dir.
 
     Only meaningful on a fresh Colab VM. On a local checkout (repo already
     present) this is effectively a no-op except for dependency install.
@@ -172,8 +174,12 @@ def bootstrap():
     log("=" * 60)
 
     if os.path.exists(REPO_DIR):
-        log(f"Repo already exists at {REPO_DIR}, pulling latest...")
-        run(["git", "-C", REPO_DIR, "pull", "--rebase"], check=False)
+        log(f"Repo already exists at {REPO_DIR}, resetting to origin/main...")
+        # Force-reset to the latest remote commit so the committed config
+        # (dates, teams, GPU) always takes effect, even if a previous run left
+        # local changes or a stale checkout on the VM.
+        run(["git", "-C", REPO_DIR, "fetch", "origin"], check=False)
+        run(["git", "-C", REPO_DIR, "reset", "--hard", "origin/main"], check=False)
     else:
         log(f"Cloning {REPO_URL} → {REPO_DIR}")
         run(["git", "clone", REPO_URL, REPO_DIR])
@@ -190,8 +196,39 @@ def bootstrap():
     os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
     log("Set XLA_PYTHON_CLIENT_PREALLOCATE=false, ALLOCATOR=platform")
 
-    # Let rbpf/src modules (which default to cpu) use the requested accelerator.
-    # GPU -> cuda, TPU -> tpu. Only set if the caller didn't already choose one.
+    if os.path.exists(TEST_DIR):
+        os.chdir(TEST_DIR)
+        # Make the cloned repo importable (``import rbpf`` needs the repo root,
+        # which is REPO_DIR on Colab, not the notebook's /content).
+        for p in (REPO_DIR, TEST_DIR):
+            if p not in sys.path:
+                sys.path.insert(0, p)
+    else:
+        os.chdir(_HERE)
+    log(f"Working directory: {os.getcwd()}")
+
+    # Remove any stale uploaded config at /content so the committed repo config
+    # (which is authoritative) is always used.
+    stale = os.path.join(_HERE, "smoothing_gpu_config.json")
+    if os.path.exists(stale) and os.path.abspath(stale) != os.path.abspath(
+        os.path.join(TEST_DIR, "smoothing_gpu_config.json")
+    ):
+        try:
+            os.remove(stale)
+            log(f"Removed stale uploaded config: {stale}")
+        except OSError as e:
+            log(f"WARNING: could not remove stale config {stale}: {e}")
+
+    # Reload the config now that the repo (and its config JSON) is on disk.
+    CONFIG = _load_config()
+    OUTPUT_DIR = os.path.join(_repo_root(), CONFIG["output_dir"])
+    log(f"Configuration reloaded from {CONFIG_PATH}")
+
+    # Let rbpf_ou/src modules (which default to cpu) use the requested
+    # accelerator. GPU -> cuda, TPU -> tpu. Only set if the caller didn't
+    # already choose one. This MUST happen after the config reload above so the
+    # committed repo config (hardware: tpu/gpu) is authoritative, not the stale
+    # pre-clone config.
     if "RBSQMC_PLATFORM" not in os.environ:
         if CONFIG["hardware"] == "tpu":
             os.environ["RBSQMC_PLATFORM"] = "tpu"
@@ -199,36 +236,18 @@ def bootstrap():
             os.environ["RBSQMC_PLATFORM"] = "cuda"
     log(f"RBSQMC_PLATFORM={os.environ.get('RBSQMC_PLATFORM')}")
 
-    if os.path.exists(RBPF_DIR):
-        os.chdir(RBPF_DIR)
-        # Make the cloned repo importable (``import rbpf`` needs the repo root,
-        # which is REPO_DIR on Colab, not the notebook's /content).
-        for p in (REPO_DIR, RBPF_DIR):
-            if p not in sys.path:
-                sys.path.insert(0, p)
-    else:
-        os.chdir(_HERE)
-    log(f"Working directory: {os.getcwd()}")
-
-    # Reload the config now that the repo (and its config JSON) is on disk,
-    # so the values that were committed to the repo take precedence over the
-    # in-script defaults used during the initial (config-less) import.
-    CONFIG = _load_config()
-    OUTPUT_DIR = os.path.join(_repo_root(), CONFIG["output_dir"])
-    log(f"Configuration reloaded from {CONFIG_PATH}")
-
 
 # ---------------------------------------------------------------------------
-# EM core (imports rbpf lazily so it works on a freshly-cloned Colab VM)
+# EM core (imports rbpf_ou lazily so it works on a freshly-cloned Colab VM)
 # ---------------------------------------------------------------------------
 def run_em(n_particles: int, start_date: str):
     import jax
     import jax.numpy as jnp
     import numpy as np
 
-    from rbpf.src.data import get_results, ACTIVE_TEAMS, WORLDCUP_2026_TEAMS
-    from rbpf.src.helpers import default_init_params, params_to_dict
-    from rbpf.src.smoothing import MAX_GOALS, run_EM
+    from rbpf_ou.src.data import get_results, ACTIVE_TEAMS, WORLDCUP_2026_TEAMS
+    from rbpf_ou.src.helpers import default_init_params, params_to_dict
+    from archive.rbpf_ou.src.smoothing_backward import MAX_GOALS, run_EM
 
     _TEAM_SETS = {
         "ACTIVE_TEAMS": ACTIVE_TEAMS,
@@ -240,6 +259,7 @@ def run_em(n_particles: int, start_date: str):
     print(f"JAX backend: {jax.default_backend()}")
     print(f"JAX devices: {jax.devices()}")
 
+    print("[EM] Loading data...")
     data, model_inputs, team_id_to_name = get_results(
         start_date=start_date,
         end_date=end_date,
@@ -247,14 +267,18 @@ def run_em(n_particles: int, start_date: str):
         teams_only=teams,
     )
     num_teams = len(team_id_to_name)
+    print(f"[EM] Loaded {len(data)} matches, {num_teams} teams, "
+          f"date=[{start_date}, {end_date}]")
     key = jax.random.PRNGKey(42)
+    print("[EM] Initializing parameters...")
     params = default_init_params(num_teams, team_id_to_name=team_id_to_name)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     with open(os.path.join(OUTPUT_DIR, "em_params_init.json"), "w") as f:
         json.dump(params_to_dict(params), f, indent=2)
+    print(f"[EM] Saved init params to {os.path.join(OUTPUT_DIR, 'em_params_init.json')}")
 
-    print(f"Running EM (N={n_particles}, n_epochs={CONFIG['n_epochs']}, "
+    print(f"[EM] Starting EM (N={n_particles}, n_epochs={CONFIG['n_epochs']}, "
           f"date=[{start_date}, {end_date}])")
 
     final_params, log_marginal_history, em_diagnostics = run_EM(
@@ -265,8 +289,10 @@ def run_em(n_particles: int, start_date: str):
         n_epochs=int(CONFIG["n_epochs"]),
         n_gradient_steps=int(CONFIG["n_gradient_steps"]),
         learning_rate=float(CONFIG["learning_rate"]),
+        n_trajectories=int(CONFIG.get("n_trajectories", 8)),
         key=key,
     )
+    print("[EM] EM run completed.")
 
     with open(os.path.join(OUTPUT_DIR, "em_params_final.json"), "w") as f:
         json.dump(params_to_dict(final_params), f, indent=2)
@@ -277,10 +303,16 @@ def run_em(n_particles: int, start_date: str):
     # per-gradient-step loss trajectory for every epoch) and a plot.
     mstep_start = np.asarray(em_diagnostics["mstep_loss_start"]).tolist()
     mstep_end = np.asarray(em_diagnostics["mstep_loss_end"]).tolist()
-    # Each entry of mstep_loss_trace is a list of loss values (one per gradient
-    # step). Early-stopped epochs may be shorter than n_gradient_steps.
     mstep_trace = [
         np.asarray(trace).tolist() for trace in em_diagnostics["mstep_loss_trace"]
+    ]
+    # ESS (effective sample size) per epoch: list of per-time-step (T,) arrays.
+    ess_history = [
+        np.asarray(ess).tolist() for ess in em_diagnostics["ess"]
+    ]
+    # Per-epoch complete-LL component means: list of (init, obs, transition).
+    ll_components = [
+        list(comp) for comp in em_diagnostics["ll_components"]
     ]
     with open(os.path.join(OUTPUT_DIR, "em_mstep_diagnostics.json"), "w") as f:
         json.dump(
@@ -288,11 +320,13 @@ def run_em(n_particles: int, start_date: str):
                 "mstep_loss_start": mstep_start,
                 "mstep_loss_end": mstep_end,
                 "mstep_loss_trace": mstep_trace,
+                "ess": ess_history,
+                "ll_components": ll_components,
             },
             f, indent=2,
         )
     try:
-        from rbpf.src.graphic import plot_mstep_diagnostics
+        from rbpf_ou.src.graphic import plot_mstep_diagnostics, plot_em_diagnostics
         plot_mstep_diagnostics(
             mstep_start,
             mstep_end,
@@ -301,6 +335,15 @@ def run_em(n_particles: int, start_date: str):
         )
         print("Saved M-step diagnostics plot to",
               os.path.join(OUTPUT_DIR, "mstep_diagnostics.png"))
+        plot_em_diagnostics(
+            log_marginal_history=log_marginal_history,
+            mstep_loss_start=mstep_start,
+            mstep_loss_end=mstep_end,
+            mstep_loss_trace=mstep_trace,
+            output_path=os.path.join(OUTPUT_DIR, "em_diagnostics.png"),
+        )
+        print("Saved EM diagnostics plot to",
+              os.path.join(OUTPUT_DIR, "em_diagnostics.png"))
     except Exception as e:  # non-fatal: plotting should not kill the run
         print("WARNING: could not save M-step diagnostics plot:", e)
 
@@ -356,18 +399,21 @@ def print_summary():
 def main():
     # Strip the --colab flag before positional-arg parsing.
     args = [a for a in sys.argv[1:] if a != "--colab"]
-    n_particles = int(args[0]) if args and args[0].isdigit() else int(CONFIG["N"])
-    start_date = (
-        args[1] if len(args) > 1 else str(CONFIG["start_date"])
-    )
 
     log("=" * 60)
     log("SMOOTHING RUNNER — STARTING")
-    log("  Reuses smoothing.py EM (gamma_0, B, kappa, alpha, beta; mean_0 fixed).")
+    log("  Reuses rbpf_ou/src/smoothing.py EM (gamma_0, B, alpha, beta; mean_0 fixed).")
     log("=" * 60)
 
     if is_colab():
         bootstrap()
+
+    # Read N and start_date AFTER bootstrap so the committed repo config
+    # (dates, teams, N) takes effect, not the stale pre-bootstrap CONFIG.
+    n_particles = int(args[0]) if args and args[0].isdigit() else int(CONFIG["N"])
+    start_date = (
+        args[1] if len(args) > 1 else str(CONFIG["start_date"])
+    )
 
     run_em(n_particles=n_particles, start_date=start_date)
 
@@ -378,4 +424,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

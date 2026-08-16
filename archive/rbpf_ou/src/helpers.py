@@ -1,6 +1,6 @@
 import jax
 
-from rbpf.src.utils import EMParams, FootballResults, RBPFFootballResults
+from archive.rbpf_ou.src.utils import EMParams, FootballResults, RBPFFootballResults
 import jax.numpy as jnp
 import json
 import os
@@ -10,6 +10,27 @@ import pandas as pd
 TEAM_CORRELATION_PATH = os.path.join(
     os.path.dirname(__file__), "..", "data", "worldcup2026_team_regions.json"
 )
+
+
+def kron_sample_psd(key, mean, A, B):
+    """Sample from N(mean, A (x) B) without forming A (x) B.
+
+    mean: (M*K,) flattened vec_C of an (M, K) matrix. A: (M, M), B: (K, K).
+    Returns (M*K,). Eigenvalues of A and B are clipped to >= 0 so observed
+    (zero-variance) teams stay exactly at their mean (PSD-aware).
+    """
+    M = A.shape[0]
+    K = B.shape[0]
+    mean_MK = mean.reshape(M, K)
+    eigvals_A, eigvecs_A = jnp.linalg.eigh(A)
+    eigvals_A = jnp.clip(eigvals_A, 0.0)
+    eigvals_B, eigvecs_B = jnp.linalg.eigh(B)
+    eigvals_B = jnp.clip(eigvals_B, 0.0)
+    z = jax.random.normal(key, (M, K))
+    Z_A = (eigvecs_A * jnp.sqrt(eigvals_A)[None, :]) @ z
+    X = Z_A @ (eigvecs_B * jnp.sqrt(eigvals_B)[None, :]).T
+    return (mean_MK + X).reshape(-1)
+
 
 def params_to_dict(params: EMParams) -> dict:
     """Convert EMParams to a JSON-serializable dict."""
@@ -48,11 +69,17 @@ def load_params(path: str) -> EMParams:
         d = json.load(f)
     return params_from_dict(d)
 
+
 def _regional_correlation_matrix(
-        team_id_to_name: dict[int, str],
-        path: str = TEAM_CORRELATION_PATH,
-    ) -> tuple[jnp.ndarray, float]:
-    """Build a team correlation matrix from a regional JSON specification."""
+    team_id_to_name: dict[int, str],
+    path: str = TEAM_CORRELATION_PATH,
+) -> jnp.ndarray:
+    """Build a team correlation matrix from a regional JSON specification.
+
+    Returns the correlation matrix ``C0`` (diagonal 1). The absolute variance
+    scale is not part of the prior: ``gamma_0`` is initialized at the correlation
+    scale and EM estimates the true covariance from the data.
+    """
     with open(path, "r") as f:
         config = json.load(f)
 
@@ -78,7 +105,6 @@ def _regional_correlation_matrix(
     correlation = config["correlation"]
     within = float(correlation["within_region"])
     between = float(correlation["between_regions"])
-    state_std = float(correlation["state_standard_deviation"])
 
     C0 = jnp.full((len(team_names), len(team_names)), between)
     C0 = C0.at[jnp.diag_indices(len(team_names))].set(1.0)
@@ -89,38 +115,70 @@ def _regional_correlation_matrix(
         for j, name_j in enumerate(team_names):
             if i != j and region_i == region_by_team.get(name_j):
                 C0 = C0.at[i, j].set(within)
-    return C0, state_std
+    return C0
+
+
+def _project_psd_correlation(C: jnp.ndarray) -> jnp.ndarray:
+    """Project a symmetric matrix onto the PSD cone and renormalize to a
+    correlation matrix (diagonal 1).
+
+    A correlation matrix must be positive-semidefinite (all eigenvalues >= 0).
+    A strongly negative ``between_regions`` value (e.g. -0.4 with 6 regions)
+    can make the raw regional matrix indefinite (min eigenvalue < 0), which
+    breaks the Cholesky factorization used by the filter and M-step. This
+    clamps negative eigenvalues to 0, then rescales each row/column so the
+    diagonal is 1, yielding a valid correlation matrix.
+    """
+    C = 0.5 * (C + C.T)  # symmetrize
+    eigvals, eigvecs = jnp.linalg.eigh(C)
+    eigvals = jnp.maximum(eigvals, 0.0)  # clamp to PSD cone
+    C_psd = (eigvecs * eigvals) @ eigvecs.T
+    # Renormalize the diagonal to 1 (correlation scale).
+    d = jnp.sqrt(jnp.diag(C_psd))
+    d = jnp.maximum(d, 1e-8)  # avoid division by zero
+    C_corr = C_psd / jnp.outer(d, d)
+    C_corr = 0.5 * (C_corr + C_corr.T)
+    return C_corr
 
 
 def default_init_params(
-        num_teams: int,
-        team_id_to_name: dict[int, str] | None = None,
-    ) -> EMParams:
-    """Generate default initial parameters.
+    num_teams: int,
+    team_id_to_name: dict[int, str] | None = None,
+) -> EMParams:
+    """Generate default initial parameters for the OU (scalar-phi AR(1)) model.
 
-    When a team-name mapping is supplied, use the regional correlation prior
-    from ``data/team_regions_all.json`` (active national teams). Otherwise
-    retain the exchangeable correlation prior for generic datasets.
+    The covariance is Kronecker-structured ``Sigma = gamma (x) B`` with a
+    *shared* attack/defence factor ``B``. We build:
+
+    - ``gamma_0``: team covariance initialized as the regional *correlation*
+      matrix ``C0`` (diagonal 1), projected onto the PSD cone so it is always
+      a valid correlation matrix. The absolute variance scale is unidentifiable
+      with ``scale`` (fixed at 1), so we initialize ``gamma_0`` at the
+      correlation scale and let EM estimate the true covariance from the data.
+    - ``B``:       shared ``2 x 2`` attack/defence covariance.
+    - ``kappa``:   scalar mean-reversion rate of the OU transition.
     """
+    rho_team = 0.03
     if team_id_to_name is not None:
         if len(team_id_to_name) != num_teams:
             raise ValueError("team_id_to_name must contain exactly num_teams entries")
-        C0, state_std = _regional_correlation_matrix(team_id_to_name)
-        sigmas = state_std * jnp.ones(num_teams)
+        C0 = _regional_correlation_matrix(team_id_to_name)
     else:
-        sigmas = 0.4 * jnp.ones(num_teams)
-        rho_team = 0.03
         C0 = (
             (1.0 - rho_team) * jnp.eye(num_teams)
             + rho_team * jnp.ones((num_teams, num_teams))
         )
-    D = jnp.diag(sigmas)
-    gamma_0 = D @ C0 @ D
+    # gamma_0 starts as the correlation matrix (diagonal 1), projected onto the
+    # PSD cone so it is always a valid correlation matrix; EM estimates the true
+    # covariance scale from the data.
+    gamma_0 = _project_psd_correlation(C0)
+
     cov_attack_defence = 0.2
     B = jnp.array([
-        [1.0,  cov_attack_defence],
-        [cov_attack_defence,  1.0],
+        [1.0, cov_attack_defence],
+        [cov_attack_defence, 1.0],
     ])
+
     return EMParams(
         mean_0=jnp.zeros((num_teams, 2)),
         gamma_0=gamma_0,
@@ -144,14 +202,16 @@ def to_jax_data(df: pd.DataFrame) -> FootballResults:
         away_score=jax.numpy.array(df["away_score"].values),
     )
 
+
 def generate_augmented_data(
     model_inputs: FootballResults,
     gamma_updated: jnp.ndarray,
     gamma_pred: jnp.ndarray,
-    kalman_gain: jnp.ndarray
+    kalman_gain: jnp.ndarray,
 ) -> RBPFFootballResults:
     """
-    Generate augmented data for the RBPF model, including the previous state and time difference.
+    Generate augmented data for the RBPF model, including the deterministic
+    team-covariance trajectory (filtered posterior, prediction, and Kalman gain).
     """
     return RBPFFootballResults(
         match_index_id=model_inputs.match_index_id,
@@ -163,5 +223,5 @@ def generate_augmented_data(
         away_score=model_inputs.away_score,
         gamma_t=gamma_updated,
         gamma_pred_t=gamma_pred,
-        kalman_gain_t=kalman_gain
+        kalman_gain_t=kalman_gain,
     )

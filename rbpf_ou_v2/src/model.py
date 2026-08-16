@@ -324,7 +324,8 @@ def main():
     import numpy as np
     from rbpf_ou_v2.src.graphic import plot_all
     path = os.path.join(os.path.dirname(__file__), "..", "outputs", "graphic")
-    plot_all(filtered_states, augmented_results, team_id_to_name, top_n=5, save_path=path)
+    plot_all(filtered_states, augmented_results, team_id_to_name, top_n=5,
+             save_path=path, timestamps=data["date"].to_numpy())
 
     # --- Save final filter states and full correlation matrix to outputs_gpu ---
     out_dir = os.path.join(os.path.dirname(__file__), "..", "outputs_gpu")

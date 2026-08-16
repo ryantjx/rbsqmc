@@ -4,11 +4,11 @@ import pandas as pd
 import numpy as np
 from typing import NamedTuple
 import jax
-from rbpf.src.utils import FootballResults
-from rbpf.src.helpers import to_jax_data
+from archive.rbpf_ou.src.utils import FootballResults
+from archive.rbpf_ou.src.helpers import to_jax_data
 
-RAW_URL="https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
-_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")  # rbpf/data/
+RAW_URL = "https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")  # rbpf_ou/data/
 PARQUET_PATH = os.path.join(_DATA_DIR, "results.parquet")
 WORLDCUP_2026_PATH = os.path.join(_DATA_DIR, "worldcup2026.json")
 ACITVE_TEAMS_PATH = os.path.join(_DATA_DIR, "active_teams.json")
@@ -18,6 +18,7 @@ with open(WORLDCUP_2026_PATH) as f:
 
 with open(ACITVE_TEAMS_PATH) as f:
     ACTIVE_TEAMS: set[str] = set(json.load(f)['teams'])
+
 
 def get_results(
     start_date: str = "1872-11-30",  # date of first game
@@ -55,7 +56,6 @@ def get_results(
             & (data["date"] == "2026-01-18"),
             ["home_score", "away_score"],
         ] = [0, 1]
-    # Fix Congo names
 
     # Process time data into days since origin date
     data = data[
@@ -93,6 +93,7 @@ def get_results(
     data["away_team_id"] = data["away_team"].map(team_name_to_id)
     return data, to_jax_data(data), team_id_to_name
 
+
 def main():
     data, results, team_id_to_name = get_results(
         start_date="2020-01-01", max_goals=8, download=True
@@ -104,6 +105,7 @@ def main():
     print("\nTeam ID to Name mapping:")
     print(f"ID 1 : {team_id_to_name[1]}")
     print(f"ID 2 : {team_id_to_name[2]}")
+
 
 if __name__ == "__main__":
     main()

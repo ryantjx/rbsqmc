@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run rbpf/smoothing_gpu.py on a Colab GPU.
+# Run rbpf_ou/smoothing_gpu.py on a Colab GPU.
 #
-# Reuses the EM machinery from rbpf/smoothing.py (unchanged parameter set:
-# estimates gamma_0, B, kappa, alpha, beta; mean_0 fixed) but runs with a
-# GPU-oriented configuration (more particles, more epochs, cleaner date range).
+# Reuses the EM machinery from rbpf_ou/src/smoothing.py (parameter set:
+# estimates gamma_0, B, alpha, beta; mean_0 fixed) but runs with a
+# GPU-oriented configuration.
 #
-# Usage:  ./run_smoothing_gpu_colab.sh
+# Usage:  ./run_smoothing_colab.sh
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG="${HERE}/smoothing_gpu_config.json"
@@ -24,12 +24,12 @@ print(c.get('$1', ''))
 "
 }
 
-# config output_dir is repo-root-relative (e.g. "rbpf/outputs_gpu").
+# config output_dir is repo-root-relative (e.g. "rbpf_ou/outputs_gpu").
 REMOTE_OUTPUTS="/content/rbsqmc/$(read_config output_dir)"
 LOCAL_OUTPUTS="${REPO_ROOT}/$(read_config output_dir)"
 # Full path to the script so `colab run` can upload it regardless of cwd.
 SCRIPT="${HERE}/smoothing_gpu.py"
-SESSION="${SESSION:-rbsqmc-gpu}"
+SESSION="${SESSION:-rbsqmc-test-gpu}"
 
 # Download init, final, and log marginal history
 OUTPUT_FILES=(
@@ -54,8 +54,8 @@ else
 fi
 
 echo "============================================================"
-echo "  COLAB SMOOTHING GPU — PRODUCTION RUN"
-echo "  Reuses smoothing.py EM (gamma_0, B, kappa, alpha, beta; mean_0 fixed)."
+echo "  COLAB SMOOTHING GPU — RANDOM-WALK MODEL TEST RUN"
+echo "  Reuses rbpf_ou/src/smoothing.py EM (gamma_0, B, alpha, beta; mean_0 fixed)."
 echo "  ${ACCEL_LABEL}, N=${GPU_N}, start_date=$(read_config start_date), n_epochs=$(read_config n_epochs), teams=$(read_config teams)"
 if [ "$(read_config high_ram)" = "true" ]; then
     echo "  High-RAM: ENABLED (note: set in the Colab UI — the CLI exposes no --high-ram flag)"
@@ -88,13 +88,9 @@ echo "--- Output files ---"
 ls -lh "${LOCAL_OUTPUTS}"/ 2>/dev/null || echo "  No output files found"
 echo ""
 
-# NOTE: final parameters + log-marginal history are already printed on the VM
-# by smoothing_gpu.py's print_summary(), so they are not repeated here.
-
 echo "[5/5] Running filter with trained params and producing graphics..."
 
-# Graphics go into the same outputs_gpu dir, under a `trained/` subfolder
-# (matching the archive convention), so all pipeline outputs stay together.
+# Graphics go into the same outputs_gpu dir, under a `trained/` subfolder.
 GRAPHIC_OUTDIR="${GRAPHIC_OUTDIR:-${LOCAL_OUTPUTS}/trained}"
 
 # The Colab runner writes em_params_final.json into the GPU output dir. Use it
@@ -111,8 +107,18 @@ if [ -f "$TRAINED_PARAMS" ]; then
         --output-dir "${GRAPHIC_OUTDIR}" ) || \
         echo "  WARNING: model_trained.py failed"
     echo "  Graphics written under ${GRAPHIC_OUTDIR}/"
+
+    # --- Prediction step (runs AFTER model_trained.py) ---
+    # Predict the 2026 World Cup group-stage fixtures from the trained params.
+    PREDICT_OUTDIR="${PREDICT_OUTDIR:-${LOCAL_OUTPUTS}/predictions}"
+    echo "  Prediction output: ${PREDICT_OUTDIR}"
+    ( cd "${REPO_ROOT}" && uv run python -u "${HERE}/model_predict.py" \
+        --params-path "${TRAINED_PARAMS}" \
+        --output-dir "${PREDICT_OUTDIR}" ) || \
+        echo "  WARNING: model_predict.py failed"
+    echo "  Predictions written under ${PREDICT_OUTDIR}/"
 else
-    echo "  WARNING: ${TRAINED_PARAMS} not found; skipping filter/graphics step"
+    echo "  WARNING: ${TRAINED_PARAMS} not found; skipping filter/graphics/prediction step"
 fi
 
 # --- Final status report ---
@@ -140,5 +146,14 @@ if [ -d "${GRAPHIC_OUTDIR}" ]; then
     done
 else
     echo "    [MISS] no graphics in ${GRAPHIC_OUTDIR}"
+fi
+echo ""
+echo "  Predictions:"
+if [ -d "${PREDICT_OUTDIR}" ]; then
+    for f in "${PREDICT_OUTDIR}"/*.json "${PREDICT_OUTDIR}"/*.csv; do
+        [ -f "$f" ] && echo "    [OK]   $(basename "${f}")"
+    done
+else
+    echo "    [MISS] no predictions in ${PREDICT_OUTDIR}"
 fi
 echo "============================================================"
