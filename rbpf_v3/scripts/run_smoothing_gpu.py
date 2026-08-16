@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -65,11 +66,27 @@ def is_colab() -> bool:
 
 def bootstrap() -> Path:
     """Clone/update the repository and install runtime dependencies."""
-    if REPO_DIR.exists():
+    if (REPO_DIR / ".git").is_dir():
         log(f"Using existing checkout at {REPO_DIR}")
-        run(["git", "pull", "--ff-only"], cwd=REPO_DIR)
+        run(["git", "-c", "http.version=HTTP/1.1", "pull", "--ff-only"], cwd=REPO_DIR)
     else:
-        run(["git", "clone", DEFAULT_CONFIG["repo_url"], str(REPO_DIR)])
+        last_error = None
+        for attempt in range(1, 4):
+            if REPO_DIR.exists():
+                shutil.rmtree(REPO_DIR)
+            try:
+                run([
+                    "git", "-c", "http.version=HTTP/1.1", "clone",
+                    "--depth", "1", "--single-branch", "--branch", "main",
+                    DEFAULT_CONFIG["repo_url"], str(REPO_DIR),
+                ])
+                last_error = None
+                break
+            except RuntimeError as error:
+                last_error = error
+                log(f"clone attempt {attempt}/3 failed")
+        if last_error is not None:
+            raise last_error
     run([
         sys.executable, "-m", "pip", "install", "-q",
         "jax[cuda12]==0.11.0", "cuthbert==0.0.14", "optax==0.2.8",
