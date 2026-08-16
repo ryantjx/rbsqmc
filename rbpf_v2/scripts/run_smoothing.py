@@ -97,8 +97,7 @@ def _validate_initial_params(params: EMParams, num_teams: int) -> None:
 
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
-    import time
-    def log(msg): print(f"[run_smoothing {time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    from rbpf_v2.src.utils import progress as log
     log("main: loading inputs (get_rbpf_results / prepare_results)...")
     frame, data, team_id_to_name, initial_params = _load_inputs(args)
     log(f"main: inputs loaded, {len(team_id_to_name)} teams, "

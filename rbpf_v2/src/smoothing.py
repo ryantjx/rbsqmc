@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import time
 from typing import NamedTuple
 
 import jax
@@ -13,12 +12,7 @@ from .bivariate_poisson import daily_loglik
 from .helpers import decode_EM_params, encode_EM_params, log_inverse_wishart_kernel
 from .kron import kron_logdet, kron_quad, rts_kron_terms, sample_kron_psd, symmetrize
 from .model import run_filter, systematic_resample
-from .utils import EMParams, ParticleMeans, SmoothedStates
-
-
-def _log(message: str) -> None:
-    """Timestamped, unbuffered progress log (visible with ``python -u``)."""
-    print(f"[smoothing {time.strftime('%H:%M:%S')}] {message}", flush=True)
+from .utils import EMParams, ParticleMeans, SmoothedStates, progress as _log
 
 
 class MCEMConfig(NamedTuple):

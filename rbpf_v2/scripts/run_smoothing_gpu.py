@@ -109,6 +109,9 @@ def main(argv=None) -> int:
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/rbpf_v2_matplotlib")
+    progress_path = repo_root / config["output_dir"] / "progress.log"
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    os.environ["RBSQMC_PROGRESS_LOG"] = str(progress_path)
 
     run([
         sys.executable, "-c",
@@ -116,6 +119,7 @@ def main(argv=None) -> int:
         "assert jax.default_backend() == 'gpu', 'Colab GPU is not active'",
     ], cwd=repo_root)
     log(f"Writing remote outputs to {repo_root / config['output_dir']}")
+    log(f"Progress log: {progress_path}")
     run(training_command(config), cwd=repo_root)
     log("GPU smoothing completed")
     return 0

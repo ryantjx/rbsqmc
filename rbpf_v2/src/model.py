@@ -11,6 +11,7 @@ from .data import validate_results
 from .kron import symmetrize
 from .utils import (
     EMParams, FilterStates, FootballResults, ParticleMeans, RBPFFootballResults,
+    progress as _flog,
 )
 
 
@@ -21,7 +22,7 @@ def compute_gamma_trajectory(
     M = gamma_0.shape[0] if num_teams is None else num_teams
     import time as _ctime
     _cgstart = _ctime.perf_counter()
-    print(f"[filter {_ctime.strftime('%H:%M:%S')}] compute_gamma_trajectory start (D={model_inputs.timestamp.shape[0]})", flush=True)
+    _flog(f"compute_gamma_trajectory start (D={model_inputs.timestamp.shape[0]})")
 
     def day_step(previous, day):
         timestamp, timestamp_prev, home, away, mask = day
@@ -59,7 +60,8 @@ def compute_gamma_trajectory(
          model_inputs.matches.home_id, model_inputs.matches.away_id,
          model_inputs.match_mask),
     )
-    print(f"[filter {_ctime.strftime('%H:%M:%S')}] compute_gamma_trajectory done in {_ctime.perf_counter() - _cgstart:.1f}s", flush=True)
+    print_end = _ctime.perf_counter() - _cgstart
+    _flog(f"compute_gamma_trajectory done in {print_end:.1f}s")
     return values
 
 
@@ -123,8 +125,6 @@ def run_filter(key, model_inputs: FootballResults, params: EMParams,
         model_inputs, params.gamma_0, params.kappa, params.mean_0.shape[0]
     )
     import time as _time
-    def _flog(msg):
-        print(f"[filter {_time.strftime('%H:%M:%S')}] {msg}", flush=True)
     augmented = augment_results(model_inputs, covariance_path)
     D = model_inputs.timestamp.shape[0]
     _flog(f"run_filter start: D={D} n_particles={n_particles}")

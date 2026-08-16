@@ -20,6 +20,7 @@ GPU_TYPE="${GPU_TYPE:-$(read_config gpu_type)}"
 TIMEOUT="${COLAB_TIMEOUT:-$(read_config colab_timeout)}"
 
 OUTPUT_FILES=(
+    progress.log
     em_initial_params.json
     em_final_params.json
     training_arrays.npz

@@ -1,8 +1,26 @@
 from __future__ import annotations
 
+import os
+import time
 from typing import Any, NamedTuple
 
 import jax
+
+# Global file-based progress log. Set RBSQMC_PROGRESS_LOG to a path to persist
+# progress lines to a file (works even when the colab CLI does not stream the
+# nested training subprocess's stdout). Falls back to flushed stdout.
+_PROGRESS_LOG = os.environ.get("RBSQMC_PROGRESS_LOG", "")
+
+
+def progress(message: str) -> None:
+    line = f"[{time.strftime('%H:%M:%S')}] {message}"
+    print(line, flush=True)
+    if _PROGRESS_LOG:
+        try:
+            with open(_PROGRESS_LOG, "a") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
 
 
 class Matches(NamedTuple):
