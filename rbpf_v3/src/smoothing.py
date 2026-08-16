@@ -400,11 +400,7 @@ def smoothed_path_diagnostics(
         "transition_mahalanobis_p95": jnp.percentile(transition, 95),
         "smoothed_mean": jnp.mean(paths, axis=1),
         "smoothed_variance": jnp.var(paths, axis=1),
-        "lag_one_moment": jnp.mean(
-            paths[:-1, :, :, :, None, None]
-            * paths[1:, :, None, None, :, :],
-            axis=1,
-        ),
+        "lag_one_moment": jnp.mean(paths[:-1] * paths[1:], axis=1),
     }
 
 

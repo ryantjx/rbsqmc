@@ -98,6 +98,11 @@ backward probabilities are disabled by default; ESS, entropy, maximum
 probability, and selected-component diversity remain available without their
 persistent `O(D*S*N)` storage.
 
+Lag-one diagnostics retain the elementwise team/trait moment `(D, M, 2)`.
+They intentionally avoid serializing a full cross-team outer moment
+`(D, M, 2, M, 2)` for every epoch, which is not required by the MCEM objective
+and would dominate artifact size.
+
 Every standalone run writes initial/final parameters, training arrays,
 training/evaluation summaries, performance metadata, baseline comparison,
 progress log, and ten diagnostic plots. JSON writing and deployment validation
