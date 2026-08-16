@@ -11,6 +11,7 @@ import time
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/rbpf_v3_matplotlib")
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from rbpf_v3.src.data import WORLDCUP_2026_TEAMS, get_results
@@ -115,6 +116,7 @@ def _load_inputs(args):
         else default_init_params(len(names), team_id_to_name=names)
     )
     _validate_initial_params(params, len(names))
+    params = params._replace(mean_0=jnp.zeros_like(params.mean_0))
     return frame, data, names, params
 
 

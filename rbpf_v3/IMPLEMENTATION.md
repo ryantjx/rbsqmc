@@ -320,7 +320,7 @@ Retain:
 - Cholesky/softplus `gamma_0` transform;
 - positive `kappa` transform;
 - diagonal determinant-one `B`;
-- unconstrained optimization of `mean_0` alongside the transformed parameters;
+- `mean_0` fixed exactly to `[0, 0]` for every team throughout MCEM;
 - inverse-Wishart kernel;
 - finite, non-worsening M-step acceptance;
 - restoration of parameters and optimizer state after rejection.

@@ -100,18 +100,15 @@ day-unrolled Python/XLA graph.
 Each backend independently scans days for transition and masked observation
 terms, stops gradients through sampled paths, and uses module-level compiled
 objective/value-and-gradient callables. The transform keeps `gamma_0`
-positive definite, `kappa` positive, and `det(B)=1`. The unconstrained
-stationary mean `mean_0` is optimized in the same Adam parameter tree, using
-its contributions to the initial-state and OU transition densities. An M-step
-is accepted only when its fixed-path objective is finite and non-worsening;
-rejection restores the transformed parameters, `mean_0`, and Adam state.
-
-The score likelihood has a location symmetry between the global attack and
-defence offsets in `mean_0` and `alpha`. The requested implementation leaves
-`mean_0` unconstrained, so raw column means are gauge-dependent; team-centred
-contrasts are the identifiable part. Runs should monitor column-mean drift,
-and longer optimization may benefit from an explicit centring constraint or
-proper mean prior if a unique parameterization is required.
+positive definite, `kappa` positive, and `det(B)=1`. The stationary mean
+`mean_0` is fixed exactly to `[0, 0]` for every team and is not part of the Adam
+parameter tree. Both `run_mcem` implementations replace any supplied
+`mean_0` with an all-zero `(M, 2)` array before the first E-step; both runners
+also save this effective centered value as the initial parameter. This fixed
+location convention removes the score likelihood's global attack/defence
+offset symmetry between `mean_0` and `alpha`. An M-step is accepted only when
+its fixed-path objective is finite and non-worsening; rejection restores the
+transformed parameters and Adam state.
 
 Host logging synchronizes filter, smoother, and reported objective stages
 before printing elapsed times. Logs are flushed and mirrored to
@@ -173,8 +170,10 @@ The optimized final filter had shape `(645, 50, 48, 2)`, completed without a
 hard evaluation failure, and produced final log normalizer `-3284.489`.
 
 The subsequent A100 Cuthbert deployment used the conflict-cleaned 1950--2025
-timeline with `D=2540`, `N=250`, `S=250`, and optimized `mean_0`. It completed
-all five accepted epochs and the final filter without non-finite values:
+timeline with `D=2540`, `N=250`, and `S=250`. This is a historical,
+superseded experiment from the temporary learned-`mean_0` implementation; it
+does not measure the current fixed-zero design. It completed all five accepted
+epochs and the final filter without non-finite values:
 
 | Measurement | Result |
 |---|---:|
@@ -185,22 +184,16 @@ all five accepted epochs and the final filter without non-finite values:
 | Initial / final log normalizer | -10686.762 / -10550.878 |
 | Final transition Mahalanobis ratio | 0.99933 |
 | Final `gamma_0` minimum eigenvalue / condition | 0.07535 / 16.72 |
-| Final `mean_0` range / L2 norm | [-0.09135, 0.09804] / 0.59485 |
 
-In ten common-random-number filter evaluations at `N=250`, the final
-parameters improved mean log normalizer by 137.79 over initialization (95%
-paired interval [134.29, 141.28]). Setting final `mean_0` back to zero removed
-125.95 log units of fit (95% paired interval [121.68, 130.21]); replacing it
-with only its two column means produced a similar 124.96-unit loss over five
-seeds. Thus most of the training-fit gain is associated with learned
-team-specific stationary means, rather than only their global offsets.
-
-This run provides evidence of stable optimization and calibrated transition
-residuals, not broad predictive superiority: its holdout contains only one
-match, whose negative log predictive density (2.249) is worse than the
-constant-Poisson baseline (2.099). Backward component probabilities also
-remain sharply concentrated (median ESS 1.045 of 250), despite using an
-average of 64.35 distinct selected components per time.
+This historical run provides evidence that the conflict-cleaned timeline can
+be filtered without non-finite values, but its likelihood and parameter
+diagnostics cannot be used to assess the reverted fixed-zero MCEM. Its holdout
+contained only one match, whose negative log predictive density (2.249) was
+worse than the constant-Poisson baseline (2.099). Backward component
+probabilities were also sharply concentrated (median ESS 1.045 of 250),
+despite using an average of 64.35 distinct selected components per time. The
+current `rbpf_v3/outputs/smoothing` directory was produced by this superseded
+experiment and must be regenerated before evaluating the fixed-zero design.
 
 ## Verification and reproducibility
 
@@ -241,8 +234,10 @@ successfully, and left no active Colab sessions. The validated local output is
 
 On 2026-08-17, the conflict-cleaned `D=2540`, `N=S=250` A100 run also completed
 five accepted epochs, the optimized-parameter filter, and the runner's internal
-finite/evaluation checks. Its measurements and remaining statistical caveats
-are recorded in the performance section above. The local download omits
+finite/evaluation checks. That run used the superseded learned-`mean_0`
+formulation and is not acceptance evidence for the current fixed-zero design.
+Its measurements and remaining statistical caveats are recorded in the
+performance section above. The local download omits
 `training_arrays.npz` and `optimal_filter/filter_states.npz`; consequently it
 does not satisfy the stricter `validate_outputs.py` artifact-completeness check
 until those large state artifacts are retrieved or the deployment contract is

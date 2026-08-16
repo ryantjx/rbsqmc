@@ -4,12 +4,14 @@ import numpy as np
 import pytest
 
 from rbpf_v3.src import smoothing, smoothing_noncuthbert
-from rbpf_v3.src.helpers import encode_EM_params
 
 
 @pytest.mark.parametrize("module", [smoothing, smoothing_noncuthbert])
 def test_backend_e_step_and_mcem_schema(module, small_problem):
     data, params, _, _ = small_problem
+    requested_params = params._replace(
+        mean_0=jnp.full_like(params.mean_0, 0.25)
+    )
     config = module.MCEMConfig(
         n_filter_particles=6,
         n_smoother_particles=5,
@@ -17,7 +19,7 @@ def test_backend_e_step_and_mcem_schema(module, small_problem):
         n_gradient_steps=1,
         return_backward_probabilities=True,
     )
-    result = module.run_mcem(jax.random.key(4), data, params, config)
+    result = module.run_mcem(jax.random.key(4), data, requested_params, config)
     smoothed = result["final_smoothed_states"]
     assert smoothed.x.shape == (data.timestamp.size + 1, 5, 2, 2)
     assert smoothed.component_indices.shape == (data.timestamp.size + 1, 5)
@@ -28,35 +30,10 @@ def test_backend_e_step_and_mcem_schema(module, small_problem):
     )
     assert np.isfinite(float(result["final_log_marginal_likelihood"]))
     assert result["mstep_history"][0]["accepted"]
-    assert not np.allclose(result["final_params"].mean_0, params.mean_0)
-
-
-@pytest.mark.parametrize("module", [smoothing, smoothing_noncuthbert])
-def test_mstep_objective_differentiates_mean_0(module, small_problem):
-    data, params, _, _ = small_problem
-    target = jnp.asarray([[0.4, -0.3], [0.2, -0.1]], dtype=params.mean_0.dtype)
-    paths = jnp.broadcast_to(
-        target,
-        (data.timestamp.size + 1, 4) + target.shape,
-    )
-    dimension = params.gamma_0.shape[0]
-    prior_dof = float(dimension + 10)
-    prior_scale = (prior_dof + dimension + 1.0) * params.gamma_0
-
-    loss, (_, mean_gradient) = module._negative_value_and_grad_jit(
-        encode_EM_params(params),
-        params.mean_0,
-        paths,
-        data,
-        8,
-        prior_scale,
-        prior_dof,
-    )
-
-    assert np.isfinite(float(loss))
-    assert mean_gradient.shape == params.mean_0.shape
-    assert np.isfinite(np.asarray(mean_gradient)).all()
-    assert float(jnp.linalg.norm(mean_gradient)) > 0.0
+    expected_mean = np.zeros_like(params.mean_0)
+    np.testing.assert_array_equal(result["final_params"].mean_0, expected_mean)
+    for history_params in result["params_history"]:
+        np.testing.assert_array_equal(history_params.mean_0, expected_mean)
 
 
 def test_backend_distributional_equivalence_on_saved_filter(small_problem):
