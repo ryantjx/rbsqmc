@@ -40,7 +40,20 @@ def log(message: str) -> None:
 
 def run(command, *, cwd=None) -> None:
     log("Running: " + " ".join(map(str, command)))
-    subprocess.run(command, cwd=cwd, check=True)
+    completed = subprocess.run(
+        command, cwd=cwd, text=True, capture_output=True
+    )
+    if completed.stdout:
+        for line in completed.stdout.rstrip().splitlines():
+            log("OUT: " + line)
+    if completed.stderr:
+        for line in completed.stderr.rstrip().splitlines():
+            log("ERR: " + line)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"Command failed with exit code {completed.returncode}:\n"
+            + " ".join(map(str, command))
+        )
 
 
 def is_colab() -> bool:
