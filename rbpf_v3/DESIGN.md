@@ -136,6 +136,20 @@ smoke comparison, not a large-workload conclusion; accelerator results and
 the required size grid should be read from the emitted
 `performance_summary.json` files. GPU acceptance uses the Cuthbert backend.
 
+The accepted L4 Cuthbert deployment (`D=644`, `N=50`, `S=50`, `M=48`) recorded:
+
+| Measurement | Seconds |
+|---|---:|
+| First filter / backward (includes compilation) | 4.660 / 9.783 |
+| Warm final filter / backward | 1.592 / 2.618 |
+| Warm M-step (20 updates, final epoch) | 10.071 |
+| Training | 121.927 |
+| Evaluation | 8.847 |
+| Total Python runner | 142.686 |
+
+The optimized final filter had shape `(645, 50, 48, 2)`, completed without a
+hard evaluation failure, and produced final log normalizer `-3284.489`.
+
 ## Verification and reproducibility
 
 ```bash
@@ -158,3 +172,17 @@ The principal limitation is that Cuthbert remains a dependency of the copied
 forward filter even though the direct smoothing module itself is Cuthbert-free.
 Monte Carlo outputs are distributionally equivalent rather than pathwise
 identical because the backends own independent resampling/control flow.
+
+## Completed deployment acceptance
+
+On 2026-08-16, commit `91918a9` passed the primary command:
+
+```bash
+uv run bash rbpf_v3/run_smoothing_colab.sh
+```
+
+The run provisioned an L4, verified `CudaDevice(id=0)`, completed five accepted
+MCEM epochs, ran the final optimized-parameter filter, generated and downloaded
+all required artifacts, passed strict finite/evaluation validation, exited
+successfully, and left no active Colab sessions. The validated local output is
+`rbpf_v3/outputs/smoothing`.
