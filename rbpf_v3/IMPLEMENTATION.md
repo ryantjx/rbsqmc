@@ -928,6 +928,8 @@ training_summary.json
 performance_summary.json
 evaluation_summary.json
 baseline_comparison.json
+optimal_filter/filter_states.npz
+optimal_filter/optimal_filter_summary.json
 ```
 
 Required evaluation plots:
@@ -943,6 +945,10 @@ smoothed_team_trajectories_with_intervals.png
 heldout_log_score_by_date.png
 result_calibration.png
 goal_marginal_calibration.png
+optimal_filter/top_strengths.png
+optimal_filter/timeseries_states.png
+optimal_filter/correlation_matrix.png
+optimal_filter/log_normalizing_constant.png
 ```
 
 Download into the local `rbpf_v3/outputs/smoothing` directory. Required files

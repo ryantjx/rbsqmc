@@ -14,7 +14,11 @@ import jax
 import numpy as np
 
 from rbpf_v3.src.data import WORLDCUP_2026_TEAMS, get_results
-from rbpf_v3.src.evaluation import evaluate_run, tree_to_python
+from rbpf_v3.src.evaluation import (
+    evaluate_run,
+    tree_to_python,
+    write_optimal_filter_artifacts,
+)
 from rbpf_v3.src.helpers import default_init_params, load_params, save_params
 from rbpf_v3.src.progress import progress
 from rbpf_v3.src.smoothing_noncuthbert import MCEMConfig, run_mcem
@@ -155,6 +159,13 @@ def main(argv=None) -> int:
         jax.block_until_ready(result["final_smoothed_states"].x)
         training_seconds = time.perf_counter() - training_start
         save_params(result["final_params"], str(target / "em_final_params.json"))
+        progress("persisting optimal-parameter final filter pass...")
+        write_optimal_filter_artifacts(
+            result,
+            team_names,
+            target,
+            timestamps=np.asarray(train_data.date),
+        )
         smoothed = result["final_smoothed_states"]
         arrays = {
             "paths": np.asarray(smoothed.x),

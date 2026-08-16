@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from rbpf_v3.src.bivariate_poisson import loglik_grid
+from rbpf_v3.src.graphic import plot_all
 
 
 REQUIRED_PLOTS = (
@@ -410,4 +411,60 @@ def write_evaluation_artifacts(report, output_dir):
         figure.tight_layout()
         figure.savefig(target / name, dpi=100)
         plt.close(figure)
+    return target
+
+
+def write_optimal_filter_artifacts(
+    training_result,
+    team_id_to_name,
+    output_dir,
+    *,
+    timestamps=None,
+    top_n=10,
+):
+    """Persist and plot the final filter pass evaluated at optimized parameters."""
+    target = Path(output_dir) / "optimal_filter"
+    target.mkdir(parents=True, exist_ok=True)
+    filtered = training_result["final_filter_states"]
+    augmented = training_result["final_augmented_data"]
+    means = np.asarray(filtered.particles.x)
+    log_weights = np.asarray(filtered.log_weights)
+    np.savez_compressed(
+        target / "filter_states.npz",
+        means=means,
+        log_weights=log_weights,
+        ancestor_indices=np.asarray(filtered.ancestor_indices),
+        log_normalizing_constant=np.asarray(filtered.log_normalizing_constant),
+        gamma=np.asarray(augmented.gamma),
+        gamma_pred=np.asarray(augmented.gamma_pred),
+        gamma_observed=np.asarray(augmented.gamma_observed),
+        kalman_gain=np.asarray(augmented.kalman_gain),
+    )
+    terminal_weights = np.asarray(jax.nn.softmax(filtered.log_weights[-1]))
+    terminal_mean = np.tensordot(terminal_weights, means[-1], axes=(0, 0))
+    summary = {
+        "backend": training_result["backend"],
+        "parameters_file": "../em_final_params.json",
+        "filter_shape": list(means.shape),
+        "log_weights_shape": list(log_weights.shape),
+        "gamma_shape": list(augmented.gamma.shape),
+        "gamma_pred_shape": list(augmented.gamma_pred.shape),
+        "final_log_normalizing_constant": training_result[
+            "final_log_marginal_likelihood"
+        ],
+        "final_filter_timing": training_result["final_timing"]["filter_seconds"],
+        "terminal_weighted_mean": terminal_mean,
+    }
+    (target / "optimal_filter_summary.json").write_text(
+        json.dumps(tree_to_python(summary), indent=2, allow_nan=False),
+        encoding="utf-8",
+    )
+    plot_all(
+        filtered,
+        augmented,
+        team_id_to_name,
+        top_n=min(top_n, len(team_id_to_name)),
+        save_path=str(target),
+        timestamps=timestamps,
+    )
     return target

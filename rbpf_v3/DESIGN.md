@@ -108,6 +108,13 @@ training/evaluation summaries, performance metadata, baseline comparison,
 progress log, and ten diagnostic plots. JSON writing and deployment validation
 reject non-finite values and evaluation hard failures.
 
+After MCEM, both backends make an explicit final filter pass at the optimized
+parameters. The runners persist its component means, weights, genealogy,
+normalizing constants, covariance trajectories, gains, and a compact summary
+under `outputs/.../optimal_filter`. The copied plotting implementation also
+writes optimal-filter strength, timeline, correlation, and log-normalizer
+figures there.
+
 ## Performance comparison
 
 Timing separates the filter and backward sampler inside each E-step, the
