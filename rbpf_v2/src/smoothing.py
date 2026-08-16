@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 from typing import NamedTuple
 
 import jax
@@ -13,6 +14,11 @@ from .helpers import decode_EM_params, encode_EM_params, log_inverse_wishart_ker
 from .kron import kron_logdet, kron_quad, rts_kron_terms, sample_kron_psd, symmetrize
 from .model import run_filter, systematic_resample
 from .utils import EMParams, ParticleMeans, SmoothedStates
+
+
+def _log(message: str) -> None:
+    """Timestamped, unbuffered progress log (visible with ``python -u``)."""
+    print(f"[smoothing {time.strftime('%H:%M:%S')}] {message}", flush=True)
 
 
 class MCEMConfig(NamedTuple):
@@ -78,6 +84,8 @@ def rb_backward_simulation(key, filter_states, augmented_data, params: EMParams,
                                          (n_smoother_particles, N))
 
     for t in range(D - 1, -1, -1):
+        if t % 1000 == 0 or t == 0 or t == D - 1:
+            _log(f"rb_backward_simulation: t={t}/{D} ({100 * (D - 1 - t) // max(D - 1, 1)}%)")
         rng, selection_key, draw_key = jax.random.split(rng, 3)
         phi = jnp.exp(-params.kappa * (
             augmented_data.timestamp[t] - augmented_data.timestamp_prev[t]
@@ -193,6 +201,12 @@ def run_mcem(key, model_inputs, initial_params: EMParams,
     """Run MCEM, rejecting any non-finite or worsening fixed-path M-step."""
     if e_step_fn is None:
         e_step_fn = E_step
+    _log(f"run_mcem start: n_epochs={config.n_epochs} "
+         f"n_filter_particles={config.n_filter_particles} "
+         f"n_smoother_particles={config.n_smoother_particles} "
+         f"n_gradient_steps={config.n_gradient_steps} "
+         f"learning_rate={config.learning_rate} "
+         f"timeline_days={model_inputs.timestamp.shape[0]}")
     fixed_mean = jax.lax.stop_gradient(initial_params.mean_0)
     raw = encode_EM_params(initial_params)
     optimizer = optax.adam(config.learning_rate)
@@ -203,29 +217,42 @@ def run_mcem(key, model_inputs, initial_params: EMParams,
     mstep_history, log_marginal_history, diagnostics_history = [], [], []
     last_smoothed = last_filtered = last_augmented = None
     rng = key
+    _log("EM loop starting")
 
     for epoch in range(config.n_epochs):
+        epoch_start = time.perf_counter()
         rng, e_key = jax.random.split(rng)
         params = decode_EM_params(raw, fixed_mean)
+        _log(f"epoch {epoch}/{config.n_epochs}: running E-step (filter + backward simulation)...")
         smoothed, filtered, augmented = e_step_fn(
             params, model_inputs, config.n_filter_particles,
             config.n_smoother_particles, config.max_goals, e_key,
         )
+        _log(f"epoch {epoch}: E-step done ({time.perf_counter() - epoch_start:.1f}s)")
         paths = jax.lax.stop_gradient(smoothed.particles.x)
         start_raw, start_opt = raw, opt_state
         objective = lambda value: mcem_objective(
             value, fixed_mean, paths, model_inputs, config.max_goals, nu, S_gamma
         )
         start_value = objective(raw)
-        for _ in range(config.n_gradient_steps):
+        _log(f"epoch {epoch}: evaluating objective at start (start_value={float(start_value):.3f})")
+        grad_step_start = time.perf_counter()
+        for step in range(config.n_gradient_steps):
+            if step % 5 == 0 or step == config.n_gradient_steps - 1:
+                _log(f"epoch {epoch}: gradient step {step}/{config.n_gradient_steps} "
+                     f"({time.perf_counter() - grad_step_start:.1f}s elapsed)")
             value, gradient = jax.value_and_grad(lambda value: -objective(value))(raw)
             updates, opt_state = optimizer.update(gradient, opt_state, raw)
             raw = optax.apply_updates(raw, updates)
         candidate_value = objective(raw)
+        _log(f"epoch {epoch}: M-step done in "
+             f"{time.perf_counter() - grad_step_start:.1f}s; "
+             f"start={float(start_value):.3f} candidate={float(candidate_value):.3f}")
         accepted = bool(jnp.isfinite(candidate_value) &
                         (candidate_value + config.acceptance_tolerance >= start_value))
         if not accepted:
             raw, opt_state, candidate_value = start_raw, start_opt, start_value
+            _log(f"epoch {epoch}: step REJECTED; reverting to start params")
         final_epoch_params = decode_EM_params(raw, fixed_mean)
         record = _terms_to_record(final_epoch_params, paths, model_inputs,
                                   config.max_goals, nu, S_gamma)
@@ -237,7 +264,11 @@ def run_mcem(key, model_inputs, initial_params: EMParams,
         diagnostics_history.append(smoothed_path_diagnostics(final_epoch_params,
                                                               smoothed, augmented))
         last_smoothed, last_filtered, last_augmented = smoothed, filtered, augmented
+        _log(f"epoch {epoch}/{config.n_epochs} complete in "
+             f"{time.perf_counter() - epoch_start:.1f}s "
+             f"(accepted={accepted}, objective={float(candidate_value):.3f})")
 
+    _log("EM loop complete; running final filter")
     final_params = decode_EM_params(raw, fixed_mean)
     rng, final_key = jax.random.split(rng)
     final_filtered, final_augmented = run_filter(
@@ -249,6 +280,7 @@ def run_mcem(key, model_inputs, initial_params: EMParams,
             final_params, model_inputs, config.n_filter_particles,
             config.n_smoother_particles, config.max_goals, smooth_key,
         )
+    _log("run_mcem complete")
     return {
         "final_params": final_params, "params_history": params_history,
         "mstep_history": mstep_history, "log_marginal_history": log_marginal_history,

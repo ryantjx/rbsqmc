@@ -11,7 +11,7 @@
   "seed": 42,
   "initial_params": "",
   "output_dir": "rbpf_v2/outputs/smoothing",
-  "gpu_type": "L4",
+  "gpu_type": "A100",
   "colab_timeout": 7200,
   "repo_url": "https://github.com/ryantjx/rbsqmc.git"
 }
