@@ -97,12 +97,18 @@ def _validate_initial_params(params: EMParams, num_teams: int) -> None:
 
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
+    import time
+    def log(msg): print(f"[run_smoothing {time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    log("main: loading inputs (get_rbpf_results / prepare_results)...")
     frame, data, team_id_to_name, initial_params = _load_inputs(args)
+    log(f"main: inputs loaded, {len(team_id_to_name)} teams, "
+        f"data.timestamp.size={int(data.timestamp.size)}")
     n_days = int(data.timestamp.size)
     if args.holdout_days < 0 or args.holdout_days >= n_days:
         raise ValueError("holdout-days must be non-negative and smaller than observed days")
     holdout = slice_results(data, -args.holdout_days, None) if args.holdout_days else None
     train_data = slice_results(data, None, -args.holdout_days) if args.holdout_days else data
+    log(f"main: train_data.timestamp.size={int(train_data.timestamp.size)}")
 
     config = MCEMConfig(
         n_filter_particles=args.n_particles,
@@ -113,6 +119,7 @@ def main(argv=None) -> int:
         max_goals=args.max_goals,
         acceptance_tolerance=1e-6,
     )
+    log("main: calling run_mcem...")
     target = Path(args.output_dir)
     target.mkdir(parents=True, exist_ok=True)
     save_params(initial_params, target / "em_initial_params.json")

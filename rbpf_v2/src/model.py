@@ -19,6 +19,9 @@ def compute_gamma_trajectory(
 ):
     """Compute the deterministic covariance recursion on the exact D-transition timeline."""
     M = gamma_0.shape[0] if num_teams is None else num_teams
+    import time as _ctime
+    _cgstart = _ctime.perf_counter()
+    print(f"[filter {_ctime.strftime('%H:%M:%S')}] compute_gamma_trajectory start (D={model_inputs.timestamp.shape[0]})", flush=True)
 
     def day_step(previous, day):
         timestamp, timestamp_prev, home, away, mask = day
@@ -56,6 +59,7 @@ def compute_gamma_trajectory(
          model_inputs.matches.home_id, model_inputs.matches.away_id,
          model_inputs.match_mask),
     )
+    print(f"[filter {_ctime.strftime('%H:%M:%S')}] compute_gamma_trajectory done in {_ctime.perf_counter() - _cgstart:.1f}s", flush=True)
     return values
 
 
@@ -118,14 +122,22 @@ def run_filter(key, model_inputs: FootballResults, params: EMParams,
     covariance_path = compute_gamma_trajectory(
         model_inputs, params.gamma_0, params.kappa, params.mean_0.shape[0]
     )
+    import time as _time
+    def _flog(msg):
+        print(f"[filter {_time.strftime('%H:%M:%S')}] {msg}", flush=True)
     augmented = augment_results(model_inputs, covariance_path)
     D = model_inputs.timestamp.shape[0]
+    _flog(f"run_filter start: D={D} n_particles={n_particles}")
     means = [jnp.broadcast_to(params.mean_0, (n_particles,) + params.mean_0.shape)]
     weights = [jnp.full((n_particles,), -math.log(n_particles))]
     ancestors = []
     logz = [jnp.asarray(0.0)]
     rng = key
+    _filter_start = _time.perf_counter()
     for t in range(D):
+        if t % 1000 == 0 or t == D - 1:
+            _flog(f"filter day {t}/{D} ({100 * t // max(D, 1)}%) in "
+                  f"{_time.perf_counter() - _filter_start:.1f}s")
         rng, parent_key, propagation_key = jax.random.split(rng, 3)
         indices = systematic_resample(parent_key, weights[-1], n_particles)
         parents = means[-1][indices]
@@ -143,6 +155,7 @@ def run_filter(key, model_inputs: FootballResults, params: EMParams,
         weights.append(next_weights)
         ancestors.append(indices)
         logz.append(logz[-1] + normalizer)
+    _flog(f"run_filter done in {_time.perf_counter() - _filter_start:.1f}s")
     states = FilterStates(
         ParticleMeans(jnp.stack(means)), jnp.stack(weights),
         jnp.stack(ancestors) if ancestors else jnp.empty((0, n_particles), dtype=int),
