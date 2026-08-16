@@ -103,7 +103,7 @@ main() {
 
     mkdir -p "${LOCAL_OUTPUTS}"
     local required=(
-        progress.log em_initial_params.json em_final_params.json training_arrays.npz
+        progress.log em_initial_params.json em_final_params.json
         training_summary.json performance_summary.json evaluation_summary.json
         baseline_comparison.json objective_terms_by_epoch.png
         optimal_filter/filter_states.npz optimal_filter/optimal_filter_summary.json

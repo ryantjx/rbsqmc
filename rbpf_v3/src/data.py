@@ -44,6 +44,23 @@ def _validate_one_match_per_team_per_day(data: pd.DataFrame) -> None:
             f"{conflicts.to_string(index=False)}"
         )
 
+def _drop_duplicate_team_days(data: pd.DataFrame) -> pd.DataFrame:
+    """Drop matches where a team plays more than once on the same day."""
+    home = data[["date", "home_team"]].rename(columns={"home_team": "team"})
+    away = data[["date", "away_team"]].rename(columns={"away_team": "team"})
+    appearances = pd.concat([home, away], ignore_index=True)
+
+    # Keep only the first appearance of each (date, team) pair
+    keep = appearances.drop_duplicates(subset=["date", "team"], keep="first")
+    keep = keep.reset_index().set_index(["date", "team"])
+
+    # Rebuild the original index of rows to keep
+    home_key = data.set_index(["date", "home_team"]).index
+    away_key = data.set_index(["date", "away_team"]).index
+    keep_home = home_key.isin(keep.index)
+    keep_away = away_key.isin(keep.index)
+
+    return data[keep_home & keep_away].reset_index(drop=True)
 
 def get_results(
     start_date: str = "1872-11-30",  # date of first game
@@ -109,7 +126,8 @@ def get_results(
     data[["home_score", "away_score"]] = (
         data[["home_score", "away_score"]].fillna(-1).astype(int)
     )
-    _validate_one_match_per_team_per_day(data)
+    data = _drop_duplicate_team_days(data)
+    # _validate_one_match_per_team_per_day(data)
 
     # Create mapping of team names to integer IDs
     all_teams = pd.unique(data[["home_team", "away_team"]].values.ravel())

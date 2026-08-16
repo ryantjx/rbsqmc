@@ -320,7 +320,7 @@ Retain:
 - Cholesky/softplus `gamma_0` transform;
 - positive `kappa` transform;
 - diagonal determinant-one `B`;
-- fixed `mean_0`;
+- unconstrained optimization of `mean_0` alongside the transformed parameters;
 - inverse-Wishart kernel;
 - finite, non-worsening M-step acceptance;
 - restoration of parameters and optimizer state after rejection.

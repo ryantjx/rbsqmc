@@ -87,9 +87,11 @@ day-unrolled Python/XLA graph.
 Each backend independently scans days for transition and masked observation
 terms, stops gradients through sampled paths, and uses module-level compiled
 objective/value-and-gradient callables. The transform keeps `gamma_0`
-positive definite, `kappa` positive, `det(B)=1`, and `mean_0` fixed. An M-step
+positive definite, `kappa` positive, and `det(B)=1`. The unconstrained
+stationary mean `mean_0` is optimized in the same Adam parameter tree, using
+its contributions to the initial-state and OU transition densities. An M-step
 is accepted only when its fixed-path objective is finite and non-worsening;
-rejection restores both parameters and Adam state.
+rejection restores the transformed parameters, `mean_0`, and Adam state.
 
 Host logging synchronizes filter, smoother, and reported objective stages
 before printing elapsed times. Logs are flushed and mirrored to

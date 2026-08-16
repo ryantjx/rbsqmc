@@ -327,7 +327,8 @@ def _negative_objective(
 
 _objective_value_jit = jax.jit(mcem_objective, static_argnames=("max_goals",))
 _negative_value_and_grad_jit = jax.jit(
-    jax.value_and_grad(_negative_objective), static_argnames=("max_goals",)
+    jax.value_and_grad(_negative_objective, argnums=(0, 1)),
+    static_argnames=("max_goals",),
 )
 
 
@@ -710,10 +711,9 @@ def run_mcem(
     e_step_fn=E_step,
 ):
     """Run Cuthbert-backend MCEM with fixed-path non-worsening acceptance."""
-    fixed_mean = jax.lax.stop_gradient(initial_params.mean_0)
-    raw = encode_EM_params(initial_params)
+    mstep_params = (encode_EM_params(initial_params), initial_params.mean_0)
     optimizer = optax.adam(config.learning_rate)
-    opt_state = optimizer.init(raw)
+    opt_state = optimizer.init(mstep_params)
     dimension = initial_params.gamma_0.shape[0]
     prior_dof = float(dimension + 10)
     prior_scale = (prior_dof + dimension + 1.0) * initial_params.gamma_0
@@ -729,7 +729,7 @@ def run_mcem(
     for epoch in range(config.n_epochs):
         epoch_start = time.perf_counter()
         rng, e_key = jax.random.split(rng)
-        params = decode_EM_params(raw, fixed_mean)
+        params = decode_EM_params(*mstep_params)
         progress(
             f"epoch {epoch}/{config.n_epochs}: running E-step "
             "(filter + backward simulation)..."
@@ -749,10 +749,9 @@ def run_mcem(
             f"{e_timing['filter_seconds'] + e_timing['backward_seconds']:.1f}s; "
             f"logZ={float(filtered.log_normalizing_constant[-1]):.3f}"
         )
-        start_raw, start_opt_state = raw, opt_state
+        start_mstep_params, start_opt_state = mstep_params, opt_state
         start_value = _objective_value_jit(
-            raw,
-            fixed_mean,
+            *mstep_params,
             paths,
             model_inputs,
             config.max_goals,
@@ -767,16 +766,17 @@ def run_mcem(
         )
         for step in range(config.n_gradient_steps):
             loss, gradient = _negative_value_and_grad_jit(
-                raw,
-                fixed_mean,
+                *mstep_params,
                 paths,
                 model_inputs,
                 config.max_goals,
                 prior_scale,
                 prior_dof,
             )
-            updates, opt_state = optimizer.update(gradient, opt_state, raw)
-            raw = optax.apply_updates(raw, updates)
+            updates, opt_state = optimizer.update(
+                gradient, opt_state, mstep_params
+            )
+            mstep_params = optax.apply_updates(mstep_params, updates)
             if step % max(config.log_every_gradient_steps, 1) == 0:
                 jax.block_until_ready(loss)
                 progress(
@@ -784,8 +784,7 @@ def run_mcem(
                     f"{step}/{config.n_gradient_steps}; loss={float(loss):.3f}"
                 )
         candidate = _objective_value_jit(
-            raw,
-            fixed_mean,
+            *mstep_params,
             paths,
             model_inputs,
             config.max_goals,
@@ -798,9 +797,13 @@ def run_mcem(
             & (candidate + config.acceptance_tolerance >= start_value)
         )
         if not accepted:
-            raw, opt_state, candidate = start_raw, start_opt_state, start_value
+            mstep_params, opt_state, candidate = (
+                start_mstep_params,
+                start_opt_state,
+                start_value,
+            )
         mstep_seconds = time.perf_counter() - mstep_start
-        final_epoch_params = decode_EM_params(raw, fixed_mean)
+        final_epoch_params = decode_EM_params(*mstep_params)
         record = objective_diagnostics(
             final_epoch_params,
             paths,
@@ -842,7 +845,7 @@ def run_mcem(
         )
         last = (smoothed, filtered, augmented)
 
-    final_params = decode_EM_params(raw, fixed_mean)
+    final_params = decode_EM_params(*mstep_params)
     rng, final_key = jax.random.split(rng)
     final_smoothed, final_filtered, final_augmented, final_timing = e_step_fn(
         final_params,
