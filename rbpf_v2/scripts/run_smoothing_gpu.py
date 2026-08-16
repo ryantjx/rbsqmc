@@ -40,18 +40,16 @@ def log(message: str) -> None:
 
 def run(command, *, cwd=None) -> None:
     log("Running: " + " ".join(map(str, command)))
-    completed = subprocess.run(
-        command, cwd=cwd, text=True, capture_output=True
+    process = subprocess.Popen(
+        command, cwd=cwd, text=True, bufsize=1,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
     )
-    if completed.stdout:
-        for line in completed.stdout.rstrip().splitlines():
-            log("OUT: " + line)
-    if completed.stderr:
-        for line in completed.stderr.rstrip().splitlines():
-            log("ERR: " + line)
-    if completed.returncode != 0:
+    for line in process.stdout:
+        log("OUT: " + line.rstrip("\n"))
+    process.wait()
+    if process.returncode != 0:
         raise RuntimeError(
-            f"Command failed with exit code {completed.returncode}:\n"
+            f"Command failed with exit code {process.returncode}:\n"
             + " ".join(map(str, command))
         )
 
