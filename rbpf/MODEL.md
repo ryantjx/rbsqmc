@@ -83,7 +83,7 @@ $$\mu_{t \mid t+1}^{(i)} = \mu_t^{(i)} + J_t (X_{t + 1}^* - \mu_{t + 1 \mid t}^{
 
 $$\Sigma_{t \mid t+1} = \Sigma_t - J_t \Sigma_{t + 1 \mid t} J_t^T$$
 
-where $J_t = \Sigma_t(\Sigma_t + Q)^{-1}$ is the RTS smoother gain.
+where $J_t = \Sigma_t \phi_t(\phi_t^2 \Sigma_t + Q)^{-1} = \Sigma_t \phi_t \Sigma_{t+1 \mid t}^{-1}$ is the RTS smoother gain.
 
 ### 3.1 FFBSi 
 

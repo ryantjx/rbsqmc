@@ -68,44 +68,44 @@ def _psd_sqrt(A):
 
 ######################## E-step: RBPF filter + smoother ########################
 
-def materialize_rb_filter(
-    key: jax.Array,
-    filtered_states: RBPFState,
-    gamma: jax.Array,
-    gamma_0: jax.Array,
-    B: jax.Array,
-):
-    """
-    Convert RB Gaussian-component means into a fixed full-state particle cloud.
+# def materialize_rb_filter(
+#     key: jax.Array,
+#     filtered_states: RBPFState,
+#     gamma: jax.Array,
+#     gamma_0: jax.Array,
+#     B: jax.Array,
+# ):
+#     """
+#     Convert RB Gaussian-component means into a fixed full-state particle cloud.
 
-    filtered_states.particles.x: (D+1, N, num_teams, 2)
-    gamma:                      (D, num_teams, num_teams)
-    """
-    means = filtered_states.particles.x
-    # State 0 is the prior. State d+1 is the posterior after day d.
-    component_gammas = jnp.concatenate([gamma_0[None], gamma],axis=0,)
+#     filtered_states.particles.x: (D+1, N, num_teams, 2)
+#     gamma:                      (D, num_teams, num_teams)
+#     """
+#     means = filtered_states.particles.x
+#     # State 0 is the prior. State d+1 is the posterior after day d.
+#     component_gammas = jnp.concatenate([gamma_0[None], gamma],axis=0,)
 
-    if component_gammas.shape[0] != means.shape[0]:
-        raise ValueError(
-            "Covariance and filter timelines are inconsistent: "
-            f"{component_gammas.shape[0]} versus {means.shape[0]}"
-        )
+#     if component_gammas.shape[0] != means.shape[0]:
+#         raise ValueError(
+#             "Covariance and filter timelines are inconsistent: "
+#             f"{component_gammas.shape[0]} versus {means.shape[0]}"
+#         )
 
-    L_gamma = jax.vmap(_psd_sqrt)(component_gammas)
-    L_B = _psd_sqrt(B)
-    # One independent key for every time/component pair.
-    keys = jax.random.split(key, means.shape[:2])
-    def materialize_time(keys_t, means_t, L_gamma_t):
-        def materialize_component(component_key, component_mean):
-            # sample from N(0, I) and transform to N(mean, gamma_t (x) B)
-            noise = jax.random.normal(component_key,component_mean.shape)
-            return (component_mean + L_gamma_t @ noise @ L_B.T)
-        return jax.vmap(materialize_component)(keys_t,means_t)
-    # generate full states based on the means and covariances from the RBPF filter
-    full_states = jax.vmap(materialize_time)(keys,means,L_gamma,)
-    # Only replace particles.x. Keep weights, ancestors and inputs unchanged.
-    materialized_particles = filtered_states.particles._replace(x=full_states)
-    return filtered_states._replace(particles=materialized_particles)
+#     L_gamma = jax.vmap(_psd_sqrt)(component_gammas)
+#     L_B = _psd_sqrt(B)
+#     # One independent key for every time/component pair.
+#     keys = jax.random.split(key, means.shape[:2])
+#     def materialize_time(keys_t, means_t, L_gamma_t):
+#         def materialize_component(component_key, component_mean):
+#             # sample from N(0, I) and transform to N(mean, gamma_t (x) B)
+#             noise = jax.random.normal(component_key,component_mean.shape)
+#             return (component_mean + L_gamma_t @ noise @ L_B.T)
+#         return jax.vmap(materialize_component)(keys_t,means_t)
+#     # generate full states based on the means and covariances from the RBPF filter
+#     full_states = jax.vmap(materialize_time)(keys,means,L_gamma,)
+#     # Only replace particles.x. Keep weights, ancestors and inputs unchanged.
+#     materialized_particles = filtered_states.particles._replace(x=full_states)
+#     return filtered_states._replace(particles=materialized_particles)
 
 def joint_log_potential(
     x_prev: jax.Array,
@@ -182,36 +182,37 @@ def E_step(
     )
 
     # # 2. materialize a fixed full state cloud 
-    materialized_states = materialize_rb_filter(
-        materialize_key, filtered_states, model_inputs_rbpf.gamma,
-        params.gamma_0, params.B
-    )
+    # materialized_states = materialize_rb_filter(
+    #     materialize_key, filtered_states, model_inputs_rbpf.gamma,
+    #     params.gamma_0, params.B
+    # )
 
     # 3. build an run the smoother
-    smoother_obj = build_smoother(
-        log_potential=partial(
-            lambda sp, s, mi, p: joint_log_potential(sp.x, s.x, mi, p, max_goals),
-            p=params,
-        ),
-        backward_sampling_fn=exact_sampling_simulate,
-        resampling_fn=cuthbertlib.resampling.systematic.resampling,
-        n_smoother_particles=n_smoother_particles,
-    )
-    # smoothed_states = cuthbert.smoother(
-    #     smoother_obj,
-    #     filtered_states,
-    #     model_inputs_rbpf,
-    #     parallel=False,
-    #     key=smoother_key
+    # smoother_obj = build_smoother(
+    #     log_potential=partial(
+    #         lambda sp, s, mi, p: joint_log_potential(sp.x, s.x, mi, p, max_goals),
+    #         p=params,
+    #     ),
+    #     backward_sampling_fn=exact_sampling_simulate,
+    #     resampling_fn=cuthbertlib.resampling.systematic.resampling,
+    #     n_smoother_particles=n_smoother_particles,
     # )
     smoothed_states = cuthbert.smoother(
-        smoother_obj, 
-        materialized_states, 
-        model_inputs_rbpf, 
-        False, 
-        smoother_key
+        smoother_obj,
+        filtered_states,
+        model_inputs_rbpf,
+        parallel=False,
+        key=smoother_key
     )
-    return smoothed_states, filtered_states, materialized_states, model_inputs_rbpf
+    # smoothed_states = cuthbert.smoother(
+    #     smoother_obj, 
+    #     materialized_states, 
+    #     model_inputs_rbpf, 
+    #     False, 
+    #     smoother_key
+    # )
+    # return smoothed_states, filtered_states, materialized_states, model_inputs_rbpf
+    return smoothed_states, filtered_states, model_inputs_rbpf
 
 ######### M-step: gradient-based optimization of complete-data log-likelihood ####################
 
@@ -239,26 +240,16 @@ def log_transition_density(
     phi = jnp.exp(-params.kappa * dt)
     variance_scale = 1.0 - phi**2
 
-    predicted_mean = (
-        params.mean_0
-        + phi * (x_prev - params.mean_0)
-    )
+    predicted_mean = (params.mean_0 + phi * (x_prev - params.mean_0))
 
     residual = (x_next - predicted_mean).reshape(-1)
     dimension = residual.size
 
     team_covariance = variance_scale * params.gamma_0
 
-    quad = _kron_quad(
-        team_covariance,
-        params.B,
-        residual[None],
-    )[0]
+    quad = _kron_quad(team_covariance, params.B, residual[None], )[0]
 
-    log_det = _kron_logdet(
-        team_covariance,
-        params.B,
-    )
+    log_det = _kron_logdet(team_covariance, params.B)
 
     return (
         -0.5 * dimension * jnp.log(2.0 * jnp.pi)
@@ -700,12 +691,20 @@ def run_EM(
         # ------------
         # E-step for theta^k
         # -----------
-        (
-            smoothed_states,
-            filtered_states,
-            materialized_states,
-            model_inputs_rbpf,
-        ) = E_step(
+        # (
+        #     smoothed_states,
+        #     filtered_states,
+        #     materialized_states,
+        #     model_inputs_rbpf,
+        # ) = E_step(
+        #     params=params,
+        #     model_inputs=model_inputs,
+        #     n_particles=n_particles,
+        #     n_smoother_particles=n_smoother_particles,
+        #     max_goals=max_goals,
+        #     key=e_step_key,
+        # )
+        smoothed_states, filtered_states, model_inputs_rbpf = E_step(
             params=params,
             model_inputs=model_inputs,
             n_particles=n_particles,
@@ -723,16 +722,16 @@ def run_EM(
             smoothed_states,
             model_inputs_rbpf,
         )
-        cloud_diagnostics = materialized_cloud_diagnostics(
-            params,
-            materialized_states,
-        )
-        if bool(cloud_diagnostics["rb_means_as_states_suspected"]):
-            raise RuntimeError(
-                "The initial materialized cloud has near-zero Mahalanobis "
-                "variation. RB component means appear to be used as full "
-                "latent states."
-            )
+        # cloud_diagnostics = materialized_cloud_diagnostics(
+        #     params,
+        #     materialized_states,
+        # )
+        # if bool(cloud_diagnostics["rb_means_as_states_suspected"]):
+        #     raise RuntimeError(
+        #         "The initial materialized cloud has near-zero Mahalanobis "
+        #         "variation. RB component means appear to be used as full "
+        #         "latent states."
+        #     )
         if not bool(e_step_diagnostics["timeline_aligned"]):
             raise RuntimeError(
                 "Smoothed-state and transition timelines are not aligned."
