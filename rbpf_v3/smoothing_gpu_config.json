@@ -1,0 +1,17 @@
+{
+  "start_date": "2010-01-01",
+  "end_date": "2025-12-31",
+  "n_particles": 50,
+  "n_smoother_paths": 50,
+  "n_epochs": 5,
+  "n_gradient_steps": 20,
+  "learning_rate": 0.001,
+  "max_goals": 8,
+  "holdout_days": 1,
+  "seed": 42,
+  "initial_params": "",
+  "output_dir": "rbpf_v3/outputs/smoothing",
+  "gpu_type": "L4",
+  "colab_timeout": 7200,
+  "repo_url": "https://github.com/ryantjx/rbsqmc.git"
+}
