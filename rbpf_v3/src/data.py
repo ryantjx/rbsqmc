@@ -50,17 +50,17 @@ def _drop_duplicate_team_days(data: pd.DataFrame) -> pd.DataFrame:
     away = data[["date", "away_team"]].rename(columns={"away_team": "team"})
     appearances = pd.concat([home, away], ignore_index=True)
 
-    # Keep only the first appearance of each (date, team) pair
-    keep = appearances.drop_duplicates(subset=["date", "team"], keep="first")
-    keep = keep.reset_index().set_index(["date", "team"])
+    # Mark every (date, team) appearance that occurs more than once that day
+    dup = appearances.duplicated(subset=["date", "team"], keep=False).values
 
-    # Rebuild the original index of rows to keep
-    home_key = data.set_index(["date", "home_team"]).index
-    away_key = data.set_index(["date", "away_team"]).index
-    keep_home = home_key.isin(keep.index)
-    keep_away = away_key.isin(keep.index)
+    # First half of `appearances` is home teams, second half is away teams
+    n = len(data)
+    home_dup = dup[:n]
+    away_dup = dup[n:]
 
-    return data[keep_home & keep_away].reset_index(drop=True)
+    # Drop a match if either its home or away team plays twice that day
+    bad = home_dup | away_dup
+    return data[~bad].reset_index(drop=True)
 
 def get_results(
     start_date: str = "1872-11-30",  # date of first game
