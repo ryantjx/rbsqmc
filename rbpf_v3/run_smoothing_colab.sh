@@ -102,11 +102,13 @@ main() {
     colab status -s "${SESSION}"
 
     mkdir -p "${LOCAL_OUTPUTS}"
+    # training_arrays.npz
+    # optimal_filter/filter_states.npz
     local required=(
         progress.log em_initial_params.json em_final_params.json
         training_summary.json performance_summary.json evaluation_summary.json
         baseline_comparison.json objective_terms_by_epoch.png
-        optimal_filter/filter_states.npz optimal_filter/optimal_filter_summary.json
+        optimal_filter/optimal_filter_summary.json
         optimal_filter/top_strengths.png optimal_filter/timeseries_states.png
         optimal_filter/correlation_matrix.png optimal_filter/log_normalizing_constant.png
         transition_normalization_vs_quadratic.png covariance_eigenvalues_and_condition.png
