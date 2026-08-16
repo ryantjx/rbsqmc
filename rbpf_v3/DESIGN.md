@@ -2,11 +2,11 @@
 
 ## Delivered system
 
-`rbpf_v3` is self-contained. The data loader, bivariate-Poisson likelihood,
-parameter transforms, forward filter, plotting helpers, persistence helpers,
-and bundled data are wholesale copies of `rbpf`, with only the package prefix
-changed. The two backward smoothers deliberately do not share executable
-smoothing or MCEM code.
+`rbpf_v3` is self-contained. The bivariate-Poisson likelihood, parameter
+transforms, forward filter, plotting helpers, persistence helpers, and bundled
+data originate from `rbpf`, with the package prefix changed. The v3 data loader
+also applies the same-day conflict safeguard described below. The two backward
+smoothers deliberately do not share executable smoothing or MCEM code.
 
 Public entry points:
 
@@ -23,6 +23,19 @@ complete-data objective, diagnostics, and `run_mcem`. Tests compare their
 signatures and result fields to prevent interface drift.
 
 ## Data and tensor flow
+
+Before tensor construction, the v3 loader removes every fixture for which
+either team appears in more than one match on the same recorded date. This is
+an intentional v3 divergence from the copied baseline. The covariance update
+assumes a team is observed at most once per day: conditioning the same team
+twice makes the second observed covariance singular. In the cached historical
+data, reversed Morocco--Senegal fixtures on 1975-03-22 exposed this case and
+caused all subsequent Gaussian particle draws to become non-finite. Removing
+all rows participating in a same-day team conflict avoids choosing an
+arbitrary fixture as authoritative and restores the filter's covariance
+precondition. For the 1950--2025 World Cup-team slice, this removes the two
+conflicting rows and one now-empty date, leaving 2,541 observed dates before
+the one-date holdout.
 
 For `D` observed days, `N` filter components, `S` smoothed paths, `M` teams,
 and two traits:
@@ -93,6 +106,13 @@ its contributions to the initial-state and OU transition densities. An M-step
 is accepted only when its fixed-path objective is finite and non-worsening;
 rejection restores the transformed parameters, `mean_0`, and Adam state.
 
+The score likelihood has a location symmetry between the global attack and
+defence offsets in `mean_0` and `alpha`. The requested implementation leaves
+`mean_0` unconstrained, so raw column means are gauge-dependent; team-centred
+contrasts are the identifiable part. Runs should monitor column-mean drift,
+and longer optimization may benefit from an explicit centring constraint or
+proper mean prior if a unique parameterization is required.
+
 Host logging synchronizes filter, smoother, and reported objective stages
 before printing elapsed times. Logs are flushed and mirrored to
 `RBSQMC_PROGRESS_LOG`. Exceptions are logged as `ERR` and re-raised. Full
@@ -152,6 +172,36 @@ The accepted L4 Cuthbert deployment (`D=644`, `N=50`, `S=50`, `M=48`) recorded:
 The optimized final filter had shape `(645, 50, 48, 2)`, completed without a
 hard evaluation failure, and produced final log normalizer `-3284.489`.
 
+The subsequent A100 Cuthbert deployment used the conflict-cleaned 1950--2025
+timeline with `D=2540`, `N=250`, `S=250`, and optimized `mean_0`. It completed
+all five accepted epochs and the final filter without non-finite values:
+
+| Measurement | Result |
+|---|---:|
+| First filter / backward | 9.519 s / 17.521 s |
+| Warm final filter / backward | 6.483 s / 10.813 s |
+| Warm final-epoch M-step | 47.890 s |
+| Training / evaluation / total | 401.353 s / 10.407 s / 457.500 s |
+| Initial / final log normalizer | -10686.762 / -10550.878 |
+| Final transition Mahalanobis ratio | 0.99933 |
+| Final `gamma_0` minimum eigenvalue / condition | 0.07535 / 16.72 |
+| Final `mean_0` range / L2 norm | [-0.09135, 0.09804] / 0.59485 |
+
+In ten common-random-number filter evaluations at `N=250`, the final
+parameters improved mean log normalizer by 137.79 over initialization (95%
+paired interval [134.29, 141.28]). Setting final `mean_0` back to zero removed
+125.95 log units of fit (95% paired interval [121.68, 130.21]); replacing it
+with only its two column means produced a similar 124.96-unit loss over five
+seeds. Thus most of the training-fit gain is associated with learned
+team-specific stationary means, rather than only their global offsets.
+
+This run provides evidence of stable optimization and calibrated transition
+residuals, not broad predictive superiority: its holdout contains only one
+match, whose negative log predictive density (2.249) is worse than the
+constant-Poisson baseline (2.099). Backward component probabilities also
+remain sharply concentrated (median ESS 1.045 of 250), despite using an
+average of 64.35 distinct selected components per time.
+
 ## Verification and reproducibility
 
 ```bash
@@ -188,3 +238,12 @@ MCEM epochs, ran the final optimized-parameter filter, generated and downloaded
 all required artifacts, passed strict finite/evaluation validation, exited
 successfully, and left no active Colab sessions. The validated local output is
 `rbpf_v3/outputs/smoothing`.
+
+On 2026-08-17, the conflict-cleaned `D=2540`, `N=S=250` A100 run also completed
+five accepted epochs, the optimized-parameter filter, and the runner's internal
+finite/evaluation checks. Its measurements and remaining statistical caveats
+are recorded in the performance section above. The local download omits
+`training_arrays.npz` and `optimal_filter/filter_states.npz`; consequently it
+does not satisfy the stricter `validate_outputs.py` artifact-completeness check
+until those large state artifacts are retrieved or the deployment contract is
+explicitly revised.

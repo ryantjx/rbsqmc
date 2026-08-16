@@ -1,9 +1,9 @@
 {
   "start_date": "1950-01-01",
   "end_date": "2025-12-31",
-  "n_particles": 250,
-  "n_smoother_paths": 250,
-  "n_epochs": 5,
+  "n_particles": 1000,
+  "n_smoother_paths": 1000,
+  "n_epochs": 15,
   "n_gradient_steps": 20,
   "learning_rate": 0.001,
   "max_goals": 8,
