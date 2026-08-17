@@ -4,7 +4,7 @@
   "n_particles": 500,
   "n_smoother_paths": 500,
   "n_epochs": 5,
-  "n_gradient_steps": 50,
+  "n_gradient_steps": 20,
   "learning_rate": 0.0001,
   "max_goals": 8,
   "holdout_days": 1,
