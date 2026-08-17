@@ -24,15 +24,11 @@ REQUIRED = (
     "optimal_filter/correlation_matrix.png",
     "optimal_filter/log_normalizing_constant.png",
     "objective_terms_by_epoch.png",
-    "transition_normalization_vs_quadratic.png",
-    "covariance_eigenvalues_and_condition.png",
-    "ou_half_life_and_parameters.png",
-    "transition_mahalanobis_by_time.png",
-    "backward_ess_entropy_and_unique_indices.png",
+    "log_marginal_history.png",
+    "transition_decomposition.png",
     "smoothed_team_trajectories_with_intervals.png",
     "heldout_log_score_by_date.png",
     "result_calibration.png",
-    "goal_marginal_calibration.png",
 )
 
 

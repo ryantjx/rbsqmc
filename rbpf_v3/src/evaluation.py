@@ -16,15 +16,11 @@ from rbpf_v3.src.graphic import plot_all
 
 REQUIRED_PLOTS = (
     "objective_terms_by_epoch.png",
-    "transition_normalization_vs_quadratic.png",
-    "covariance_eigenvalues_and_condition.png",
-    "ou_half_life_and_parameters.png",
-    "transition_mahalanobis_by_time.png",
-    "backward_ess_entropy_and_unique_indices.png",
+    "log_marginal_history.png",
+    "transition_decomposition.png",
     "smoothed_team_trajectories_with_intervals.png",
     "heldout_log_score_by_date.png",
     "result_calibration.png",
-    "goal_marginal_calibration.png",
 )
 
 
@@ -304,6 +300,7 @@ def evaluate_run(training_result, train_data, holdout_data=None, *, seed=0, outp
         "backward": backward,
         "predictive": predictive,
         "baselines": {"constant_independent_poisson": baseline},
+        "log_marginal_history": training_result["log_marginal_history"],
         "final_log_marginal_likelihood": training_result[
             "final_log_marginal_likelihood"
         ],
@@ -344,45 +341,52 @@ def write_evaluation_artifacts(report, output_dir):
         json.dumps(clean["baselines"], indent=2), encoding="utf-8"
     )
     for name in REQUIRED_PLOTS:
-        figure, axis = plt.subplots(figsize=(5, 3))
         objective = clean["objective"]
         predictive = clean["predictive"]
+        if name == "transition_decomposition.png" and objective:
+            # Combined figure: transition decomposition (twin axis) plus the
+            # transition Mahalanobis ratio against its unconditional reference.
+            figure, axes = plt.subplots(1, 2, figsize=(10, 3))
+            epochs = list(range(len(objective)))
+            norm = [row["transition_normalization"] for row in objective]
+            quad = [row["transition_quadratic_penalty"] for row in objective]
+            ax0 = axes[0]
+            ax0.plot(epochs, norm, marker="o", label="normalization", color="tab:blue")
+            ax0.set_ylabel("transition normalization", color="tab:blue")
+            ax0.tick_params(axis="y", labelcolor="tab:blue")
+            twin = ax0.twinx()
+            twin.plot(epochs, quad, marker="o", label="quadratic penalty", color="tab:red")
+            twin.set_ylabel("transition quadratic penalty", color="tab:red")
+            twin.tick_params(axis="y", labelcolor="tab:red")
+            ax0.set_xlabel("EM epoch")
+            ax0.set_title("Transition decomposition")
+            lines = ax0.get_lines() + twin.get_lines()
+            ax0.legend(lines, [line.get_label() for line in lines], fontsize=7)
+            ax1 = axes[1]
+            ratio = clean["smoother"].get("transition_mahalanobis_ratio", 0.0)
+            ax1.axhline(ratio, color="tab:red", label="transition ratio")
+            ax1.axhline(1.0, color="black", linestyle="--", label="unconditional reference")
+            ax1.set_xlabel("EM epoch")
+            ax1.set_title("Transition Mahalanobis ratio")
+            ax1.legend(fontsize=7)
+            figure.tight_layout()
+            figure.savefig(target / name, dpi=100)
+            plt.close(figure)
+            continue
+        figure, axis = plt.subplots(figsize=(5, 3))
         if name == "objective_terms_by_epoch.png" and objective:
             for term in ("initial", "transition", "observation", "prior"):
                 axis.plot([row[term] for row in objective], marker="o", label=term)
             axis.legend(fontsize=7)
-        elif name == "transition_normalization_vs_quadratic.png" and objective:
-            for term in ("transition_normalization", "transition_quadratic_penalty"):
-                axis.plot([row[term] for row in objective], marker="o", label=term)
-            axis.legend(fontsize=7)
-        elif name == "covariance_eigenvalues_and_condition.png":
-            covariance = clean["covariance"]
-            axis.bar(
-                ["min eig", "max eig", "condition"],
-                [
-                    covariance["gamma_min_eigenvalue"],
-                    covariance["gamma_max_eigenvalue"],
-                    covariance["gamma_condition_number"],
-                ],
-            )
-            axis.set_yscale("log")
-        elif name == "ou_half_life_and_parameters.png":
-            covariance = clean["covariance"]
-            axis.bar(
-                ["kappa", "half-life", "alpha", "beta"],
-                [
-                    covariance["kappa"],
-                    covariance["ou_half_life"],
-                    covariance["alpha"],
-                    covariance["beta"],
-                ],
-            )
-        elif name == "backward_ess_entropy_and_unique_indices.png":
-            backward = clean["backward"]
-            axis.plot(backward["ess_by_time"], label="ESS")
-            axis.plot(backward["entropy_by_time"], label="entropy")
-            axis.plot(backward["unique_indices_by_time"], label="unique")
-            axis.legend(fontsize=7)
+        elif name == "log_marginal_history.png" and clean.get("log_marginal_history"):
+            # Observed-data log-likelihood estimate per EM epoch. This is the
+            # primary convergence signal: it should increase (or plateau) as EM
+            # improves the fit, unlike the complete-data objective which is
+            # dominated by a constant and MC noise.
+            history = clean["log_marginal_history"]
+            axis.plot(list(range(len(history))), history, marker="o", color="tab:green")
+            axis.set_xlabel("EM epoch")
+            axis.set_ylabel("log marginal likelihood (logZ)")
         elif name == "smoothed_team_trajectories_with_intervals.png":
             means = np.asarray(clean["smoother"]["smoothed_mean"])
             axis.plot(means[:, 0, 0], label="team 0 attack")
@@ -397,15 +401,9 @@ def write_evaluation_artifacts(report, output_dir):
                 [row["hda_probabilities"] for row in predictive["matches"]]
             )
             axis.bar(["home", "draw", "away"], probabilities.mean(axis=0))
-        elif name == "goal_marginal_calibration.png" and predictive.get("available"):
-            axis.scatter(
-                [row["expected_home_goals"] for row in predictive["matches"]],
-                [row["home_score"] for row in predictive["matches"]],
-            )
         else:
-            ratio = clean["smoother"].get("transition_mahalanobis_ratio", 0.0)
-            axis.axhline(ratio, label="transition ratio")
-            axis.legend(fontsize=7)
+            plt.close(figure)
+            continue
         axis.set_title(name.removesuffix(".png").replace("_", " "))
         axis.grid(alpha=0.25)
         figure.tight_layout()

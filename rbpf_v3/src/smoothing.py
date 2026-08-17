@@ -26,6 +26,19 @@ from rbpf_v3.src.progress import progress
 from rbpf_v3.src.utils import EMParams
 
 
+# Extra degrees of freedom for the inverse-Wishart prior on gamma_0 (Sigma_0).
+# The prior is InvWishart(nu, S) with nu = dimension + PRIOR_DOF_EXTRA. A larger
+# value shrinks the fitted covariance toward the initial gamma_0, which helps
+# stabilize EM when the M x M covariance is far higher-dimensional than the
+# data can identify. The minimum valid nu is dimension + 1.
+#
+# Prior mean ratio E[Sigma]/Sigma0_init = (nu+M+1)/(nu-M-1):
+#   extra=50  -> 3.0x (moderate)
+#   extra=300 -> 1.3x (aggressive)
+#   extra=500 -> 1.2x (very aggressive, near the practical ceiling)
+PRIOR_DOF_EXTRA = 300.0
+
+
 class BackwardDiagnostics(NamedTuple):
     ess_by_time: jax.Array
     entropy_by_time: jax.Array
@@ -715,8 +728,8 @@ def run_mcem(
     raw = encode_EM_params(initial_params)
     optimizer = optax.adam(config.learning_rate)
     opt_state = optimizer.init(raw)
-    dimension = initial_params.gamma_0.shape[0]
-    prior_dof = float(dimension + 10)
+    dimension = initial_params.gamma_0.shape[0] # M x M covariance matrix dimension
+    prior_dof = float(dimension + PRIOR_DOF_EXTRA)
     prior_scale = (prior_dof + dimension + 1.0) * initial_params.gamma_0
     params_history = [initial_params]
     mstep_history = []

@@ -936,15 +936,11 @@ Required evaluation plots:
 
 ```text
 objective_terms_by_epoch.png
-transition_normalization_vs_quadratic.png
-covariance_eigenvalues_and_condition.png
-ou_half_life_and_parameters.png
-transition_mahalanobis_by_time.png
-backward_ess_entropy_and_unique_indices.png
+log_marginal_history.png
+transition_decomposition.png
 smoothed_team_trajectories_with_intervals.png
 heldout_log_score_by_date.png
 result_calibration.png
-goal_marginal_calibration.png
 optimal_filter/top_strengths.png
 optimal_filter/timeseries_states.png
 optimal_filter/correlation_matrix.png
