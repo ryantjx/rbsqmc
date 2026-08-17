@@ -110,6 +110,37 @@ offset symmetry between `mean_0` and `alpha`. An M-step is accepted only when
 its fixed-path objective is finite and non-worsening; rejection restores the
 transformed parameters and Adam state.
 
+### Transition-normalization gradient decoupling
+
+The complete-data transition term splits into a large, parameter-driven
+normalization constant (the OU kernel log-determinant, `O(1e5)` for the
+1950--2025 timeline) and the data-fit quadratic penalty (`O(1e4)`). Because the
+normalization is a constant given the parameters and dwarfs the data-fit terms,
+its gradient can dominate the M-step and leave the prediction-relevant
+parameters (`alpha`, `beta`, latent states) barely moving. The Cuthbert backend
+therefore stops the gradient through the normalization:
+
+```python
+normalization = transition_normalization(params, model_inputs)
+quadratic = terms["transition"] - normalization
+return (
+    terms["initial"]
+    + jax.lax.stop_gradient(normalization)
+    + quadratic
+    + terms["observation"]
+    + prior
+)
+```
+
+The objective *value* is unchanged; only the gradient is rebalanced so Adam
+optimizes the quadratic penalty, observation, and prior rather than the
+constant's scale. This is a deliberate rebalancing tradeoff: the normalization
+no longer contributes to the covariance/`kappa` gradient, so the covariance
+scale is anchored by the quadratic penalty and the inverse-Wishart prior
+instead. The `transition_normalization` helper is shared by
+`mcem_objective` and `objective_diagnostics` so the reported decomposition
+stays consistent with the optimized objective.
+
 Host logging synchronizes filter, smoother, and reported objective stages
 before printing elapsed times. Logs are flushed and mirrored to
 `RBSQMC_PROGRESS_LOG`. Exceptions are logged as `ERR` and re-raised. Full

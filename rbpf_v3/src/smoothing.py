@@ -38,7 +38,7 @@ from rbpf_v3.src.utils import EMParams
 # value shrinks the fitted covariance toward the initial gamma_0, which helps
 # stabilize EM when the M x M covariance is far higher-dimensional than the
 # data can identify. The minimum valid nu is dimension + 1.
-PRIOR_DOF_EXTRA = 300.0
+PRIOR_DOF_EXTRA = 50
 
 # Floor on the diagonal standard deviations sigma_ii (keeps Gamma_0 PD).
 SIGMA_FLOOR = 1e-4
@@ -362,6 +362,26 @@ def log_transition_density(
     )
 
 
+def transition_normalization(
+    params: EMParams, model_inputs
+) -> jax.Array:
+    """Sum of the transition-kernel normalization constants over all days.
+
+    This is the log-determinant / entropy part of the OU transition density.
+    It is a constant given the parameters (no data dependence) and is large
+    relative to the data-fit terms, so its gradient can dominate the M-step.
+    """
+    dimension = params.mean_0.size
+    dt = model_inputs.timestamp - model_inputs.timestamp_prev
+    scale = 1.0 - jnp.exp(-2.0 * params.kappa * dt)
+    return jnp.sum(
+        jax.vmap(
+            lambda value: -0.5 * dimension * jnp.log(2.0 * jnp.pi)
+            - 0.5 * kron_logdet(value * params.gamma_0, params.B)
+        )(scale)
+    )
+
+
 @partial(jax.jit, static_argnames=("max_goals",))
 def complete_data_terms(
     params: EMParams,
@@ -415,7 +435,20 @@ def mcem_objective(
     params = _constrain_params(raw, C0, mean_0)
     terms = complete_data_terms(params, paths, model_inputs, max_goals)
     prior = log_inverse_wishart_kernel(params.gamma_0, prior_scale, prior_dof)
-    return terms["initial"] + terms["transition"] + terms["observation"] + prior
+    # The transition term splits into a large, parameter-driven normalization
+    # constant and the data-fit quadratic penalty. Stop the gradient through the
+    # normalization so the M-step optimizes the parts that matter for
+    # prediction (quadratic penalty, observation, prior) rather than being
+    # dominated by the constant's scale. The objective *value* is unchanged.
+    normalization = transition_normalization(params, model_inputs)
+    quadratic = terms["transition"] - normalization
+    return (
+        terms["initial"]
+        + jax.lax.stop_gradient(normalization)
+        + quadratic
+        + terms["observation"]
+        + prior
+    )
 
 
 def _negative_objective(
@@ -449,15 +482,7 @@ def objective_diagnostics(
 ) -> dict[str, jax.Array]:
     terms = complete_data_terms(params, paths, model_inputs, max_goals)
     prior = log_inverse_wishart_kernel(params.gamma_0, prior_scale, prior_dof)
-    dimension = params.mean_0.size
-    dt = model_inputs.timestamp - model_inputs.timestamp_prev
-    scale = 1.0 - jnp.exp(-2.0 * params.kappa * dt)
-    normalization = jnp.sum(
-        jax.vmap(
-            lambda value: -0.5 * dimension * jnp.log(2.0 * jnp.pi)
-            - 0.5 * kron_logdet(value * params.gamma_0, params.B)
-        )(scale)
-    )
+    normalization = transition_normalization(params, model_inputs)
     return {
         **terms,
         "prior": prior,
