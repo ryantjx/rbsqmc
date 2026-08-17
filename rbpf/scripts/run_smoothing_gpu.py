@@ -124,6 +124,7 @@ def bootstrap(no_clone: bool = False) -> tuple[Path, str]:
         "jax[cuda12]==0.11.0", "cuthbert==0.0.14", "optax==0.2.8",
         "numpy==2.4.6", "scipy==1.18.0",
         "pandas==3.0.5", "pyarrow==25.0.1", "matplotlib==3.11.1",
+        "tqdm",
     ])
     return REPO_DIR, uv_bin
 
