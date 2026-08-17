@@ -113,12 +113,12 @@ main() {
     LOCAL_OUTPUTS="${REPO_ROOT}/${output_dir}"
     REMOTE_OUTPUTS="/content/rbsqmc/${output_dir}"
 
-    # Dry-run validation of the bootstrap
+    # Dry-run validation of the bootstrap (use local path for validation only)
     python3 "${BOOTSTRAP}" --config "${CONFIG}" --dry-run >/dev/null
 
     if [[ "${DRY_RUN}" -eq 1 ]]; then
         printf 'colab run --gpu %q --keep --timeout %q --session %q %q --config %q\n' \
-            "${gpu_type}" "${timeout}" "${SESSION}" "${BOOTSTRAP}" "${CONFIG}"
+            "${gpu_type}" "${timeout}" "${SESSION}" "${BOOTSTRAP}" "$(basename "${CONFIG}")"
         return 0
     fi
 
@@ -127,8 +127,10 @@ main() {
 
     progress OUT "launching RBPF ${m_step} smoothing on Colab GPU=${gpu_type}"
     SESSION_LAUNCHED=1
+    # Pass just the config filename — the bootstrap resolves it inside the
+    # cloned repo on the VM (the local absolute path doesn't exist there).
     colab run --gpu "${gpu_type}" --keep --timeout "${timeout}" \
-        --session "${SESSION}" "${BOOTSTRAP}" --config "${CONFIG}"
+        --session "${SESSION}" "${BOOTSTRAP}" --config "$(basename "${CONFIG}")"
     colab status -s "${SESSION}"
 
     mkdir -p "${LOCAL_OUTPUTS}"

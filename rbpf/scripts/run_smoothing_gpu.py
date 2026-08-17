@@ -81,9 +81,20 @@ def is_colab() -> bool:
     return Path("/content").exists()
 
 
-def bootstrap() -> Path:
-    """Clone/update the repository and install runtime dependencies."""
-    if (REPO_DIR / ".git").is_dir():
+def bootstrap(no_clone: bool = False) -> Path:
+    """Clone/update the repository and install runtime dependencies.
+
+    When ``no_clone`` is True, skip the git clone/pull step and assume the
+    repository has already been uploaded to ``REPO_DIR`` (e.g. via
+    ``colab run --upload``). This avoids any dependency on GitHub.
+    """
+    if no_clone:
+        if not (REPO_DIR / "rbpf").is_dir():
+            raise FileNotFoundError(
+                f"--no-clone: expected repo at {REPO_DIR} but rbpf/ is missing"
+            )
+        log(f"Using uploaded repo at {REPO_DIR} (no clone)")
+    elif (REPO_DIR / ".git").is_dir():
         log(f"Using existing checkout at {REPO_DIR}")
         run(["git", "-c", "http.version=HTTP/1.1", "pull", "--ff-only"], cwd=REPO_DIR)
     else:
@@ -114,7 +125,16 @@ def bootstrap() -> Path:
 
 def load_config(repo_root: Path, override: str | None = None) -> dict:
     config = dict(DEFAULT_CONFIG)
-    path = Path(override) if override else repo_root / "rbpf/scripts/config/smoothing_gpu_config.json"
+    if override:
+        path = Path(override)
+        # If the override is just a filename (no path separators), resolve it
+        # relative to the config directory inside the repo. This lets the
+        # orchestrator pass e.g. "smoothing_bfgs_gpu_config.json" without
+        # knowing the repo root path on the VM.
+        if not path.is_absolute() and not path.parent.parts:
+            path = repo_root / "rbpf/scripts/config" / path
+    else:
+        path = repo_root / "rbpf/scripts/config/smoothing_gpu_config.json"
     if not path.exists():
         raise FileNotFoundError(f"missing smoothing configuration: {path}")
     config.update(json.loads(path.read_text(encoding="utf-8")))
@@ -145,6 +165,8 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Colab GPU bootstrap for RBPF smoothing EM")
     p.add_argument("--config", help="Optional config JSON override")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--no-clone", action="store_true",
+                   help="Skip git clone; use the repo already uploaded to /content/rbsqmc")
     return p
 
 
@@ -155,7 +177,7 @@ def main(argv=None) -> int:
         print(" ".join(training_command(config)))
         return 0
 
-    repo_root = bootstrap() if is_colab() else Path(__file__).resolve().parents[2]
+    repo_root = bootstrap(no_clone=args.no_clone) if is_colab() else Path(__file__).resolve().parents[2]
     config = load_config(repo_root, args.config)
     os.environ.setdefault("RBSQMC_PLATFORM", "cuda")
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
