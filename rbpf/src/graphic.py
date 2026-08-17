@@ -299,6 +299,70 @@ def plot_correlation_matrix(augmented_results, team_id_to_name, num_teams=None,
     plt.close(fig)
 
 
+def plot_initial_correlation_matrix(params, team_id_to_name, num_teams=None,
+                            save_path=os.path.join(OUTPUT_DIR, "initial_correlation_matrix.png")):
+    """Heatmap of the prior (gamma_0) team correlation matrix.
+
+    Unlike ``plot_correlation_matrix`` which shows the posterior gamma_T
+    (near-zero after Kalman conditioning), this shows the learned prior
+    covariance gamma_0 that EM optimizes, which contains the between-team
+    correlation structure.
+
+    Args:
+        params: EMParams with gamma_0 shape (M, M).
+        team_id_to_name: dict mapping team_id -> team name.
+        num_teams: number of teams (inferred from team_id_to_name if None).
+        save_path: if given, save figure to this path.
+    """
+    if num_teams is None:
+        num_teams = len(team_id_to_name)
+    gamma_0 = np.asarray(params.gamma_0)
+    std = np.sqrt(np.diag(gamma_0))
+    std_safe = np.where(std > 1e-10, std, 1.0)
+    corr = gamma_0 / np.outer(std_safe, std_safe)
+    corr = np.clip(corr, -1, 1)
+
+    names = [team_id_to_name[i] for i in range(num_teams)]
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    im = ax.imshow(corr, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
+    ax.set_xticks(range(num_teams))
+    ax.set_yticks(range(num_teams))
+    ax.set_xticklabels(names, rotation=90, fontsize=6)
+    ax.set_yticklabels(names, fontsize=6)
+    ax.set_title("Team Correlation Matrix (Prior gamma_0)")
+    fig.colorbar(im, ax=ax, label="Correlation")
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+    plt.close(fig)
+
+
+def save_filter_states(filtered_states, augmented_results, save_path):
+    """Save filter states and augmented results to an .npz file.
+
+    Args:
+        filtered_states: cuthbert FilterStates.
+        augmented_results: RBPFFootballResults.
+        save_path: path to the .npz file.
+    """
+    np.savez(
+        save_path,
+        particles_x=np.asarray(filtered_states.particles.x),
+        log_weights=np.asarray(filtered_states.log_weights),
+        log_normalizing_constant=np.asarray(filtered_states.log_normalizing_constant),
+        gamma=np.asarray(augmented_results.gamma),
+        gamma_pred=np.asarray(augmented_results.gamma_pred),
+        gamma_observed=np.asarray(augmented_results.gamma_observed),
+        kalman_gain=np.asarray(augmented_results.kalman_gain),
+        timestamp=np.asarray(augmented_results.timestamp),
+        timestamp_prev=np.asarray(augmented_results.timestamp_prev),
+        match_mask=np.asarray(augmented_results.match_mask),
+    )
+    print(f"Saved filter states to {os.path.abspath(save_path)}")
+
+
 def plot_log_normalizing_constant(filtered_states,
                                   save_path=os.path.join(OUTPUT_DIR, "log_normalizing_constant.png")):
     """Line plot of the log normalizing constant over time.
@@ -632,13 +696,15 @@ def plot_loss_components(
 
 
 def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_path,
-             timestamps=None):
+             timestamps=None, params=None):
     """Generate all plots and save them to the outputs/graphic directory.
 
     Args:
         timestamps: optional x-axis values (e.g. match dates) for the
             ``plot_timeseries_states`` plot. If None, falls back to the
             filter's numeric timestamps.
+        params: optional EMParams. If given, also plot the prior (gamma_0)
+            correlation matrix and save filter states to .npz.
     """
     os.makedirs(save_path, exist_ok=True)
     abs_save_path = os.path.abspath(save_path)
@@ -655,6 +721,11 @@ def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_pa
                             save_path=os.path.join(save_path, "correlation_matrix.png"))
     plot_log_normalizing_constant(filtered_states,
                                   save_path=os.path.join(save_path, "log_normalizing_constant.png"))
+    if params is not None:
+        plot_initial_correlation_matrix(params, team_id_to_name, num_teams=num_teams,
+                                save_path=os.path.join(save_path, "initial_correlation_matrix.png"))
+        save_filter_states(filtered_states, augmented_results,
+                           save_path=os.path.join(save_path, "filter_states.npz"))
 
 
 # ---------------------------------------------------------------------------

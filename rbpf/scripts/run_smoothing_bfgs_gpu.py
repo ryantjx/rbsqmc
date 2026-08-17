@@ -225,6 +225,7 @@ def train(config: dict, repo_root: Path) -> None:
         team_id_to_name=team_id_to_name,
         top_n=10,
         save_path=save_path + "/filter",
+        params=latest_params,
     )
     print("[main] Saved filter plots.")
 
