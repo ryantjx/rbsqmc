@@ -38,6 +38,8 @@ DEFAULT_CONFIG = {
     "initial_params": "",
     "output_dir": "rbpf/outputs/smoothing_bfgs",
     "m_step": "bfgs",
+    "maxiter": 1,
+    "maxcor": 10,
     "gpu_type": "A100",
     "colab_timeout": 7200,
     "repo_url": "https://github.com/ryantjx/rbsqmc.git",
@@ -183,6 +185,8 @@ def train(config: dict, repo_root: Path) -> None:
         n_smoothed_trajectories=config["n_smoother_paths"],
         num_epochs=config["n_epochs"],
         max_goals=config["max_goals"],
+        maxiter=config.get("maxiter", 1),
+        maxcor=config.get("maxcor", 10),
     )
     print("[main] EM finished.")
 
@@ -201,6 +205,8 @@ def train(config: dict, repo_root: Path) -> None:
         "max_goals": config["max_goals"],
         "seed": config["seed"],
         "m_step": "bfgs",
+        "maxiter": config.get("maxiter", 1),
+        "maxcor": config.get("maxcor", 10),
         "output_dir": save_path,
     }
     with open(save_path + "/run_config.json", "w") as f:

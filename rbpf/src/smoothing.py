@@ -188,6 +188,7 @@ def E_step(
 ):
     filter_key, smoother_key = jax.random.split(key, 2)
     # 1. Run RBPF forward pass
+    print("  [E-step] Running forward filter...", flush=True)
     filtered_states, model_inputs_rbpf = run_filter(
         key=filter_key,
         model_inputs=model_inputs,
@@ -195,8 +196,9 @@ def E_step(
         n_particles=n_particles,
         max_goals=max_goals
     )
-    # 2. Perform backward smoothing via backward sampling fn. Skip implementation using cuthbert because we are exploring a trajectories from a sampled state instead of using previous particles. This creates the noise that will enable the EM algorithm to converge.
-    # 3. return the smoothed trajectories for M-step
+    print(f"  [E-step] Filter done. logZ = {float(filtered_states.log_normalizing_constant[-1]):.4f}", flush=True)
+    # 2. Perform backward smoothing via backward sampling fn.
+    print(f"  [E-step] Running backward smoothing ({n_smoothed_trajectories} trajectories)...", flush=True)
     smoothed_trajectories = rbpf_backward_smoothing(
         key=smoother_key,
         n_smoothed_trajectories=n_smoothed_trajectories,
@@ -204,6 +206,7 @@ def E_step(
         params=params,
         model_inputs_rbpf=model_inputs_rbpf
     )
+    print("  [E-step] Smoothing done.", flush=True)
     return smoothed_trajectories, filtered_states.log_normalizing_constant[-1]
 
 def loss_fn(

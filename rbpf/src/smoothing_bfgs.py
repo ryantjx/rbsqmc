@@ -21,8 +21,8 @@ smoothing trajectories, exactly as in the Adam version.
 import jax
 import jax.numpy as jnp
 import os
-
-from jax.scipy.optimize import minimize as jax_minimize
+import numpy as np
+from scipy.optimize import minimize as scipy_minimize
 
 from rbpf.src.model import run_filter
 from rbpf.src.data import get_results, WORLDCUP_2026_TEAMS
@@ -87,31 +87,72 @@ def m_step_bfgs(
     model_inputs: FootballResults,
     fixed_mean_0: jax.Array,
     max_goals: int,
+    maxiter: int = 1,
+    maxcor: int = 10,
 ) -> tuple[RawEMParams, dict]:
-    """One M-step via BFGS.
+    """One M-step via L-BFGS-B (scipy) with bounded iterations.
 
-    Minimizes the mean of `loss_fn` over the smoothed trajectories w.r.t. the
-    unconstrained parameters. `loss_fn` already returns the negative
-    complete-data log-likelihood, so we minimize its Monte-Carlo average
-    (the negative ELBO, up to the entropy term which is independent of theta).
+    Uses scipy.optimize.minimize with L-BFGS-B, which:
+      - Limits memory via the limited-memory Hessian approximation (maxcor).
+      - Supports maxiter to prevent overshooting (the main cause of divergence).
+      - Runs on CPU, but the loss is computed on GPU via JAX with checkpointing.
+
+    The loss uses jax.checkpoint (rematerialization) so Cholesky factors and
+    triangular solves are recomputed during backprop instead of being stored,
+    avoiding OOM on large n_smoother_paths.
     """
-    flat_init = _raw_to_flat(raw_params)
-    # Precompute static structure outside the traced loss so jnp.split gets
-    # concrete Python split indices.
+    flat_init = np.asarray(_raw_to_flat(raw_params))
     structure = _raw_structure(raw_params)
 
-    def _mc_neg_elbo(flat: jax.Array) -> jax.Array:
+    # Checkpointed loss: rematerialize intermediates during backprop
+    _loss_fn = jax.checkpoint(
+        lambda raw, traj: loss_fn(
+            decode_EM_params(raw, fixed_mean_0), traj, model_inputs, max_goals
+        ),
+        policy=jax.checkpoint_policies.nothing_saveable(),
+    )
+
+    # JIT-compiled value_and_grad for the per-trajectory loss
+    _per_traj_vg = jax.jit(jax.value_and_grad(
+        lambda raw, traj: _loss_fn(raw, traj)
+    ))
+
+    # JIT-compiled mean loss + gradient over all trajectories
+    @jax.jit
+    def _loss_and_grad(flat):
         raw = _flat_to_raw(flat, structure)
-        decoded = decode_EM_params(raw, fixed_mean_0)
-        # Average loss over the N smoothed trajectories (Monte-Carlo ELBO).
-        per_traj = jax.vmap(
-            lambda traj: loss_fn(decoded, traj, model_inputs, max_goals)
+        vals, grads = jax.vmap(
+            lambda traj: _per_traj_vg(raw, traj)
         )(smoothed_trajectories)
-        return jnp.mean(per_traj)
+        mean_val = jnp.mean(vals)
+        mean_grad = jax.tree_util.tree_map(
+            lambda g: jnp.mean(g, axis=0), grads
+        )
+        flat_grad = _raw_to_flat(mean_grad)
+        return mean_val, flat_grad
 
-    result = jax_minimize(_mc_neg_elbo, flat_init, method="BFGS")
+    def _scipy_loss(flat):
+        val, _ = _loss_and_grad(jnp.asarray(flat))
+        return float(val)
 
-    raw_next = _flat_to_raw(result.x, structure)
+    def _scipy_grad(flat):
+        _, grad = _loss_and_grad(jnp.asarray(flat))
+        return np.asarray(grad)
+
+    result = scipy_minimize(
+        fun=_scipy_loss,
+        x0=flat_init,
+        jac=_scipy_grad,
+        method="L-BFGS-B",
+        options={
+            "maxiter": maxiter,
+            "maxcor": maxcor,
+            "ftol": 1e-6,
+            "gtol": 1e-5,
+        },
+    )
+
+    raw_next = _flat_to_raw(jnp.asarray(result.x), structure)
     diagnostics = {
         "success": bool(result.success),
         "nit": int(result.nit),
@@ -133,6 +174,8 @@ def run_EM(
     n_smoothed_trajectories: int,
     num_epochs: int,
     max_goals: int,
+    maxiter: int = 1,
+    maxcor: int = 10,
 ):
     """EM with a BFGS M-step.
 
@@ -176,6 +219,8 @@ def run_EM(
             model_inputs=model_inputs,
             fixed_mean_0=fixed_mean_0,
             max_goals=max_goals,
+            maxiter=maxiter,
+            maxcor=maxcor,
         )
         print(f"  [Epoch {epoch+1}/{num_epochs}] M-step done. "
               f"loss={mstep_diag['final_loss']:.4f}, nit={mstep_diag['nit']}, "
@@ -217,6 +262,8 @@ def main():
     N_smoothed_trajectories = cfg.get("n_smoother_paths", 1000)
     epochs = cfg.get("n_epochs", 5)
     seed = cfg.get("seed", 0)
+    maxiter = cfg.get("maxiter", 1)
+    maxcor = cfg.get("maxcor", 10)
     key = jax.random.PRNGKey(seed)
     ############################################
     df, model_inputs, team_id_to_name = get_results(
@@ -239,6 +286,8 @@ def main():
         n_smoothed_trajectories=N_smoothed_trajectories,
         num_epochs=epochs,
         max_goals=MAX_GOALS,
+        maxiter=maxiter,
+        maxcor=maxcor,
     )
     print("[main] EM finished.")
 

@@ -9,6 +9,8 @@
   "initial_params": "",
   "output_dir": "rbpf/outputs/smoothing_bfgs",
   "m_step": "bfgs",
+  "maxiter": 1,
+  "maxcor": 10,
   "gpu_type": "L4",
   "colab_timeout": 7200,
   "repo_url": "https://github.com/ryantjx/rbsqmc.git"
