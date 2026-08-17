@@ -113,7 +113,11 @@ def bootstrap(no_clone: bool = False) -> tuple[Path, str]:
     # Install uv and create an isolated venv to avoid conflicts with
     # Colab's pre-installed packages (numpy/scipy version mismatches).
     run(["bash", "-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
-    uv_bin = str(Path.home() / ".local" / "bin" / "uv")
+    # uv may install to /usr/local/bin/uv or ~/.local/bin/uv depending on the
+    # environment. Use shutil.which to find it, falling back to both paths.
+    uv_bin = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
+    if not Path(uv_bin).exists():
+        uv_bin = "/usr/local/bin/uv"
     venv_dir = REPO_DIR / ".venv"
     run([uv_bin, "venv", str(venv_dir), "--python", "3.12"])
     run([
