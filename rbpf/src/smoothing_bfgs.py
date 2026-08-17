@@ -196,13 +196,13 @@ def run_EM(
 
 def main():
     ############################# MODEL TRAINING PIPELINE #############################
-    start_date = "2000-01-01"
+    start_date = "1950-01-01"
     end_date = "2025-12-31"
     teams_only = WORLDCUP_2026_TEAMS
     MAX_GOALS = 8
-    N_particles = 10000
-    N_smoothed_trajectories = 10000
-    epochs = 3
+    N_particles = 1000
+    N_smoothed_trajectories = 1000
+    epochs = 5
     key = jax.random.PRNGKey(0)
     ############################################
     df, model_inputs, team_id_to_name = get_results(
