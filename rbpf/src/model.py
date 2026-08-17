@@ -6,9 +6,9 @@ import cuthbertlib
 from functools import partial
 
 from rbpf.src.bivariate_poisson import loglik
-from rbpf.src.data import get_results, FootballResults, ACTIVE_TEAMS, WORLDCUP_2026_TEAMS
+from rbpf.src.data import get_results, WORLDCUP_2026_TEAMS
 from rbpf.src.helpers import default_init_params, generate_rbpf_trajectory
-from rbpf.src.utils import RBPFState, RBPFFootballResults, EMParams
+from rbpf.src.utils import RBPFState, RBPFFootballResults, EMParams, FootballResults
 
 # Default to CPU locally, but allow the GPU pipeline to force a device via
 # the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).
@@ -61,7 +61,13 @@ def compute_gamma_trajectory(
                 # gamma_updated = gamma_current - K @ gamma_RO.T
                 # Zero observed teams' rows/cols (Schur marginalization).
                 obs_mask = jnp.zeros(num_teams, dtype=bool).at[obs_indices].set(True)
-                gamma_updated = gamma_updated * jnp.outer(~obs_mask, ~obs_mask)
+                keep_mask = jnp.outer(~obs_mask, ~obs_mask)
+                gamma_updated = gamma_updated * keep_mask
+                # No jitter needed here: the unobserved block is PSD (min eig
+                # ~0.15) and the observed block is exactly 0. The full matrix
+                # is structurally PSD. Tiny negative eigenvalues (~-5e-10) on
+                # the zero eigenvalues are float32 noise that is handled by
+                # the stable Cholesky in the downstream sampler.
                 return (gamma_updated, (gamma_OO, K))
 
             # Padded (invalid) matches pass through unchanged.

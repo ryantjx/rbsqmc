@@ -657,6 +657,178 @@ def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_pa
                                   save_path=os.path.join(save_path, "log_normalizing_constant.png"))
 
 
+# ---------------------------------------------------------------------------
+# Smoothed trajectory plots (from plot_smoothing.py)
+# ---------------------------------------------------------------------------
+def plot_smoothed_trajectories(
+    smoothed_trajectories,
+    team_id_to_name,
+    df,
+    top_n=8,
+    n_sample_trajs=5,
+    save_path=os.path.join(OUTPUT_DIR, "smoothed_trajectories.png"),
+):
+    """Plot smoothed attack/defense trajectories with uncertainty bands.
+
+    Args:
+        smoothed_trajectories: array of shape (N_traj, T+1, M, 2) from
+            rbpf_backward_smoothing.
+        team_id_to_name: dict mapping team index -> team name.
+        df: pandas DataFrame from get_results with a 'date' column.
+        top_n: number of top teams to plot (ranked by final smoothed attack).
+        n_sample_trajs: number of individual trajectories to overlay.
+        save_path: where to save the figure.
+    """
+    trajs = np.asarray(smoothed_trajectories)  # (N, T+1, M, 2)
+    n_traj, n_steps, n_teams, _ = trajs.shape
+
+    # Smoothed mean and std across trajectories
+    smooth_mean = trajs.mean(axis=0)   # (T+1, M, 2)
+    smooth_std = trajs.std(axis=0)     # (T+1, M, 2)
+
+    # Rank teams by final smoothed attack strength
+    final_attack = smooth_mean[-1, :, 0]
+    top_indices = np.argsort(final_attack)[-top_n:][::-1]
+
+    # Build x-axis dates: df has one row per unique date (T rows).
+    # The smoothed trajectory has T+1 steps (prepended initial state at t=0).
+    dates = df["date"].to_numpy()
+    if len(dates) == n_steps - 1:
+        dates = np.concatenate([dates[:1], dates])
+    elif len(dates) != n_steps:
+        dates = np.arange(n_steps)
+
+    is_datetime = dates.dtype.kind in {"M", "O"}
+    colors = plt.get_cmap("tab10")(np.linspace(0, 1, top_n))
+
+    fig, axes = plt.subplots(2, 1, figsize=(16, 10), sharex=True)
+
+    if is_datetime:
+        import matplotlib.dates as mdates
+        axes[0].xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+        axes[0].xaxis.set_major_locator(mdates.AutoDateLocator())
+        fig.autofmt_xdate()
+
+    for team_idx, color in zip(top_indices, colors):
+        name = team_id_to_name.get(int(team_idx), str(team_idx))
+
+        for dim, ax, label in [(0, axes[0], "Attack"), (1, axes[1], "Defense")]:
+            mean = smooth_mean[:, team_idx, dim]
+            std = smooth_std[:, team_idx, dim]
+
+            # Uncertainty band: mean ± 1 std
+            ax.fill_between(dates, mean - std, mean + std,
+                            color=color, alpha=0.15)
+            # Mean line
+            ax.plot(dates, mean, color=color, linewidth=2.0, label=name)
+
+            # Overlay a few sample trajectories (thin, transparent)
+            for i in range(min(n_sample_trajs, n_traj)):
+                ax.plot(dates, trajs[i, :, team_idx, dim],
+                        color=color, linewidth=0.5, alpha=0.25)
+
+    axes[0].set_title(f"Top {top_n} Teams — Smoothed Attack Trajectories "
+                      f"({n_traj} trajectories, ±1 std band)")
+    axes[0].set_ylabel("Attack state")
+    axes[1].set_title(f"Top {top_n} Teams — Smoothed Defense Trajectories")
+    axes[1].set_ylabel("Defense state")
+    axes[1].set_xlabel("Date" if is_datetime else "Time step")
+
+    for ax in axes:
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best", fontsize=8)
+
+    fig.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+    plt.close(fig)
+    return fig
+
+
+def plot_smoothed_uncertainty(
+    smoothed_trajectories,
+    team_id_to_name,
+    df,
+    top_n=8,
+    save_path=os.path.join(OUTPUT_DIR, "smoothed_uncertainty.png"),
+):
+    """Plot the smoothed uncertainty (std across trajectories) over time.
+
+    This shows how the posterior uncertainty evolves — it should decrease
+    during periods with many matches and increase during gaps.
+    """
+    trajs = np.asarray(smoothed_trajectories)
+    n_traj, n_steps, n_teams, _ = trajs.shape
+    smooth_std = trajs.std(axis=0)  # (T+1, M, 2)
+
+    final_attack = trajs[:, -1, :, 0].mean(axis=0)
+    top_indices = np.argsort(final_attack)[-top_n:][::-1]
+
+    dates = df["date"].to_numpy()
+    if len(dates) == n_steps - 1:
+        dates = np.concatenate([dates[:1], dates])
+    elif len(dates) != n_steps:
+        dates = np.arange(n_steps)
+
+    is_datetime = dates.dtype.kind in {"M", "O"}
+    colors = plt.get_cmap("tab10")(np.linspace(0, 1, top_n))
+
+    fig, axes = plt.subplots(2, 1, figsize=(16, 8), sharex=True)
+
+    if is_datetime:
+        import matplotlib.dates as mdates
+        axes[0].xaxis.set_major_formatter(mdates.DateFormatter("%Y"))
+        axes[0].xaxis.set_major_locator(mdates.AutoDateLocator())
+        fig.autofmt_xdate()
+
+    for team_idx, color in zip(top_indices, colors):
+        name = team_id_to_name.get(int(team_idx), str(team_idx))
+        axes[0].plot(dates, smooth_std[:, team_idx, 0],
+                     color=color, linewidth=1.5, label=name)
+        axes[1].plot(dates, smooth_std[:, team_idx, 1],
+                     color=color, linewidth=1.5, label=name)
+
+    axes[0].set_title(f"Top {top_n} Teams — Smoothed Attack Uncertainty (std across {n_traj} trajectories)")
+    axes[0].set_ylabel("Attack std")
+    axes[1].set_title(f"Top {top_n} Teams — Smoothed Defense Uncertainty")
+    axes[1].set_ylabel("Defense std")
+    axes[1].set_xlabel("Date" if is_datetime else "Time step")
+
+    for ax in axes:
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best", fontsize=8)
+
+    fig.tight_layout()
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+    plt.close(fig)
+    return fig
+
+
+def plot_all_smoothing(smoothed_trajectories, team_id_to_name, df, top_n, save_path):
+    """Generate all smoothing plots and save them to ``save_path``."""
+    os.makedirs(save_path, exist_ok=True)
+    plot_smoothed_trajectories(
+        smoothed_trajectories=smoothed_trajectories,
+        team_id_to_name=team_id_to_name,
+        df=df,
+        top_n=top_n,
+        save_path=os.path.join(save_path, "smoothed_trajectories.png"),
+    )
+    plot_smoothed_uncertainty(
+        smoothed_trajectories=smoothed_trajectories,
+        team_id_to_name=team_id_to_name,
+        df=df,
+        top_n=top_n,
+        save_path=os.path.join(save_path, "smoothed_uncertainty.png"),
+    )
+
+
 def plot_em_results(
     results: dict,
     output_dir: str,

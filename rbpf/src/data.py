@@ -1,12 +1,7 @@
 import os
 import json
 import pandas as pd
-import numpy as np
-from typing import NamedTuple
-import jax
-from rbpf.src.utils import FootballResults
 from rbpf.src.helpers import generate_results_jax
-from datetime import datetime
 
 RAW_URL="https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")  # rbpf/data/
@@ -20,30 +15,16 @@ with open(WORLDCUP_2026_PATH) as f:
 with open(ACITVE_TEAMS_PATH) as f:
     ACTIVE_TEAMS: set[str] = set(json.load(f)['teams'])
 
-
-def _validate_one_match_per_team_per_day(data: pd.DataFrame) -> None:
-    """Raise when a team appears in more than one match on the same date."""
-    home_appearances = data[["date", "home_team"]].rename(
-        columns={"home_team": "team"}
-    )
-    away_appearances = data[["date", "away_team"]].rename(
-        columns={"away_team": "team"}
-    )
-    team_appearances = pd.concat(
-        [home_appearances, away_appearances],
-        ignore_index=True,
-    )
-
-    conflicts = team_appearances[
-        team_appearances.duplicated(subset=["date", "team"], keep=False)
-    ].sort_values(["date", "team"])
-
-    if not conflicts.empty:
-        raise ValueError(
-            "A team cannot play more than once on the same day:\n"
-            f"{conflicts.to_string(index=False)}"
-        )
-
+def _drop_duplicate_teams_per_day(data: pd.DataFrame) -> pd.DataFrame:
+    """Assume that teams do not play more than once per day, otherwise it causes an issue with the propagation."""
+    home_appearances = data[["date", "home_team"]].rename(columns={"home_team": "team"})
+    away_appearances = data[["date", "away_team"]].rename(columns={"away_team": "team"})
+    team_appearances = pd.concat([home_appearances, away_appearances], ignore_index=True)
+    duplicated = team_appearances[team_appearances.duplicated(subset=["date", "team"], keep=False)]
+    if not duplicated.empty:
+        print("Warning: Dropping duplicate team appearances on the same day:")
+        print(duplicated.sort_values(["date", "team"]).to_string(index=False))
+    return data[~data.index.isin(duplicated.index)].reset_index(drop=True)
 
 def get_results(
     start_date: str = "1872-11-30",  # date of first game
@@ -109,7 +90,8 @@ def get_results(
     data[["home_score", "away_score"]] = (
         data[["home_score", "away_score"]].fillna(-1).astype(int)
     )
-    _validate_one_match_per_team_per_day(data)
+
+    data = _drop_duplicate_teams_per_day(data)
 
     # Create mapping of team names to integer IDs
     all_teams = pd.unique(data[["home_team", "away_team"]].values.ravel())

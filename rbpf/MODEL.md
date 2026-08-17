@@ -18,7 +18,7 @@ Transition follows an OU-process with a time delta $\Delta t$ shared across all 
 
 $$X_{t-1} = \mu_0 + \phi_t (X_{t-1} - \mu_0) + \epsilon_t$$
 
-where $\phi_t = \exp(- \kappa \Delta t)$, $\epsilon_t \sim \mathcal{N}(0, Q)$ and $Q = (1 - \phi_t^2) \Sigma_0 $ is the covariance matrix of the process noise.
+where $\phi_t = \exp(- \kappa \Delta t)$, $\epsilon_t \sim \mathcal{N}(0, Q_t)$ and $Q_t = (1 - \phi_t^2) \Sigma_0 $ is the covariance matrix of the process noise.
 
 **Likelihood**
 
@@ -70,10 +70,16 @@ $$X_T^{*, (I_T)} \sim \mathcal{N}(\mu_T^{(I_T)}, \Sigma_T)$$
 **2 Backward Sampling**: From T-1 to 0, sample particle index $I_t$ using the backward kernel $p(X_t \mid X_{t + 1}^*, y_{1:t})$ and draw full state from corresponding Gaussian mixture $\sum_{i=1}^N w_t^{(i)} \mathcal{N}(\mu_t^{(i)}, \Sigma_t)$.
 
 $$\begin{aligned}
-p(X_t \mid X_{t + 1}^*, y_{1:t}) &\propto p(X_{t + 1}^* \mid X_t) p(X_t \mid y_{1:t}) \\ &\propto p(X_{t + 1}^* \mid X_t) \sum_{i=1}^N w_t^{(i)} \mathcal{N}(\mu_t^{(i)}, \Sigma_t)
+p(X_t \mid X_{t + 1}^*, y_{1:t}) &\propto p(X_{t + 1}^* \mid X_t) p(X_t \mid y_{1:t}) \\ &\propto p(X_{t + 1}^* \mid X_t) \sum_{i=1}^N w_t^{(i)} \mathcal{N}(\mu_t^{(i)}, \Sigma_t) \\ & \propto \sum_{i=1}^N w_{t}^{(i)} \mathcal{N}(X_{t + 1}^* \mid X_t, Q_t) \mathcal{N}(\mu_{t + 1 \mid t}^{(i)}, \Sigma_{t + 1 \mid t}) \\ & \propto \sum_{i=1}^N \underbrace{w_{t \mid t+1}}_{\text{computed analytically}} \underbrace{\mathcal{N}(\mu_{t \mid t+1}^{(i)}, \Sigma_{t \mid t+1})}_{\text{sample from this Gaussian mixture}}
 \end{aligned}$$
 
-Since transition $p(X_{t + 1}^* \mid X_t)$ is Gaussian, the backward kernel is a Gaussian mixture with $N$ components.
+$$p(X_{t+1}^* \mid X_t) \sim \mathcal{N}(\mu_0 + \phi_t (X_t - \mu_0),  Q_t)$$
+
+By Gaussian conjugacy, the backward kernel is also a mixture of gaussians.
+
+
+
+<!-- Since transition $p(X_{t + 1}^* \mid X_t)$ is Gaussian, the backward kernel is a Gaussian mixture with $N$ components.
 
 $$p(X_t \mid X_{t + 1}^*, y_{1:t}) \approx \sum_{i=1}^N w_{t \mid t+1}^{(i)} \mathcal{N}(\mu_{t \mid t+1}^{(i)}, \Sigma_{t \mid t+1})$$
 
@@ -83,7 +89,7 @@ $$\mu_{t \mid t+1}^{(i)} = \mu_t^{(i)} + J_t (X_{t + 1}^* - \mu_{t + 1 \mid t}^{
 
 $$\Sigma_{t \mid t+1} = \Sigma_t - J_t \Sigma_{t + 1 \mid t} J_t^T$$
 
-where $J_t = \Sigma_t \phi_t(\phi_t^2 \Sigma_t + Q)^{-1} = \Sigma_t \phi_t \Sigma_{t+1 \mid t}^{-1}$ is the RTS smoother gain.
+where $J_t = \Sigma_t \phi_t(\phi_t^2 \Sigma_t + Q)^{-1} = \Sigma_t \phi_t \Sigma_{t+1 \mid t}^{-1}$ is the RTS smoother gain. -->
 
 ### 3.1 FFBSi 
 
@@ -200,3 +206,13 @@ where $d_B = 2$ and $d_\Gamma = M$ are the dimensions of the matrices.
 
 
 $$Q(\theta_k,\theta) = \int \log p_\theta(x_{0:T},y_{0:T}) p_{\theta_k}(x_{0:T}\mid y_{0:T}) dx_{0:T}$$
+
+
+### Meeting with Adrien
+
+- PF parameters are deterministic in the forward pass
+- The particles are not noisy enough to capture the uncertainty in the latent state. The transition covariance is overestimating the uncertainty in the latent state, which causes only some particles to be selected in the previous step, collapsing the covariance to a delta function.
+
+1. `gamma_filtered` has a negative eigenvalue (-1.25e-7) — the filter's covariance updates leave it slightly non-PSD, so jnp.linalg.cholesky in sample_multivariate_normal_kron silently produces NaN, infecting X_T_star and the entire backward scan.
+
+2. The scan output is double-reversed. With jax.lax.scan(reverse=True), ys[i] already corresponds to xs[i] in forward order (confirmed by the test: ys=[10,10,9,7,4] for xs=[0,1,2,3,4]). The code then does X_star_reversed[::-1], which reverses it again — producing wrong timestep ordering.

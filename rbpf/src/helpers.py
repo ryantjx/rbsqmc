@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from rbpf.src.graphic import plot_log_marginal_likelihood_curve
-
+from optax import Params
 
 TEAM_CORRELATION_PATH = os.path.join(
     os.path.dirname(__file__), "..", "data", "worldcup2026_team_regions.json"

@@ -1,0 +1,16 @@
+{
+  "start_date": "1950-01-01",
+  "end_date": "2025-12-31",
+  "n_particles": 10000,
+  "n_smoother_paths": 10000,
+  "n_epochs": 3,
+  "learning_rate": 0.0001,
+  "max_goals": 8,
+  "seed": 0,
+  "initial_params": "",
+  "output_dir": "rbpf/outputs/smoothing",
+  "m_step": "adam",
+  "gpu_type": "A100",
+  "colab_timeout": 7200,
+  "repo_url": "https://github.com/ryantjx/rbsqmc.git"
+}
