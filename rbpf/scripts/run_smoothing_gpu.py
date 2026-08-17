@@ -319,6 +319,9 @@ def main(argv=None) -> int:
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/rbpf_matplotlib")
+    # Override Colab's MPLBACKEND which points to matplotlib_inline (not
+    # installed in the isolated venv). Use 'agg' for headless plotting.
+    os.environ["MPLBACKEND"] = "Agg"
 
     run([
         uv_bin, "run", "--project", str(repo_root),
