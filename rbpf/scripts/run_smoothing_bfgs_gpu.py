@@ -113,6 +113,12 @@ def bootstrap(no_clone: bool = False) -> Path:
         "numpy==2.2.6", "scipy==1.15.3",
         "pandas==2.2.2", "pyarrow", "matplotlib",
     ])
+    # Force-reinstall scipy to replace Colab's pre-installed version that
+    # is incompatible with the pinned numpy.
+    run([
+        sys.executable, "-m", "pip", "install", "-q", "--force-reinstall",
+        "--no-deps", "scipy==1.15.3",
+    ])
     return REPO_DIR
 
 
