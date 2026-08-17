@@ -110,7 +110,8 @@ def bootstrap(no_clone: bool = False) -> Path:
     run([
         sys.executable, "-m", "pip", "install", "-q",
         "jax[cuda12]==0.11.0", "cuthbert==0.0.14", "optax==0.2.8",
-        "pandas", "pyarrow", "matplotlib", "scipy",
+        "numpy<2.0", "scipy>=1.11,<1.15",
+        "pandas", "pyarrow", "matplotlib",
     ])
     return REPO_DIR
 
