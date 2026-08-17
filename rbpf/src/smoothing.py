@@ -318,13 +318,19 @@ def run_EM(
         # M-step
         # 1. Compute gradients w.r.t. the RAW (unconstrained) params.
         #    loss_fn takes decoded EMParams, so we differentiate through decode.
-        def _raw_loss(raw, traj):
-            decoded = decode_EM_params(raw, fixed_mean_0)
-            return loss_fn(decoded, traj, model_inputs, max_goals)
+        #    Use jax.checkpoint to rematerialize the Cholesky factors and
+        #    triangular solves during backprop instead of storing them for
+        #    all T timesteps x N trajectories. This trades ~2x compute for
+        #    a large memory saving, avoiding OOM on large n_smoother_paths.
+        _raw_loss = jax.checkpoint(
+            lambda raw, traj: loss_fn(
+                decode_EM_params(raw, fixed_mean_0), traj, model_inputs, max_goals
+            ),
+            policy=jax.checkpoint_policies.nothing_saveable(),
+        )
 
         print(f"  [Epoch {epoch+1}/{num_epochs}] Running M-step (gradient + Adam update)...")
         loss_grads = jax.vmap(lambda traj: jax.grad(_raw_loss)(raw_params, traj))(smoothed_trajectories)
-        # negative mean so that we minimize the negative log-likelihood
         avg_grad = jax.tree_util.tree_map(lambda g: jnp.mean(g, axis=0), loss_grads)
 
         # 2. Update the raw parameters using the averaged gradients
