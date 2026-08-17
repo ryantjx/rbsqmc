@@ -78,8 +78,11 @@ def is_colab() -> bool:
 # ---------------------------------------------------------------------------
 # Bootstrap: clone repo + install deps
 # ---------------------------------------------------------------------------
-def bootstrap(no_clone: bool = False) -> Path:
-    """Clone/update the repository and install runtime dependencies."""
+def bootstrap(no_clone: bool = False) -> tuple[Path, str]:
+    """Clone/update the repository, install uv, and create an isolated venv.
+
+    Returns (repo_root, uv_bin_path).
+    """
     if no_clone:
         if not (REPO_DIR / "rbpf").is_dir():
             raise FileNotFoundError(
@@ -107,18 +110,19 @@ def bootstrap(no_clone: bool = False) -> Path:
                 log(f"clone attempt {attempt}/3 failed")
         if last_error is not None:
             raise last_error
+    # Install uv and create an isolated venv to avoid conflicts with
+    # Colab's pre-installed packages (numpy/scipy version mismatches).
+    run(["bash", "-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
+    uv_bin = str(Path.home() / ".local" / "bin" / "uv")
+    venv_dir = REPO_DIR / ".venv"
+    run([uv_bin, "venv", str(venv_dir), "--python", "3.12"])
     run([
-        sys.executable, "-m", "pip", "install", "-q",
+        uv_bin, "pip", "install", "-p", str(venv_dir),
         "jax[cuda12]==0.11.0", "cuthbert==0.0.14", "optax==0.2.8",
-        "pandas==2.2.2", "pyarrow", "matplotlib",
-    ])
-    # Force-reinstall numpy and scipy to replace Colab's pre-installed
-    # versions. Pin to the locally tested compatible pair.
-    run([
-        sys.executable, "-m", "pip", "install", "-q", "--force-reinstall",
         "numpy==2.4.6", "scipy==1.18.0",
+        "pandas==3.0.5", "pyarrow==25.0.1", "matplotlib==3.11.1",
     ])
-    return REPO_DIR
+    return REPO_DIR, uv_bin
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +154,13 @@ def load_config(repo_root: Path, override: str | None = None) -> dict:
 # ---------------------------------------------------------------------------
 def train(config: dict, repo_root: Path) -> None:
     """Import smoothing_bfgs functions and run the EM pipeline using the config."""
+    # Use the uv-created venv's Python instead of the system Python.
+    venv_python = str(repo_root / ".venv" / "bin" / "python")
+    if Path(venv_python).exists():
+        os.environ["RBSQMC_PYTHON"] = venv_python
+    else:
+        os.environ["RBSQMC_PYTHON"] = sys.executable
+
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
@@ -288,12 +299,13 @@ def main(argv=None) -> int:
         print(f"bfgs: n_particles={config['n_particles']}, n_epochs={config['n_epochs']}")
         return 0
 
-    repo_root = bootstrap(no_clone=args.no_clone) if is_colab() else Path(__file__).resolve().parents[2]
+    repo_root, uv_bin = bootstrap(no_clone=args.no_clone) if is_colab() else (Path(__file__).resolve().parents[2], "uv")
     config = load_config(repo_root, args.config)
 
-    # Verify GPU
+    # Verify GPU using uv run (uses the isolated .venv)
     run([
-        sys.executable, "-c",
+        uv_bin, "run", "--project", str(repo_root),
+        "python", "-c",
         "import jax; print('JAX devices:', jax.devices()); "
         "assert jax.default_backend() == 'gpu', 'Colab GPU is not active'",
     ], cwd=repo_root)
@@ -301,7 +313,24 @@ def main(argv=None) -> int:
     log(f"m_step=bfgs, output_dir={config['output_dir']}")
     log(f"Writing remote outputs to {repo_root / config['output_dir']}")
 
-    train(config, repo_root)
+    # Run the training via uv run (uses the isolated .venv, avoiding Colab's
+    # pre-installed package conflicts).
+    # Write the config path to an env var so train() can read it.
+    config_path = Path(args.config) if args.config else repo_root / "rbpf/scripts/config/smoothing_bfgs_gpu_config.json"
+    if not config_path.is_absolute():
+        config_path = repo_root / "rbpf/scripts/config" / config_path
+    os.environ["RBSQMC_CONFIG"] = str(config_path)
+    os.environ.setdefault("RBSQMC_PLATFORM", "cuda")
+    os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+    os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/rbpf_matplotlib")
+
+    run([
+        uv_bin, "run", "--project", str(repo_root),
+        "python", "-c",
+        "import sys; sys.path.insert(0, '.'); "
+        "from rbpf.src.smoothing_bfgs import main; main()",
+    ], cwd=repo_root, forward_raw=True)
 
     log("GPU smoothing completed")
     return 0
