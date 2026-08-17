@@ -1,17 +1,17 @@
-"""Bootstrap a Colab GPU and run the Adam smoothing EM pipeline.
+"""Bootstrap a Colab GPU and run the BFGS smoothing EM pipeline.
 
 This script runs inside the Colab VM (uploaded by ``colab run``). It:
   1. Clones/updates the repository (or uses an uploaded copy with --no-clone).
   2. Installs runtime dependencies.
-  3. Loads the config JSON (smoothing_gpu_config.json).
-  4. Imports and calls ``run_EM`` from ``rbpf.src.smoothing`` directly.
+  3. Loads the config JSON (smoothing_bfgs_gpu_config.json).
+  4. Imports and calls ``run_EM`` from ``rbpf.src.smoothing_bfgs`` directly.
   5. Saves outputs and generates plots.
 
 Usage (local dry-run):
-    python rbpf/scripts/run_smoothing_gpu.py --config rbpf/scripts/config/smoothing_gpu_config.json --dry-run
+    python rbpf/scripts/run_smoothing_bfgs_gpu.py --config rbpf/scripts/config/smoothing_bfgs_gpu_config.json --dry-run
 
 Usage (Colab, via the orchestrator):
-    bash rbpf/scripts/run_smoothing_colab.sh
+    bash rbpf/scripts/run_smoothing_bfgs_colab.sh
 """
 
 from __future__ import annotations
@@ -30,15 +30,14 @@ REPO_DIR = Path("/content/rbsqmc")
 DEFAULT_CONFIG = {
     "start_date": "2000-01-01",
     "end_date": "2025-12-31",
-    "n_particles": 1000,
-    "n_smoother_paths": 1000,
+    "n_particles": 10000,
+    "n_smoother_paths": 10000,
     "n_epochs": 3,
-    "learning_rate": 0.0001,
     "max_goals": 8,
     "seed": 0,
     "initial_params": "",
-    "output_dir": "rbpf/outputs/smoothing",
-    "m_step": "adam",
+    "output_dir": "rbpf/outputs/smoothing_bfgs",
+    "m_step": "bfgs",
     "gpu_type": "A100",
     "colab_timeout": 7200,
     "repo_url": "https://github.com/ryantjx/rbsqmc.git",
@@ -124,7 +123,7 @@ def load_config(repo_root: Path, override: str | None = None) -> dict:
         if not path.is_absolute() and not path.parent.parts:
             path = repo_root / "rbpf/scripts/config" / path
     else:
-        path = repo_root / "rbpf/scripts/config/smoothing_gpu_config.json"
+        path = repo_root / "rbpf/scripts/config/smoothing_bfgs_gpu_config.json"
     if not path.exists():
         raise FileNotFoundError(f"missing smoothing configuration: {path}")
     config.update(json.loads(path.read_text(encoding="utf-8")))
@@ -135,16 +134,14 @@ def load_config(repo_root: Path, override: str | None = None) -> dict:
     for key in positive_integer:
         if int(config[key]) <= 0:
             raise ValueError(f"{key} must be positive")
-    if float(config.get("learning_rate", 0)) <= 0:
-        raise ValueError("learning_rate must be positive")
     return config
 
 
 # ---------------------------------------------------------------------------
-# Training: import and call run_EM from rbpf.src.smoothing
+# Training: import and call run_EM from rbpf.src.smoothing_bfgs
 # ---------------------------------------------------------------------------
 def train(config: dict, repo_root: Path) -> None:
-    """Import smoothing functions and run the EM pipeline using the config."""
+    """Import smoothing_bfgs functions and run the EM pipeline using the config."""
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
@@ -156,7 +153,8 @@ def train(config: dict, repo_root: Path) -> None:
     from rbpf.src.data import get_results, WORLDCUP_2026_TEAMS
     from rbpf.src.helpers import default_init_params, save_params
     from rbpf.src.model import run_filter
-    from rbpf.src.smoothing import run_EM, E_step
+    from rbpf.src.smoothing_bfgs import run_EM
+    from rbpf.src.smoothing import E_step
     from rbpf.src.graphic import plot_all, plot_log_marginal_likelihood_curve, plot_all_smoothing
 
     import jax
@@ -175,16 +173,15 @@ def train(config: dict, repo_root: Path) -> None:
           f"Number of unique dates: {len(df['date'].unique())}. "
           f"Number of unique teams: {len(team_id_to_name)}.")
 
-    # 2. Run EM
-    print("[main] Running EM (Adam M-step)...")
-    latest_params, params_history, log_marginal_likelihood_history = run_EM(
+    # 2. Run EM (BFGS M-step)
+    print("[main] Running EM (BFGS M-step)...")
+    latest_params, params_history, log_marginal_likelihood_history, mstep_history = run_EM(
         key=key,
         model_inputs=model_inputs,
         params=default_init_params(len(team_id_to_name)),
         n_particles=config["n_particles"],
         n_smoothed_trajectories=config["n_smoother_paths"],
         num_epochs=config["n_epochs"],
-        learning_rate=config["learning_rate"],
         max_goals=config["max_goals"],
     )
     print("[main] EM finished.")
@@ -201,10 +198,9 @@ def train(config: dict, repo_root: Path) -> None:
         "n_particles": config["n_particles"],
         "n_smoother_paths": config["n_smoother_paths"],
         "n_epochs": config["n_epochs"],
-        "learning_rate": config["learning_rate"],
         "max_goals": config["max_goals"],
         "seed": config["seed"],
-        "m_step": "adam",
+        "m_step": "bfgs",
         "output_dir": save_path,
     }
     with open(save_path + "/run_config.json", "w") as f:
@@ -263,7 +259,7 @@ def train(config: dict, repo_root: Path) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 def parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Colab GPU bootstrap for RBPF Adam smoothing EM")
+    p = argparse.ArgumentParser(description="Colab GPU bootstrap for RBPF BFGS smoothing EM")
     p.add_argument("--config", help="Optional config JSON override")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--no-clone", action="store_true",
@@ -276,8 +272,7 @@ def main(argv=None) -> int:
 
     if args.dry_run:
         config = load_config(Path.cwd(), args.config)
-        print(f"adam: n_particles={config['n_particles']}, n_epochs={config['n_epochs']}, "
-              f"lr={config['learning_rate']}")
+        print(f"bfgs: n_particles={config['n_particles']}, n_epochs={config['n_epochs']}")
         return 0
 
     repo_root = bootstrap(no_clone=args.no_clone) if is_colab() else Path(__file__).resolve().parents[2]
@@ -290,7 +285,7 @@ def main(argv=None) -> int:
         "assert jax.default_backend() == 'gpu', 'Colab GPU is not active'",
     ], cwd=repo_root)
 
-    log(f"m_step=adam, output_dir={config['output_dir']}")
+    log(f"m_step=bfgs, output_dir={config['output_dir']}")
     log(f"Writing remote outputs to {repo_root / config['output_dir']}")
 
     train(config, repo_root)

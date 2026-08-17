@@ -194,16 +194,30 @@ def run_EM(
     return params, params_history, log_marginal_likelihood_history, mstep_history
 
 
+def _load_run_config():
+    """Load run config from RBSQMC_CONFIG env var, falling back to defaults."""
+    config_path = os.environ.get("RBSQMC_CONFIG")
+    if config_path and os.path.isfile(config_path):
+        import json
+        with open(config_path) as f:
+            cfg = json.load(f)
+        print(f"[main] Loaded config from {config_path}")
+        return cfg
+    print("[main] No RBSQMC_CONFIG set, using hardcoded defaults")
+    return {}
+
 def main():
+    cfg = _load_run_config()
     ############################# MODEL TRAINING PIPELINE #############################
-    start_date = "1950-01-01"
-    end_date = "2025-12-31"
+    start_date = cfg.get("start_date", "1950-01-01")
+    end_date = cfg.get("end_date", "2025-12-31")
     teams_only = WORLDCUP_2026_TEAMS
-    MAX_GOALS = 8
-    N_particles = 1000
-    N_smoothed_trajectories = 1000
-    epochs = 5
-    key = jax.random.PRNGKey(0)
+    MAX_GOALS = cfg.get("max_goals", 8)
+    N_particles = cfg.get("n_particles", 1000)
+    N_smoothed_trajectories = cfg.get("n_smoother_paths", 1000)
+    epochs = cfg.get("n_epochs", 5)
+    seed = cfg.get("seed", 0)
+    key = jax.random.PRNGKey(seed)
     ############################################
     df, model_inputs, team_id_to_name = get_results(
         start_date=start_date,
@@ -242,7 +256,7 @@ def main():
         "n_smoother_paths": N_smoothed_trajectories,
         "n_epochs": epochs,
         "max_goals": MAX_GOALS,
-        "seed": 0,
+        "seed": seed,
         "m_step": "bfgs",
         "output_dir": save_path,
     }

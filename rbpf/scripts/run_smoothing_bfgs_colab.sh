@@ -21,7 +21,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
 CONFIG="${HERE}/config/smoothing_bfgs_gpu_config.json"
-BOOTSTRAP="${HERE}/run_smoothing_gpu.py"
+BOOTSTRAP="${HERE}/run_smoothing_bfgs_gpu.py"
 VALIDATOR="${HERE}/validate_outputs.py"
 DRY_RUN=0
 SESSION_LAUNCHED=0
