@@ -143,7 +143,6 @@ main() {
         filter/timeseries_states.png
         filter/correlation_matrix.png
         filter/initial_correlation_matrix.png
-        filter/filter_states.npz
         filter/log_normalizing_constant.png
         smoothing/smoothed_trajectories.png
         smoothing/smoothed_uncertainty.png
