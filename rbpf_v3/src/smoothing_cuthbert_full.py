@@ -1,13 +1,4 @@
-"""Standalone Cuthbert-integrated Rao--Blackwellized FFBS and MCEM backend.
-
-This backend optimizes only the diagonal variances sigma_ii of the initial
-covariance Gamma_0 = Sigma_0, holding the correlation structure C0 fixed at
-its prior value. The raw parameter vector therefore contains just the M
-log-variances (plus kappa, B ratio, alpha, beta) instead of the full M x M
-Cholesky factor, which drastically reduces the dimension of the M-step and
-stabilizes EM when the covariance is far higher-dimensional than the data can
-identify.
-"""
+"""Standalone Cuthbert-integrated Rao--Blackwellized FFBS and MCEM backend."""
 
 from __future__ import annotations
 
@@ -27,6 +18,8 @@ from cuthbert.smc.particle_filter import ParticleFilterState
 
 from rbpf_v3.src.bivariate_poisson import loglik
 from rbpf_v3.src.helpers import (
+    decode_EM_params,
+    encode_EM_params,
     log_inverse_wishart_kernel,
 )
 from rbpf_v3.src.progress import progress
@@ -38,14 +31,12 @@ from rbpf_v3.src.utils import EMParams
 # value shrinks the fitted covariance toward the initial gamma_0, which helps
 # stabilize EM when the M x M covariance is far higher-dimensional than the
 # data can identify. The minimum valid nu is dimension + 1.
+#
+# Prior mean ratio E[Sigma]/Sigma0_init = (nu+M+1)/(nu-M-1):
+#   extra=50  -> 3.0x (moderate)
+#   extra=300 -> 1.3x (aggressive)
+#   extra=500 -> 1.2x (very aggressive, near the practical ceiling)
 PRIOR_DOF_EXTRA = 300.0
-
-# Floor on the diagonal standard deviations sigma_ii (keeps Gamma_0 PD).
-SIGMA_FLOOR = 1e-4
-# Bounds for the attack/defence log-ratio (keeps det(B) = 1).
-MAX_B_LOG_RATIO = 5.0
-# Floor on kappa (mean-reversion rate).
-KAPPA_FLOOR = 1e-6
 
 
 class BackwardDiagnostics(NamedTuple):
@@ -79,90 +70,6 @@ class MCEMConfig(NamedTuple):
 class RBSmootherParticle(NamedTuple):
     x: jax.Array
     time_index: jax.Array
-
-
-# ---------------------------------------------------------------------------
-# Constrained parameter encoding
-# ---------------------------------------------------------------------------
-# The raw parameter vector is a flat 1-D array:
-#   [ log_sigma_0, ..., log_sigma_{M-1}, kappa_raw, B_ratio_raw, alpha, beta ]
-# where sigma_i are the diagonal standard deviations of Gamma_0. The
-# correlation matrix C0 is fixed (not optimized). Gamma_0 is always
-# reconstructed as D @ C0 @ D with D = diag(sigma).
-
-
-def _inverse_softplus(x):
-    x = jnp.maximum(x, 1e-8)
-    return x + jnp.log(-jnp.expm1(-x))
-
-
-def _correlation_from_gamma(gamma_0: jax.Array) -> jax.Array:
-    """Recover the correlation matrix C0 from Gamma_0 = D @ C0 @ D."""
-    sigma = jnp.sqrt(jnp.diag(gamma_0))
-    D_inv = jnp.diag(1.0 / sigma)
-    C0 = D_inv @ gamma_0 @ D_inv
-    return 0.5 * (C0 + C0.T)
-
-
-def _constrain_params(
-    raw: jax.Array,
-    C0: jax.Array,
-    fixed_mean_0: jax.Array,
-) -> EMParams:
-    """Decode the flat raw vector into identified EMParams.
-
-    The first M entries are log standard deviations; Gamma_0 is rebuilt as
-    D @ C0 @ D with the fixed correlation matrix C0. The remaining entries
-    decode kappa, the B ratio, alpha, and beta.
-    """
-    num_teams = C0.shape[0]
-    log_sigma = raw[:num_teams]
-    sigma = jax.nn.softplus(log_sigma) + SIGMA_FLOOR
-    D = jnp.diag(sigma)
-    gamma_0 = D @ C0 @ D
-
-    kappa_raw = raw[num_teams]
-    kappa = jax.nn.softplus(kappa_raw) + KAPPA_FLOOR
-
-    B_ratio_raw = raw[num_teams + 1]
-    log_ratio = MAX_B_LOG_RATIO * jnp.tanh(B_ratio_raw)
-    B = jnp.diag(jnp.array([jnp.exp(log_ratio), jnp.exp(-log_ratio)]))
-
-    alpha = raw[num_teams + 2]
-    beta = raw[num_teams + 3]
-
-    return EMParams(
-        mean_0=fixed_mean_0,
-        gamma_0=gamma_0,
-        B=B,
-        kappa=kappa,
-        alpha=alpha,
-        beta=beta,
-    )
-
-
-def _encode_params(params: EMParams, C0: jax.Array) -> jax.Array:
-    """Encode identified EMParams into the flat constrained raw vector."""
-    num_teams = params.gamma_0.shape[0]
-    sigma = jnp.sqrt(jnp.diag(params.gamma_0))
-    log_sigma = _inverse_softplus(sigma - SIGMA_FLOOR)
-
-    attack_variance = params.B[0, 0]
-    defence_variance = params.B[1, 1]
-    log_ratio = 0.5 * jnp.log(attack_variance / defence_variance)
-    bounded_ratio = jnp.clip(
-        log_ratio / MAX_B_LOG_RATIO, -1.0 + 1e-6, 1.0 - 1e-6
-    )
-    B_ratio_raw = jnp.arctanh(bounded_ratio)
-
-    kappa_raw = _inverse_softplus(params.kappa - KAPPA_FLOOR)
-
-    return jnp.concatenate(
-        [
-            log_sigma,
-            jnp.asarray([kappa_raw, B_ratio_raw, params.alpha, params.beta]),
-        ]
-    )
 
 
 def symmetrize(matrix: jax.Array) -> jax.Array:
@@ -404,7 +311,6 @@ def complete_data_terms(
 
 def mcem_objective(
     raw,
-    C0,
     mean_0,
     paths,
     model_inputs,
@@ -412,7 +318,7 @@ def mcem_objective(
     prior_scale,
     prior_dof,
 ):
-    params = _constrain_params(raw, C0, mean_0)
+    params = decode_EM_params(raw, mean_0)
     terms = complete_data_terms(params, paths, model_inputs, max_goals)
     prior = log_inverse_wishart_kernel(params.gamma_0, prior_scale, prior_dof)
     return terms["initial"] + terms["transition"] + terms["observation"] + prior
@@ -420,7 +326,6 @@ def mcem_objective(
 
 def _negative_objective(
     raw,
-    C0,
     mean_0,
     paths,
     model_inputs,
@@ -429,7 +334,7 @@ def _negative_objective(
     prior_dof,
 ):
     return -mcem_objective(
-        raw, C0, mean_0, paths, model_inputs, max_goals, prior_scale, prior_dof
+        raw, mean_0, paths, model_inputs, max_goals, prior_scale, prior_dof
     )
 
 
@@ -817,18 +722,13 @@ def run_mcem(
     *,
     e_step_fn=E_step,
 ):
-    """Run MCEM with a fixed zero stationary mean and safe rollback.
-
-    Only the diagonal variances of Gamma_0 are optimized; the correlation
-    structure C0 is fixed at the prior value recovered from initial_params.
-    """
+    """Run MCEM with a fixed zero stationary mean and safe rollback."""
     fixed_mean = jnp.zeros_like(initial_params.mean_0)
     initial_params = initial_params._replace(mean_0=fixed_mean)
-    C0 = _correlation_from_gamma(initial_params.gamma_0)
-    raw = _encode_params(initial_params, C0)
+    raw = encode_EM_params(initial_params)
     optimizer = optax.adam(config.learning_rate)
     opt_state = optimizer.init(raw)
-    dimension = initial_params.gamma_0.shape[0]  # M x M covariance dimension
+    dimension = initial_params.gamma_0.shape[0] # M x M covariance matrix dimension
     prior_dof = float(dimension + PRIOR_DOF_EXTRA)
     prior_scale = (prior_dof + dimension + 1.0) * initial_params.gamma_0
     params_history = [initial_params]
@@ -843,7 +743,7 @@ def run_mcem(
     for epoch in range(config.n_epochs):
         epoch_start = time.perf_counter()
         rng, e_key = jax.random.split(rng)
-        params = _constrain_params(raw, C0, fixed_mean)
+        params = decode_EM_params(raw, fixed_mean)
         progress(
             f"epoch {epoch}/{config.n_epochs}: running E-step "
             "(filter + backward simulation)..."
@@ -866,7 +766,6 @@ def run_mcem(
         start_raw, start_opt_state = raw, opt_state
         start_value = _objective_value_jit(
             raw,
-            C0,
             fixed_mean,
             paths,
             model_inputs,
@@ -883,7 +782,6 @@ def run_mcem(
         for step in range(config.n_gradient_steps):
             loss, gradient = _negative_value_and_grad_jit(
                 raw,
-                C0,
                 fixed_mean,
                 paths,
                 model_inputs,
@@ -901,7 +799,6 @@ def run_mcem(
                 )
         candidate = _objective_value_jit(
             raw,
-            C0,
             fixed_mean,
             paths,
             model_inputs,
@@ -917,7 +814,7 @@ def run_mcem(
         if not accepted:
             raw, opt_state, candidate = start_raw, start_opt_state, start_value
         mstep_seconds = time.perf_counter() - mstep_start
-        final_epoch_params = _constrain_params(raw, C0, fixed_mean)
+        final_epoch_params = decode_EM_params(raw, fixed_mean)
         record = objective_diagnostics(
             final_epoch_params,
             paths,
@@ -959,7 +856,7 @@ def run_mcem(
         )
         last = (smoothed, filtered, augmented)
 
-    final_params = _constrain_params(raw, C0, fixed_mean)
+    final_params = decode_EM_params(raw, fixed_mean)
     rng, final_key = jax.random.split(rng)
     final_smoothed, final_filtered, final_augmented, final_timing = e_step_fn(
         final_params,
@@ -1013,7 +910,4 @@ __all__ = [
     "run_mcem",
     "sample_kron_psd_batched",
     "validate_inputs",
-    "_constrain_params",
-    "_encode_params",
-    "_correlation_from_gamma",
 ]
