@@ -1,15 +1,15 @@
 {
-  "start_date": "1900-01-01",
+  "start_date": "1950-01-01",
   "end_date": "2025-12-31",
-  "n_particles": 100000,
-  "n_smoother_paths": 100000,
+  "n_particles": 5000,
+  "n_smoother_paths": 5000,
   "n_epochs": 15,
   "max_goals": 8,
   "seed": 0,
   "initial_params": "",
   "output_dir": "rbpf/outputs/smoothing_bfgs",
   "m_step": "bfgs",
-  "gpu_type": "A100",
+  "gpu_type": "L4",
   "colab_timeout": 7200,
   "repo_url": "https://github.com/ryantjx/rbsqmc.git"
 }
