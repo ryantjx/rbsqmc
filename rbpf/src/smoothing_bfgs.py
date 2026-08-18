@@ -127,6 +127,20 @@ def m_step_bfgs(
         n_batches = (n_total + n_batch - 1) // n_batch
         print(f"    [m_step_bfgs] Batched gradient: {n_batches} batches of <= {n_batch}")
 
+        # JIT a per-batch loss/grad that takes the batch as a RUNTIME argument.
+        # Do NOT close over `smoothed_trajectories` inside a jit: a closed-over
+        # array is embedded as a constant at lowering, which for the full
+        # (N, T, M, 2) trajectories array is ~2.5 GB (JAX warns about captured
+        # constants). Passing it as an argument keeps it as a normal buffer.
+        @jax.jit
+        def _batch_loss_and_grad(raw, batch):
+            vals, grads = jax.vmap(
+                lambda traj: _per_traj_vg(raw, traj)
+            )(batch)
+            return jnp.mean(vals), jax.tree_util.tree_map(
+                lambda g: jnp.mean(g, axis=0), grads
+            )
+
         def _batched_loss_and_grad(flat):
             raw = _flat_to_raw(flat, structure)
             total_val = jnp.zeros(())
@@ -137,13 +151,7 @@ def m_step_bfgs(
                 batch = jax.tree_util.tree_map(
                     lambda x: x[start:end], smoothed_trajectories
                 )
-                vals, grads = jax.vmap(
-                    lambda traj: _per_traj_vg(raw, traj)
-                )(batch)
-                batch_val = jnp.mean(vals)
-                batch_grad = jax.tree_util.tree_map(
-                    lambda g: jnp.mean(g, axis=0), grads
-                )
+                batch_val, batch_grad = _batch_loss_and_grad(raw, batch)
                 total_val = total_val + batch_val
                 if total_grad is None:
                     total_grad = batch_grad
@@ -153,24 +161,28 @@ def m_step_bfgs(
                     )
             mean_val = total_val / n_batches
             assert total_grad is not None  # n_batches >= 1
-            flat_grad = _raw_to_flat(total_grad)
-            return mean_val, flat_grad
+            return mean_val, _raw_to_flat(total_grad)
 
-        _loss_and_grad = jax.jit(_batched_loss_and_grad)
+        _loss_and_grad = _batched_loss_and_grad
     else:
-        # Non-batched: process all trajectories at once
+        # Non-batched: process all trajectories at once. The trajectories are
+        # passed as a runtime arg (not closed over) to avoid embedding the
+        # ~2.5 GB array as a constant in the compiled module.
         @jax.jit
-        def _loss_and_grad(flat):
-            raw = _flat_to_raw(flat, structure)
+        def _all_loss_and_grad(raw, trajectories):
             vals, grads = jax.vmap(
                 lambda traj: _per_traj_vg(raw, traj)
-            )(smoothed_trajectories)
-            mean_val = jnp.mean(vals)
-            mean_grad = jax.tree_util.tree_map(
+            )(trajectories)
+            return jnp.mean(vals), jax.tree_util.tree_map(
                 lambda g: jnp.mean(g, axis=0), grads
             )
-            flat_grad = _raw_to_flat(mean_grad)
-            return mean_val, flat_grad
+
+        def _unbatched_loss_and_grad(flat):
+            raw = _flat_to_raw(flat, structure)
+            mean_val, mean_grad = _all_loss_and_grad(raw, smoothed_trajectories)
+            return mean_val, _raw_to_flat(mean_grad)
+
+        _loss_and_grad = _unbatched_loss_and_grad
 
     def _scipy_loss(flat):
         val, _ = _loss_and_grad(jnp.asarray(flat))
