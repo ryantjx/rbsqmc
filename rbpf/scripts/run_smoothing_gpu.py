@@ -77,10 +77,14 @@ def is_colab() -> bool:
 # ---------------------------------------------------------------------------
 # Bootstrap: clone repo + install deps
 # ---------------------------------------------------------------------------
-def bootstrap(no_clone: bool = False) -> tuple[Path, str]:
-    """Clone/update the repository, install uv, and create an isolated venv.
+def bootstrap(no_clone: bool = False) -> Path:
+    """Clone/update the repository and install runtime dependencies.
 
-    Returns (repo_root, uv_bin_path).
+    Uses Colab's pre-installed Python environment (which already ships JAX,
+    NumPy, SciPy, Matplotlib, etc.) rather than creating an isolated uv venv.
+    Any missing packages are installed via pip into the active environment.
+
+    Returns the repository root.
     """
     if no_clone:
         if not (REPO_DIR / "rbpf").is_dir():
@@ -109,22 +113,12 @@ def bootstrap(no_clone: bool = False) -> tuple[Path, str]:
                 log(f"clone attempt {attempt}/3 failed")
         if last_error is not None:
             raise last_error
-    # Install uv and create an isolated venv to avoid conflicts with
-    # Colab's pre-installed packages (numpy/scipy version mismatches).
-    run(["bash", "-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"])
-    # uv may install to /usr/local/bin/uv or ~/.local/bin/uv depending on the
-    # environment. Use shutil.which to find it, falling back to both paths.
-    uv_bin = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
-    if not Path(uv_bin).exists():
-        uv_bin = "/usr/local/bin/uv"
-    venv_dir = REPO_DIR / ".venv"
-    run([uv_bin, "venv", str(venv_dir), "--python", "3.12"])
-    # Install from rbpf/requirements.txt (only the required packages)
+    # Install runtime dependencies into the active (Colab) environment.
     run([
-        uv_bin, "pip", "install", "-p", str(venv_dir),
+        sys.executable, "-m", "pip", "install",
         "-r", str(REPO_DIR / "rbpf" / "requirements.txt"),
     ])
-    return REPO_DIR, uv_bin
+    return REPO_DIR
 
 
 # ---------------------------------------------------------------------------
@@ -296,15 +290,12 @@ def main(argv=None) -> int:
               f"lr={config['learning_rate']}")
         return 0
 
-    repo_root, uv_bin = bootstrap(no_clone=args.no_clone) if is_colab() else (Path(__file__).resolve().parents[2], "uv")
+    repo_root = bootstrap(no_clone=args.no_clone) if is_colab() else Path(__file__).resolve().parents[2]
     config = load_config(repo_root, args.config)
 
-    # Verify GPU using the venv's Python
-    venv_python = str(repo_root / ".venv" / "bin" / "python")
-    if not Path(venv_python).exists():
-        venv_python = sys.executable
+    # Verify GPU using the active (Colab) Python
     run([
-        venv_python, "-c",
+        sys.executable, "-c",
         "import jax; print('JAX devices:', jax.devices()); "
         "assert jax.default_backend() == 'gpu', 'Colab GPU is not active'",
     ], cwd=repo_root)
@@ -312,7 +303,7 @@ def main(argv=None) -> int:
     log(f"m_step=adam, output_dir={config['output_dir']}")
     log(f"Writing remote outputs to {repo_root / config['output_dir']}")
 
-    # Run the training using the venv's Python (isolated from Colab's packages).
+    # Run the training using the active (Colab) Python.
     # Call main() from smoothing.py which reads config from RBSQMC_CONFIG env var.
     config_path = Path(args.config) if args.config else repo_root / "rbpf/scripts/config/smoothing_gpu_config.json"
     if not config_path.is_absolute():
@@ -325,7 +316,7 @@ def main(argv=None) -> int:
     os.environ["MPLBACKEND"] = "Agg"
 
     run([
-        venv_python, "-c",
+        sys.executable, "-c",
         "import sys; sys.path.insert(0, '.'); "
         "from rbpf.src.smoothing import main; main()",
     ], cwd=repo_root, forward_raw=True)

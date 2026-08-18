@@ -1,3 +1,10 @@
+"""
+Smoothing and EM
+
+- Smoothing gives us smooothed trajectories, however, for large number of smoothed trajectories, we need a large amount of storage.
+- Insted we can immediately calculate the 
+"""
+
 
 import jax
 import jax.numpy as jnp
@@ -111,35 +118,68 @@ def rbpf_backward_sampling_fn(
 
     return RBPFState(x=X_star)
 
-def rbpf_backward_smoothing(
-    key: jax.Array,
-    n_smoothed_trajectories: int,
+# def rbpf_backward_smoothing(
+#     key: jax.Array,
+#     n_smoothed_trajectories: int,
+#     filtered_states: RBPFState,
+#     params: EMParams,
+#     model_inputs_rbpf: RBPFFootballResults,
+# ):
+#     # Returns N smoothed trajectories X^*_{0:T} = (X_0^*, X_1^*, ..., X_T^*) given the filtered states and the model inputs
+#     # 1. For n = 1, ..., N:
+#     #   1. Sample X_{0:T}^{*(n)} using rbpf_backward_sampling_fn
+#     # 2. Return the N smoothed trajectories
+#     keys = jax.random.split(key, n_smoothed_trajectories)
+#     smoothed_trajectories = jax.vmap(
+#         rbpf_backward_sampling_fn,
+#         in_axes=(0, None, None, None),
+#         out_axes=0
+#     )(keys, filtered_states, params, model_inputs_rbpf)  # (N, T+1, M, 2)
+
+#     return smoothed_trajectories
+
+@jax.jit(static_argnames=("max_goals",))
+def _fused_grad(
+    keys: jax.Array,
     filtered_states: RBPFState,
     params: EMParams,
+    model_inputs: FootballResults,
     model_inputs_rbpf: RBPFFootballResults,
+    raw_params: RawEMParams,
+    fixed_mean_0: jax.Array,
+    max_goals: int,
 ):
-    # Returns N smoothed trajectories X^*_{0:T} = (X_0^*, X_1^*, ..., X_T^*) given the filtered states and the model inputs
-    # 1. For n = 1, ..., N:
-    #   1. Sample X_{0:T}^{*(n)} using rbpf_backward_sampling_fn
-    # 2. Return the N smoothed trajectories
-    keys = jax.random.split(key, n_smoothed_trajectories)
-    smoothed_trajectories = jax.vmap(
-        rbpf_backward_sampling_fn,
-        in_axes=(0, None, None, None),
-        out_axes=0
-    )(keys, filtered_states, params, model_inputs_rbpf)  # (N, T+1, M, 2)
+    # Loss as a function of raw params + a single trajectory.
+    # Defined here (not a closure) so it can be jitted.
+    _raw_loss = jax.checkpoint(
+        lambda raw, traj: loss_fn(
+            decode_EM_params(raw, fixed_mean_0), traj, model_inputs, max_goals
+        ),
+        policy=jax.checkpoint_policies.nothing_saveable(),
+    )
 
-    return smoothed_trajectories
+    def _single_trajectory_grad(key):
+        traj = rbpf_backward_sampling_fn(
+            key, filtered_states, params, model_inputs_rbpf
+        )
+        return jax.grad(_raw_loss)(raw_params, traj)
+
+    loss_grads = jax.vmap(_single_trajectory_grad)(keys)
+    return jax.tree_util.tree_map(
+        lambda g: jnp.mean(g, axis=0), loss_grads
+    )
 
 def E_step(
     key: jax.Array,
     model_inputs: FootballResults,
     params: EMParams,
+    raw_params: RawEMParams,
     n_particles: int,
     n_smoothed_trajectories : int,
     max_goals: int
 ):
-    filter_key, smoother_key = jax.random.split(key, 2)
+    key, filter_key, smoother_key = jax.random.split(key, 3)
+    # raw_params = encode_EM_params(params)
     # 1. Run RBPF forward pass
     print("  [E-step] Running forward filter...", flush=True)
     filtered_states, model_inputs_rbpf = run_filter(
@@ -152,15 +192,30 @@ def E_step(
     print(f"  [E-step] Filter done. logZ = {float(filtered_states.log_normalizing_constant[-1]):.4f}", flush=True)
     # 2. Perform backward smoothing via backward sampling fn.
     print(f"  [E-step] Running backward smoothing ({n_smoothed_trajectories} trajectories)...", flush=True)
-    smoothed_trajectories = rbpf_backward_smoothing(
-        key=smoother_key,
-        n_smoothed_trajectories=n_smoothed_trajectories,
+    # smoothed_trajectories = rbpf_backward_smoothing(
+    #     key=smoother_key,
+    #     n_smoothed_trajectories=n_smoothed_trajectories,
+    #     filtered_states=filtered_states,
+    #     params=params,
+    #     model_inputs_rbpf=model_inputs_rbpf
+    # )
+    # return smoothed_trajectories, filtered_states.log_normalizing_constant[-1]
+    gradient_keys = jax.random.split(smoother_key, n_smoothed_trajectories)
+    avg_grad = _fused_grad(
+        keys=gradient_keys,
         filtered_states=filtered_states,
         params=params,
-        model_inputs_rbpf=model_inputs_rbpf
+        model_inputs_rbpf=model_inputs_rbpf,
+        raw_params=raw_params,
+        model_inputs=model_inputs,
+        fixed_mean_0=params.mean_0,
+        max_goals=max_goals
     )
-    print("  [E-step] Smoothing done.", flush=True)
-    return smoothed_trajectories, filtered_states.log_normalizing_constant[-1]
+    # lazily pass avg_grad to the optimizer for M-step update, and return the log marginal likelihood for tracking.
+    # print("  [E-step] Smoothing done.", flush=True)
+    return avg_grad, filtered_states.log_normalizing_constant[-1]
+
+
 
 def loss_fn(
         params: EMParams, 
@@ -259,34 +314,18 @@ def run_EM(
         # Decode the current unconstrained params into identified EMParams.
         params = decode_EM_params(raw_params, fixed_mean_0)
 
-        # E-step: run forward filter once, then sample trajectories.
-        key, e_step_key = jax.random.split(key)
-        smoothed_trajectories, log_marginal_likelihood = E_step(
-            key=e_step_key,
+        # E-step: run forward filter once (shared across all batches)
+        avg_grad, log_marginal_likelihood = E_step(
+            key=key,
             model_inputs=model_inputs,
             params=params,
+            raw_params=raw_params,
             n_particles=n_particles,
             n_smoothed_trajectories=n_smoothed_trajectories,
             max_goals=max_goals
         )
-
-        # M-step: compute gradients w.r.t. the RAW (unconstrained) params.
-        #    loss_fn takes decoded EMParams, so we differentiate through decode.
-        #    Use jax.checkpoint to rematerialize the Cholesky factors and
-        #    triangular solves during backprop instead of storing them for
-        #    all T timesteps x N trajectories.
-        _raw_loss = jax.checkpoint(
-            lambda raw, traj: loss_fn(
-                decode_EM_params(raw, fixed_mean_0), traj, model_inputs, max_goals
-            ),
-            policy=jax.checkpoint_policies.nothing_saveable(),
-        )
-        loss_grads = jax.vmap(
-            lambda traj: jax.grad(_raw_loss)(raw_params, traj)
-        )(smoothed_trajectories)
-        avg_grad = jax.tree_util.tree_map(lambda g: jnp.mean(g, axis=0), loss_grads)
-
         # 2. Update the raw parameters using the averaged gradients
+        # avg_grad is a lazy jax pytree of gradients, so we can pass it directly to the optimizer.
         updates, opt_state = optimizer.update(avg_grad, opt_state, raw_params)
         raw_params = optax.apply_updates(raw_params, updates)
 
@@ -313,6 +352,32 @@ def _load_run_config():
         return cfg
     print("[main] No RBSQMC_CONFIG set, using hardcoded defaults")
     return {}
+
+def full_E_pass(
+    key: jax.Array,
+    model_inputs: FootballResults,
+    params: EMParams,
+    n_particles: int,
+    n_smoothed_trajectories: int,
+    max_goals: int
+):
+    key, filter_key, smoother_key = jax.random.split(key, 3)
+    # raw_params = encode_EM_params(params)
+    # 1. Run RBPF forward pass
+    print("  [E-step] Running forward filter...", flush=True)
+    filtered_states, model_inputs_rbpf = run_filter(
+        key=filter_key,
+        model_inputs=model_inputs,
+        params=params,
+        n_particles=n_particles,
+        max_goals=max_goals
+    )
+    smoothed_trajectories = jax.vmap(
+        rbpf_backward_sampling_fn,
+        in_axes=(0, None, None, None),
+        out_axes=0
+    )(jax.random.split(smoother_key, n_smoothed_trajectories), filtered_states, params, model_inputs_rbpf)  # (N, T+1, M, 2)
+    return smoothed_trajectories, filtered_states, filtered_states.log_normalizing_constant[-1], model_inputs_rbpf
 
 def main():
     cfg = _load_run_config()
@@ -376,16 +441,24 @@ def main():
     print("[main] Saved run config.")
 
     # 4. Run RBPF filter with the optimized parameters to get the final state estimates
-    print("[main] Running final filter with optimized params...")
-    filtered_states, model_inputs_rbpf = run_filter(
+    # print("[main] Running final filter with optimized params...")
+    # filtered_states, model_inputs_rbpf = run_filter(
+    #     key=key,
+    #     model_inputs=model_inputs,
+    #     params=latest_params,
+    #     n_particles=N_particles,
+    #     max_goals=MAX_GOALS
+    # )
+
+    smoothed_trajectories, filtered_states, final_log_marginal, model_inputs_rbpf = full_E_pass(
         key=key,
         model_inputs=model_inputs,
         params=latest_params,
         n_particles=N_particles,
+        n_smoothed_trajectories=N_smoothed_trajectories,
         max_goals=MAX_GOALS
     )
-    print(f"[main] Final filter done. Final log marginal = {filtered_states.log_normalizing_constant[-1]:.4f}")
-
+    print(f"[main] Final E_pass done. Final log marginal = {final_log_marginal:.4f}", flush=True)
     plot_all(
         filtered_states=filtered_states,
         augmented_results=model_inputs_rbpf,
@@ -405,16 +478,9 @@ def main():
 
     # 6. Run a final smoothing pass with the optimized params and plot
     print("[main] Running final smoothing pass...")
-    final_smoothed, _ = E_step(
-        key=key,
-        model_inputs=model_inputs,
-        params=latest_params,
-        n_particles=N_particles,
-        n_smoothed_trajectories=N_smoothed_trajectories,
-        max_goals=MAX_GOALS,
-    )
+
     plot_all_smoothing(
-        smoothed_trajectories=final_smoothed.x,
+        smoothed_trajectories=smoothed_trajectories.x,
         team_id_to_name=team_id_to_name,
         df=df,
         top_n=10,

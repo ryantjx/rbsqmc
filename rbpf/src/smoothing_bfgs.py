@@ -33,15 +33,14 @@ from rbpf.src.helpers import (
     decode_EM_params,
 )
 from rbpf.src.utils import (
-    EMParams, FootballResults, RawEMParams, RBPFState, RBPFFootballResults,
+    EMParams, FootballResults, RawEMParams, RBPFState,
 )
-from rbpf.src.bivariate_poisson import loglik
 from rbpf.src.graphic import plot_all, plot_log_marginal_likelihood_curve, plot_all_smoothing
 
 # Reuse the E-step (filter + backward sampling) and loss_fn from smoothing.py.
 # smoothing.py now has the fixed backward sampler (stable Cholesky + correct
 # scan ordering), so there's no need to duplicate it here.
-from rbpf.src.smoothing import E_step, loss_fn, rbpf_backward_smoothing
+from rbpf.src.smoothing import E_step, loss_fn
 
 jax.config.update(
     "jax_platforms", os.environ.get("RBSQMC_PLATFORM", "cpu")
@@ -89,7 +88,6 @@ def m_step_bfgs(
     max_goals: int,
     maxiter: int = 1,
     maxcor: int = 10,
-    n_batch: int = 0,
 ) -> tuple[RawEMParams, dict]:
     """One M-step via L-BFGS-B (scipy) with bounded iterations.
 
@@ -118,71 +116,22 @@ def m_step_bfgs(
         lambda raw, traj: _loss_fn(raw, traj)
     ))
 
-    if n_batch > 0 and n_batch < smoothed_trajectories.x.shape[0]:
-        # Batched: process trajectories in chunks to cap peak GPU memory.
-        # Each scipy loss/grad evaluation loops over batches, accumulating
-        # the sum of per-batch mean losses and gradients, then divides by
-        # the number of batches to get the overall mean.
-        n_total = smoothed_trajectories.x.shape[0]
-        n_batches = (n_total + n_batch - 1) // n_batch
-        print(f"    [m_step_bfgs] Batched gradient: {n_batches} batches of <= {n_batch}")
+    # Process all trajectories at once. The trajectories are passed as a
+    # runtime arg (not closed over) to avoid embedding the ~2.5 GB array as a
+    # constant in the compiled module.
+    @jax.jit
+    def _all_loss_and_grad(raw, trajectories):
+        vals, grads = jax.vmap(
+            lambda traj: _per_traj_vg(raw, traj)
+        )(trajectories)
+        return jnp.mean(vals), jax.tree_util.tree_map(
+            lambda g: jnp.mean(g, axis=0), grads
+        )
 
-        # JIT a per-batch loss/grad that takes the batch as a RUNTIME argument.
-        # Do NOT close over `smoothed_trajectories` inside a jit: a closed-over
-        # array is embedded as a constant at lowering, which for the full
-        # (N, T, M, 2) trajectories array is ~2.5 GB (JAX warns about captured
-        # constants). Passing it as an argument keeps it as a normal buffer.
-        @jax.jit
-        def _batch_loss_and_grad(raw, batch):
-            vals, grads = jax.vmap(
-                lambda traj: _per_traj_vg(raw, traj)
-            )(batch)
-            return jnp.mean(vals), jax.tree_util.tree_map(
-                lambda g: jnp.mean(g, axis=0), grads
-            )
-
-        def _batched_loss_and_grad(flat):
-            raw = _flat_to_raw(flat, structure)
-            total_val = jnp.zeros(())
-            total_grad: RawEMParams | None = None
-            for b_idx in range(n_batches):
-                start = b_idx * n_batch
-                end = min(start + n_batch, n_total)
-                batch = jax.tree_util.tree_map(
-                    lambda x: x[start:end], smoothed_trajectories
-                )
-                batch_val, batch_grad = _batch_loss_and_grad(raw, batch)
-                total_val = total_val + batch_val
-                if total_grad is None:
-                    total_grad = batch_grad
-                else:
-                    total_grad = jax.tree_util.tree_map(
-                        lambda acc, g: acc + g, total_grad, batch_grad
-                    )
-            mean_val = total_val / n_batches
-            assert total_grad is not None  # n_batches >= 1
-            return mean_val, _raw_to_flat(total_grad)
-
-        _loss_and_grad = _batched_loss_and_grad
-    else:
-        # Non-batched: process all trajectories at once. The trajectories are
-        # passed as a runtime arg (not closed over) to avoid embedding the
-        # ~2.5 GB array as a constant in the compiled module.
-        @jax.jit
-        def _all_loss_and_grad(raw, trajectories):
-            vals, grads = jax.vmap(
-                lambda traj: _per_traj_vg(raw, traj)
-            )(trajectories)
-            return jnp.mean(vals), jax.tree_util.tree_map(
-                lambda g: jnp.mean(g, axis=0), grads
-            )
-
-        def _unbatched_loss_and_grad(flat):
-            raw = _flat_to_raw(flat, structure)
-            mean_val, mean_grad = _all_loss_and_grad(raw, smoothed_trajectories)
-            return mean_val, _raw_to_flat(mean_grad)
-
-        _loss_and_grad = _unbatched_loss_and_grad
+    def _loss_and_grad(flat):
+        raw = _flat_to_raw(flat, structure)
+        mean_val, mean_grad = _all_loss_and_grad(raw, smoothed_trajectories)
+        return mean_val, _raw_to_flat(mean_grad)
 
     def _scipy_loss(flat):
         val, _ = _loss_and_grad(jnp.asarray(flat))
@@ -229,7 +178,6 @@ def run_EM(
     max_goals: int,
     maxiter: int = 1,
     maxcor: int = 10,
-    n_batch: int = 0,
 ):
     """EM with a BFGS M-step.
 
@@ -245,8 +193,8 @@ def run_EM(
     )
 
     print(f"[run_EM/BFGS] Starting EM: {num_epochs} epochs, "
-          f"N_particles={n_particles}, N_trajectories={n_smoothed_trajectories}"
-          f"{f', n_batch={n_batch}' if n_batch > 0 else ''}", flush=True)
+          f"N_particles={n_particles}, N_trajectories={n_smoothed_trajectories}",
+          flush=True)
 
     log_marginal_likelihood_history = []
     mstep_history = []
@@ -255,59 +203,16 @@ def run_EM(
         params = decode_EM_params(raw_params, fixed_mean_0)
 
         # E-step
-        if n_batch > 0 and n_batch < n_smoothed_trajectories:
-            # Batched E-step: run the forward filter once (shared across all
-            # batches), then sample backward trajectories in chunks of
-            # n_batch.  Each chunk is moved to CPU (numpy) immediately so
-            # peak GPU memory is O(n_batch * T * M) instead of
-            # O(n_smoothed_trajectories * T * M).
-            filter_key, smoother_key = jax.random.split(key, 2)
-            print(f"  [Epoch {epoch+1}/{num_epochs}] Running E-step (forward filter)...", flush=True)
-            filtered_states, model_inputs_rbpf = run_filter(
-                key=filter_key,
-                model_inputs=model_inputs,
-                params=params,
-                n_particles=n_particles,
-                max_goals=max_goals,
-            )
-            log_marginal_likelihood = filtered_states.log_normalizing_constant[-1]
-            print(f"  [Epoch {epoch+1}/{num_epochs}] Filter done. log marginal = {log_marginal_likelihood:.4f}", flush=True)
-
-            n_batches = (n_smoothed_trajectories + n_batch - 1) // n_batch
-            batch_keys = jax.random.split(smoother_key, n_batches)
-            print(f"  [Epoch {epoch+1}/{num_epochs}] Batched backward sampling: "
-                  f"{n_batches} batches of <= {n_batch} trajectories", flush=True)
-            all_x = []
-            for b_idx in range(n_batches):
-                current_size = min(
-                    n_batch, n_smoothed_trajectories - b_idx * n_batch
-                )
-                batch_traj = rbpf_backward_smoothing(
-                    key=batch_keys[b_idx],
-                    n_smoothed_trajectories=current_size,
-                    filtered_states=filtered_states,
-                    params=params,
-                    model_inputs_rbpf=model_inputs_rbpf,
-                )
-                # Move to CPU immediately to free GPU memory
-                all_x.append(np.asarray(batch_traj.x))
-            # Concatenate on CPU and transfer back to device as one array
-            smoothed_trajectories = RBPFState(
-                x=jnp.asarray(np.concatenate(all_x, axis=0))
-            )
-            print(f"  [Epoch {epoch+1}/{num_epochs}] E-step done (batched). "
-                  f"log marginal = {log_marginal_likelihood:.4f}", flush=True)
-        else:
-            print(f"  [Epoch {epoch+1}/{num_epochs}] Running E-step (filter + backward sampling)...", flush=True)
-            smoothed_trajectories, log_marginal_likelihood = E_step(
-                key=key,
-                model_inputs=model_inputs,
-                params=params,
-                n_particles=n_particles,
-                n_smoothed_trajectories=n_smoothed_trajectories,
-                max_goals=max_goals,
-            )
-            print(f"  [Epoch {epoch+1}/{num_epochs}] E-step done. log marginal = {log_marginal_likelihood:.4f}", flush=True)
+        print(f"  [Epoch {epoch+1}/{num_epochs}] Running E-step (filter + backward sampling)...", flush=True)
+        smoothed_trajectories, log_marginal_likelihood = E_step(
+            key=key,
+            model_inputs=model_inputs,
+            params=params,
+            n_particles=n_particles,
+            n_smoothed_trajectories=n_smoothed_trajectories,
+            max_goals=max_goals,
+        )
+        print(f"  [Epoch {epoch+1}/{num_epochs}] E-step done. log marginal = {log_marginal_likelihood:.4f}", flush=True)
 
         # M-step (BFGS)
         print(f"  [Epoch {epoch+1}/{num_epochs}] Running M-step (BFGS)...", flush=True)
@@ -319,7 +224,6 @@ def run_EM(
             max_goals=max_goals,
             maxiter=maxiter,
             maxcor=maxcor,
-            n_batch=n_batch,
         )
         print(f"  [Epoch {epoch+1}/{num_epochs}] M-step done. "
               f"loss={mstep_diag['final_loss']:.4f}, nit={mstep_diag['nit']}, "
@@ -357,13 +261,12 @@ def main():
     end_date = cfg.get("end_date", "2025-12-31")
     teams_only = WORLDCUP_2026_TEAMS
     MAX_GOALS = cfg.get("max_goals", 8)
-    N_particles = cfg.get("n_particles", 1000)
-    N_smoothed_trajectories = cfg.get("n_smoother_paths", 1000)
-    epochs = cfg.get("n_epochs", 5)
+    N_particles = cfg.get("n_particles", 1500)
+    N_smoothed_trajectories = cfg.get("n_smoother_paths", 100)
+    epochs = cfg.get("n_epochs", 15)
     seed = cfg.get("seed", 0)
     maxiter = cfg.get("maxiter", 1)
     maxcor = cfg.get("maxcor", 10)
-    n_batch = cfg.get("n_batch", 0)
     key = jax.random.PRNGKey(seed)
     ############################################
     df, model_inputs, team_id_to_name = get_results(
@@ -388,7 +291,6 @@ def main():
         max_goals=MAX_GOALS,
         maxiter=maxiter,
         maxcor=maxcor,
-        n_batch=n_batch,
     )
     print("[main] EM finished.")
 
@@ -410,7 +312,6 @@ def main():
         "m_step": "bfgs",
         "maxiter": maxiter,
         "maxcor": maxcor,
-        "n_batch": n_batch,
         "output_dir": save_path,
     }
     with open(save_path + "run_config.json", "w") as f:
