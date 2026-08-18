@@ -119,12 +119,10 @@ def bootstrap(no_clone: bool = False) -> tuple[Path, str]:
         uv_bin = "/usr/local/bin/uv"
     venv_dir = REPO_DIR / ".venv"
     run([uv_bin, "venv", str(venv_dir), "--python", "3.12"])
+    # Install from rbpf/requirements.txt (only the required packages)
     run([
         uv_bin, "pip", "install", "-p", str(venv_dir),
-        "jax[cuda12]==0.11.0", "cuthbert==0.0.14", "optax==0.2.8",
-        "numpy==2.4.6", "scipy==1.18.0",
-        "pandas==3.0.5", "pyarrow==25.0.1", "matplotlib==3.11.1",
-        "tqdm",
+        "-r", str(REPO_DIR / "rbpf" / "requirements.txt"),
     ])
     return REPO_DIR, uv_bin
 
@@ -301,10 +299,12 @@ def main(argv=None) -> int:
     repo_root, uv_bin = bootstrap(no_clone=args.no_clone) if is_colab() else (Path(__file__).resolve().parents[2], "uv")
     config = load_config(repo_root, args.config)
 
-    # Verify GPU using uv run (uses the isolated .venv)
+    # Verify GPU using the venv's Python
+    venv_python = str(repo_root / ".venv" / "bin" / "python")
+    if not Path(venv_python).exists():
+        venv_python = sys.executable
     run([
-        uv_bin, "run", "--project", str(repo_root),
-        "python", "-c",
+        venv_python, "-c",
         "import jax; print('JAX devices:', jax.devices()); "
         "assert jax.default_backend() == 'gpu', 'Colab GPU is not active'",
     ], cwd=repo_root)
@@ -312,25 +312,26 @@ def main(argv=None) -> int:
     log(f"m_step=adam, output_dir={config['output_dir']}")
     log(f"Writing remote outputs to {repo_root / config['output_dir']}")
 
-    # Run the training via uv run (uses the isolated .venv, avoiding Colab's
-    # pre-installed package conflicts).
-    config_path = Path(args.config) if args.config else repo_root / "rbpf/scripts/config/smoothing_gpu_config.json"
-    if not config_path.is_absolute():
-        config_path = repo_root / "rbpf/scripts/config" / config_path
-    os.environ["RBSQMC_CONFIG"] = str(config_path)
+    # Run the training using the venv's Python (isolated from Colab's packages).
+    # Call train() directly with the config — NOT main() which uses hardcoded defaults.
     os.environ.setdefault("RBSQMC_PLATFORM", "cuda")
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/rbpf_matplotlib")
-    # Override Colab's MPLBACKEND which points to matplotlib_inline (not
-    # installed in the isolated venv). Use 'agg' for headless plotting.
     os.environ["MPLBACKEND"] = "Agg"
 
+    # Serialize the config to a temp file that train() can read on the VM
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(config, f)
+        temp_config = f.name
+
     run([
-        uv_bin, "run", "--project", str(repo_root),
-        "python", "-c",
-        "import sys; sys.path.insert(0, '.'); "
-        "from rbpf.src.smoothing import main; main()",
+        venv_python, "-c",
+        f"import sys, json; sys.path.insert(0, '.'); "
+        f"config = json.load(open('{temp_config}')); "
+        f"from rbpf.scripts.run_smoothing_gpu import train; "
+        f"train(config, __import__('pathlib').Path('.'))",
     ], cwd=repo_root, forward_raw=True)
 
     log("GPU smoothing completed")
