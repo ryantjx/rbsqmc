@@ -129,7 +129,7 @@ def m_step_bfgs(
 
         def _batched_loss_and_grad(flat):
             raw = _flat_to_raw(flat, structure)
-            total_val = 0.0
+            total_val = jnp.zeros(())
             total_grad: RawEMParams | None = None
             for b_idx in range(n_batches):
                 start = b_idx * n_batch
@@ -144,7 +144,7 @@ def m_step_bfgs(
                 batch_grad = jax.tree_util.tree_map(
                     lambda g: jnp.mean(g, axis=0), grads
                 )
-                total_val = total_val + float(batch_val)
+                total_val = total_val + batch_val
                 if total_grad is None:
                     total_grad = batch_grad
                 else:
