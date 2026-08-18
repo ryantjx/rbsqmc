@@ -234,7 +234,7 @@ def run_EM(
 
     print(f"[run_EM/BFGS] Starting EM: {num_epochs} epochs, "
           f"N_particles={n_particles}, N_trajectories={n_smoothed_trajectories}"
-          f"{f', n_batch={n_batch}' if n_batch > 0 else ''}")
+          f"{f', n_batch={n_batch}' if n_batch > 0 else ''}", flush=True)
 
     log_marginal_likelihood_history = []
     mstep_history = []
@@ -250,7 +250,7 @@ def run_EM(
             # peak GPU memory is O(n_batch * T * M) instead of
             # O(n_smoothed_trajectories * T * M).
             filter_key, smoother_key = jax.random.split(key, 2)
-            print(f"  [Epoch {epoch+1}/{num_epochs}] Running E-step (forward filter)...")
+            print(f"  [Epoch {epoch+1}/{num_epochs}] Running E-step (forward filter)...", flush=True)
             filtered_states, model_inputs_rbpf = run_filter(
                 key=filter_key,
                 model_inputs=model_inputs,
@@ -259,12 +259,12 @@ def run_EM(
                 max_goals=max_goals,
             )
             log_marginal_likelihood = filtered_states.log_normalizing_constant[-1]
-            print(f"  [Epoch {epoch+1}/{num_epochs}] Filter done. log marginal = {log_marginal_likelihood:.4f}")
+            print(f"  [Epoch {epoch+1}/{num_epochs}] Filter done. log marginal = {log_marginal_likelihood:.4f}", flush=True)
 
             n_batches = (n_smoothed_trajectories + n_batch - 1) // n_batch
             batch_keys = jax.random.split(smoother_key, n_batches)
             print(f"  [Epoch {epoch+1}/{num_epochs}] Batched backward sampling: "
-                  f"{n_batches} batches of <= {n_batch} trajectories")
+                  f"{n_batches} batches of <= {n_batch} trajectories", flush=True)
             all_x = []
             for b_idx in range(n_batches):
                 current_size = min(
@@ -284,9 +284,9 @@ def run_EM(
                 x=jnp.asarray(np.concatenate(all_x, axis=0))
             )
             print(f"  [Epoch {epoch+1}/{num_epochs}] E-step done (batched). "
-                  f"log marginal = {log_marginal_likelihood:.4f}")
+                  f"log marginal = {log_marginal_likelihood:.4f}", flush=True)
         else:
-            print(f"  [Epoch {epoch+1}/{num_epochs}] Running E-step (filter + backward sampling)...")
+            print(f"  [Epoch {epoch+1}/{num_epochs}] Running E-step (filter + backward sampling)...", flush=True)
             smoothed_trajectories, log_marginal_likelihood = E_step(
                 key=key,
                 model_inputs=model_inputs,
@@ -295,10 +295,10 @@ def run_EM(
                 n_smoothed_trajectories=n_smoothed_trajectories,
                 max_goals=max_goals,
             )
-            print(f"  [Epoch {epoch+1}/{num_epochs}] E-step done. log marginal = {log_marginal_likelihood:.4f}")
+            print(f"  [Epoch {epoch+1}/{num_epochs}] E-step done. log marginal = {log_marginal_likelihood:.4f}", flush=True)
 
         # M-step (BFGS)
-        print(f"  [Epoch {epoch+1}/{num_epochs}] Running M-step (BFGS)...")
+        print(f"  [Epoch {epoch+1}/{num_epochs}] Running M-step (BFGS)...", flush=True)
         raw_params, mstep_diag = m_step_bfgs(
             raw_params=raw_params,
             smoothed_trajectories=smoothed_trajectories,
@@ -311,7 +311,7 @@ def run_EM(
         )
         print(f"  [Epoch {epoch+1}/{num_epochs}] M-step done. "
               f"loss={mstep_diag['final_loss']:.4f}, nit={mstep_diag['nit']}, "
-              f"success={mstep_diag['success']}")
+              f"success={mstep_diag['success']}", flush=True)
 
         log_marginal_likelihood_history.append(log_marginal_likelihood)
         mstep_history.append(mstep_diag)
@@ -322,7 +322,7 @@ def run_EM(
             params_history, params,
         )
 
-    print(f"[run_EM/BFGS] EM complete. Final log marginal = {log_marginal_likelihood_history[-1]:.4f}")
+    print(f"[run_EM/BFGS] EM complete. Final log marginal = {log_marginal_likelihood_history[-1]:.4f}", flush=True)
     return params, params_history, log_marginal_likelihood_history, mstep_history
 
 
@@ -365,7 +365,7 @@ def main():
           f"Number of unique dates: {len(df['date'].unique())}. "
           f"Number of unique teams: {len(team_id_to_name)}.")
 
-    print("[main] Running EM (BFGS M-step)...")
+    print("[main] Running EM (BFGS M-step)...", flush=True)
     latest_params, params_history, log_marginal_likelihood_history, mstep_history = run_EM(
         key=key,
         model_inputs=model_inputs,

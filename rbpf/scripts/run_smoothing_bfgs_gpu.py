@@ -331,6 +331,10 @@ def main(argv=None) -> int:
     os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/rbpf_matplotlib")
     os.environ["MPLBACKEND"] = "Agg"
+    # The training subprocess's stdout is a pipe (block-buffered by default),
+    # so EM progress prints are held back and don't stream to the orchestrator.
+    # Force line-buffered/unbuffered stdout so [Epoch ...] progress appears live.
+    os.environ["PYTHONUNBUFFERED"] = "1"
 
     run([
         venv_python, "-c",
