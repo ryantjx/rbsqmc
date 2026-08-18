@@ -313,25 +313,21 @@ def main(argv=None) -> int:
     log(f"Writing remote outputs to {repo_root / config['output_dir']}")
 
     # Run the training using the venv's Python (isolated from Colab's packages).
-    # Call train() directly with the config — NOT main() which uses hardcoded defaults.
+    # Call main() from smoothing.py which reads config from RBSQMC_CONFIG env var.
+    config_path = Path(args.config) if args.config else repo_root / "rbpf/scripts/config/smoothing_gpu_config.json"
+    if not config_path.is_absolute():
+        config_path = repo_root / "rbpf/scripts/config" / config_path
+    os.environ["RBSQMC_CONFIG"] = str(config_path)
     os.environ.setdefault("RBSQMC_PLATFORM", "cuda")
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/rbpf_matplotlib")
     os.environ["MPLBACKEND"] = "Agg"
 
-    # Serialize the config to a temp file that train() can read on the VM
-    import tempfile
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump(config, f)
-        temp_config = f.name
-
     run([
         venv_python, "-c",
-        f"import sys, json; sys.path.insert(0, '.'); "
-        f"config = json.load(open('{temp_config}')); "
-        f"from rbpf.scripts.run_smoothing_gpu import train; "
-        f"train(config, __import__('pathlib').Path('.'))",
+        "import sys; sys.path.insert(0, '.'); "
+        "from rbpf.src.smoothing import main; main()",
     ], cwd=repo_root, forward_raw=True)
 
     log("GPU smoothing completed")
