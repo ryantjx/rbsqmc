@@ -243,7 +243,9 @@ def run_EM(
     fixed_mean_0 = params.mean_0
     raw_params = encode_EM_params(params)
 
-    optimizer = optax.adam(learning_rate)
+    schedule = optax.cosine_decay_schedule(init_value=learning_rate, decay_steps=num_epochs)
+    optimizer = optax.yogi(schedule)
+    # optimizer = optax.adam(learning_rate)
     opt_state = optimizer.init(raw_params)
 
     # Track decoded params (EMParams) per epoch.
