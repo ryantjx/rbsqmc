@@ -201,6 +201,7 @@ def train(config: dict, repo_root: Path) -> None:
         num_epochs=config["n_epochs"],
         learning_rate=config["learning_rate"],
         max_goals=config["max_goals"],
+        n_batch=config.get("n_batch", 0),
     )
     print("[main] EM finished.")
 
@@ -220,6 +221,7 @@ def train(config: dict, repo_root: Path) -> None:
         "max_goals": config["max_goals"],
         "seed": config["seed"],
         "m_step": "adam",
+        "n_batch": config.get("n_batch", 0),
         "output_dir": save_path,
     }
     with open(save_path + "/run_config.json", "w") as f:

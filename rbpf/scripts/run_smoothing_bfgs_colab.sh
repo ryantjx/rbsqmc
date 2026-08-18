@@ -127,11 +127,22 @@ main() {
 
     progress OUT "launching RBPF ${m_step} smoothing on Colab GPU=${gpu_type}"
     SESSION_LAUNCHED=1
-    # Pass just the config filename — the bootstrap resolves it inside the
-    # cloned repo on the VM (the local absolute path doesn't exist there).
+    # Use --keep so the session stays alive after the script finishes.
+    # Run in the background so we can download immediately after completion.
     colab run --gpu "${gpu_type}" --keep --timeout "${timeout}" \
-        --session "${SESSION}" "${BOOTSTRAP}" --config "$(basename "${CONFIG}")"
-    colab status -s "${SESSION}"
+        --session "${SESSION}" "${BOOTSTRAP}" --config "$(basename "${CONFIG}")" &
+    local colab_pid=$!
+
+    # Wait for the training to complete (colab run returns when the script
+    # finishes, even with --keep).
+    progress OUT "waiting for training to complete..."
+    wait "${colab_pid}"
+    local colab_exit=$?
+    if [[ ${colab_exit} -ne 0 ]]; then
+        progress ERR "colab run failed (exit ${colab_exit}) — training did not complete."
+        return 1
+    fi
+    progress OUT "training completed, downloading artifacts immediately"
 
     mkdir -p "${LOCAL_OUTPUTS}"
 

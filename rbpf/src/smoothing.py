@@ -277,6 +277,7 @@ def run_EM(
     num_epochs: int,
     learning_rate: float,
     max_goals: int,
+    n_batch: int = 0,
 ):
     # 1. Run the E-step to get N smoothed trajectories
     # 2. Average the gradients of the loss function w.r.t. the parameters for all N smoothed trajectories
@@ -306,20 +307,20 @@ def run_EM(
         # Decode the current unconstrained params into identified EMParams.
         params = decode_EM_params(raw_params, fixed_mean_0)
 
-        # E-step
-        print(f"  [Epoch {epoch+1}/{num_epochs}] Running E-step (filter + backward sampling)...")
-        smoothed_trajectories, log_marginal_likelihood = E_step(
-            key=key,
+        # E-step: run forward filter once (shared across all batches)
+        filter_key, smoother_key = jax.random.split(key, 2)
+        print(f"  [Epoch {epoch+1}/{num_epochs}] Running E-step (forward filter)...")
+        filtered_states, model_inputs_rbpf = run_filter(
+            key=filter_key,
             model_inputs=model_inputs,
             params=params,
             n_particles=n_particles,
-            n_smoothed_trajectories=n_smoothed_trajectories,
-            max_goals=max_goals
+            max_goals=max_goals,
         )
-        print(f"  [Epoch {epoch+1}/{num_epochs}] E-step done. log marginal = {log_marginal_likelihood:.4f}")
+        log_marginal_likelihood = filtered_states.log_normalizing_constant[-1]
+        print(f"  [Epoch {epoch+1}/{num_epochs}] Filter done. log marginal = {log_marginal_likelihood:.4f}")
 
-        # M-step
-        # 1. Compute gradients w.r.t. the RAW (unconstrained) params.
+        # M-step: compute gradients w.r.t. the RAW (unconstrained) params.
         #    loss_fn takes decoded EMParams, so we differentiate through decode.
         #    Use jax.checkpoint to rematerialize the Cholesky factors and
         #    triangular solves during backprop instead of storing them for
@@ -333,8 +334,57 @@ def run_EM(
         )
 
         print(f"  [Epoch {epoch+1}/{num_epochs}] Running M-step (gradient + Adam update)...")
-        loss_grads = jax.vmap(lambda traj: jax.grad(_raw_loss)(raw_params, traj))(smoothed_trajectories)
-        avg_grad = jax.tree_util.tree_map(lambda g: jnp.mean(g, axis=0), loss_grads)
+        if n_batch > 0 and n_batch < n_smoothed_trajectories:
+            # Batched: interleave backward smoothing and gradient computation
+            # to cap peak memory at O(n_batch * T * M) instead of
+            # O(n_smoothed_trajectories * T * M).  Each batch samples
+            # n_batch trajectories, computes per-trajectory gradients, and
+            # accumulates the sum; the final average divides by N.
+            n_batches = (n_smoothed_trajectories + n_batch - 1) // n_batch
+            batch_keys = jax.random.split(smoother_key, n_batches)
+            print(f"  [Epoch {epoch+1}/{num_epochs}] Batched smoothing: "
+                  f"{n_batches} batches of <= {n_batch} trajectories")
+            total_grad = None
+            for b_idx in range(n_batches):
+                current_size = min(
+                    n_batch, n_smoothed_trajectories - b_idx * n_batch
+                )
+                batch_traj = rbpf_backward_smoothing(
+                    key=batch_keys[b_idx],
+                    n_smoothed_trajectories=current_size,
+                    filtered_states=filtered_states,
+                    params=params,
+                    model_inputs_rbpf=model_inputs_rbpf,
+                )
+                batch_grads = jax.vmap(
+                    lambda traj: jax.grad(_raw_loss)(raw_params, traj)
+                )(batch_traj)
+                batch_sum_grad = jax.tree_util.tree_map(
+                    lambda g: jnp.sum(g, axis=0), batch_grads
+                )
+                if total_grad is None:
+                    total_grad = batch_sum_grad
+                else:
+                    total_grad = jax.tree_util.tree_map(
+                        lambda acc, g: acc + g, total_grad, batch_sum_grad
+                    )
+            avg_grad = jax.tree_util.tree_map(
+                lambda g: g / n_smoothed_trajectories, total_grad
+            )
+        else:
+            # Non-batched: sample all trajectories at once
+            print(f"  [Epoch {epoch+1}/{num_epochs}] Backward smoothing ({n_smoothed_trajectories} trajectories)...")
+            smoothed_trajectories = rbpf_backward_smoothing(
+                key=smoother_key,
+                n_smoothed_trajectories=n_smoothed_trajectories,
+                filtered_states=filtered_states,
+                params=params,
+                model_inputs_rbpf=model_inputs_rbpf,
+            )
+            loss_grads = jax.vmap(
+                lambda traj: jax.grad(_raw_loss)(raw_params, traj)
+            )(smoothed_trajectories)
+            avg_grad = jax.tree_util.tree_map(lambda g: jnp.mean(g, axis=0), loss_grads)
 
         # 2. Update the raw parameters using the averaged gradients
         updates, opt_state = optimizer.update(avg_grad, opt_state, raw_params)
@@ -375,6 +425,7 @@ def main():
     N_smoothed_trajectories = cfg.get("n_smoother_paths", 1000)
     learning_rate = cfg.get("learning_rate", 1e-4)
     epochs = cfg.get("n_epochs", 3)
+    n_batch = cfg.get("n_batch", 5)
     seed = cfg.get("seed", 0)
     key = jax.random.PRNGKey(seed)
     ############################################
@@ -398,7 +449,8 @@ def main():
         n_smoothed_trajectories=N_smoothed_trajectories,
         num_epochs=epochs,
         learning_rate=learning_rate,
-        max_goals=MAX_GOALS
+        max_goals=MAX_GOALS,
+        n_batch=n_batch,
     )
     print("[main] EM finished.")
 
@@ -419,6 +471,7 @@ def main():
         "max_goals": MAX_GOALS,
         "seed": seed,
         "m_step": "adam",
+        "n_batch": n_batch,
         "output_dir": save_path,
     }
     with open(save_path + "run_config.json", "w") as f:

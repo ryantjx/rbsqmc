@@ -209,6 +209,7 @@ def train(config: dict, repo_root: Path) -> None:
         max_goals=config["max_goals"],
         maxiter=config.get("maxiter", 1),
         maxcor=config.get("maxcor", 10),
+        n_batch=config.get("n_batch", 0),
     )
     print("[main] EM finished.")
 
@@ -229,6 +230,7 @@ def train(config: dict, repo_root: Path) -> None:
         "m_step": "bfgs",
         "maxiter": config.get("maxiter", 1),
         "maxcor": config.get("maxcor", 10),
+        "n_batch": config.get("n_batch", 0),
         "output_dir": save_path,
     }
     with open(save_path + "/run_config.json", "w") as f:
