@@ -1,9 +1,9 @@
 {
-  "start_date": "1950-01-01",
+  "start_date": "2010-01-01",
   "end_date": "2025-12-31",
-  "n_particles": 5000,
-  "n_smoother_paths": 2500,
-  "n_batch": 25,
+  "n_particles": 500,
+  "n_smoother_paths": 500,
+  "n_batch": 5,
   "n_epochs": 5,
   "max_goals": 8,
   "seed": 0,
@@ -12,7 +12,7 @@
   "m_step": "bfgs",
   "maxiter": 1,
   "maxcor": 10,
-  "gpu_type": "A100",
+  "gpu_type": "L4",
   "colab_timeout": 7200,
   "repo_url": "https://github.com/ryantjx/rbsqmc.git"
 }
