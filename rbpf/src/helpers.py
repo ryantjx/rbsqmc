@@ -340,6 +340,106 @@ def monitor_params(
 
     return diagnostics
 
+
+def record_mstep_diagnostics(
+    history: list[dict],
+    epoch: int,
+    complete_data_loss: jax.Array,
+    log_marginal_likelihood: jax.Array,
+    grad_norms: dict[str, float],
+) -> None:
+    """Append one epoch's M-step diagnostics to ``history``.
+
+    Stores the complete-data loss (what the M-step actually minimizes), the
+    observed-data log marginal likelihood (a noisy, lagging monitor), and the
+    per-parameter gradient norms. The accumulated ``history`` can later be
+    passed to ``print_mstep_summary`` to see the per-epoch trend.
+    """
+    history.append({
+        "epoch": int(epoch),
+        "complete_data_loss": float(complete_data_loss),
+        "log_marginal_likelihood": float(log_marginal_likelihood),
+        "grad_norms": {k: float(v) for k, v in grad_norms.items()},
+    })
+
+
+def print_mstep_summary(history: list[dict]) -> None:
+    """Print a per-epoch trend of the M-step complete-data loss.
+
+    Highlights whether the M-step is actually improving (loss decreasing)
+    versus stalling (loss flat). If ``history`` is empty, prints a message and
+    returns.
+    """
+    if not history:
+        print("[M-step summary] No M-step diagnostics recorded.")
+        return
+
+    print("[M-step summary] Complete-data loss over epochs (lower is better):")
+    for entry in history:
+        loss = entry["complete_data_loss"]
+        logz = entry["log_marginal_likelihood"]
+        print(
+            f"  epoch {entry['epoch']}: complete-data loss={loss:.4f}  "
+            f"logZ={logz:.4f}",
+            flush=True,
+        )
+
+    losses = [entry["complete_data_loss"] for entry in history]
+    first, last = losses[0], losses[-1]
+    change = last - first
+    if len(losses) >= 2 and abs(first) > 0:
+        rel = change / abs(first)
+        if rel < -1e-4:
+            print(
+                f"[M-step summary] complete-data loss decreased by {change:.4f} "
+                f"({rel * 100:.2f}%) — M-step is making progress.",
+                flush=True,
+            )
+        elif rel > 1e-4:
+            print(
+                f"[M-step summary] WARNING: complete-data loss INCREASED by "
+                f"{change:.4f} ({rel * 100:.2f}%) — the M-step is diverging.",
+                flush=True,
+            )
+        else:
+            print(
+                f"[M-step summary] complete-data loss is essentially flat "
+                f"(delta={change:.4f}) — the M-step is likely stalling.",
+                flush=True,
+            )
+
+
+def resolve_teams(cfg: dict) -> set[str] | None:
+    """Resolve the ``teams`` config entry to a set of team names.
+
+    ``teams`` may be:
+      - a preset name: ``"teams_small"`` | ``"worldcup2026"`` | ``"active"``
+      - an explicit list of team names (e.g. ``["England", "France"]``)
+      - ``"all"`` or empty/missing -> None (use all teams)
+    """
+    from rbpf.src.data import TEAMS_SMALL, WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
+
+    value = cfg.get("teams", "teams_small")
+    presets = {
+        "teams_small": TEAMS_SMALL,
+        "worldcup2026": WORLDCUP_2026_TEAMS,
+        "active": ACTIVE_TEAMS,
+    }
+    if isinstance(value, str):
+        name = value.strip().lower()
+        if name in presets:
+            return presets[name]
+        if name in ("", "all", "none"):
+            return None
+        raise ValueError(
+            f"Unknown 'teams' preset '{value}'. Choose from {sorted(presets)} "
+            "or pass an explicit list of team names."
+        )
+    if isinstance(value, (list, tuple, set)):
+        return set(value)
+    raise ValueError(f"Invalid 'teams' value in config: {value!r}")
+
+
 def params_to_dict(params: EMParams) -> dict:
     """Convert EMParams to a JSON-serializable dict."""
     return {

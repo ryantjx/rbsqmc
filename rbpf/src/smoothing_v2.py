@@ -2,7 +2,7 @@ import json
 
 import optax
 
-from rbpf.src.helpers import decode_EM_params, default_init_params, encode_EM_params, monitor_params, save_params
+from rbpf.src.helpers import decode_EM_params, default_init_params, encode_EM_params, monitor_params, record_mstep_diagnostics, print_mstep_summary, resolve_teams, save_params
 from rbpf.src.smoothing import _load_run_config, rbpf_backward_smoothing, E_step
 from rbpf.src.data import get_results, ACTIVE_TEAMS, WORLDCUP_2026_TEAMS, TEAMS_SMALL
 import jax
@@ -39,6 +39,7 @@ def run_EM(
         lambda x: x[None], decode_EM_params(raw_params, fixed_mean_0)
     )
     log_marginal_likelihood_history = []
+    mstep_history = []
 
     print("[Init] Parameters before any EM update:", flush=True)
     monitor_params(decode_EM_params(raw_params, fixed_mean_0), prefix="  ")
@@ -69,6 +70,34 @@ def run_EM(
             )(raw_params)
         )(smoothed_trajectories)
         avg_grad = jax.tree_util.tree_map(lambda x: jnp.mean(x, axis=0), loss_grads)
+
+        # Diagnostic: the complete-data loss is what the M-step actually
+        # minimizes (NOT logZ). Track it and per-parameter gradient norms so we
+        # can tell whether the optimizer is stalling (tiny/near-zero gradients)
+        # versus just logZ being a noisy monitor.
+        avg_loss = jnp.mean(
+            jax.vmap(
+                lambda traj: loss_fn(
+                    current_params, traj, model_inputs_rbpf, max_goals
+                )
+            )(smoothed_trajectories)
+        )
+        grad_norms = {
+            name: float(jnp.linalg.norm(leaf))
+            for name, leaf in avg_grad._asdict().items()
+        }
+        print(
+            f"  [M-step] complete-data loss={float(avg_loss):.4f}  "
+            f"grad_norms={ {k: f'{v:.2e}' for k, v in grad_norms.items()} }",
+            flush=True,
+        )
+        record_mstep_diagnostics(
+            history=mstep_history,
+            epoch=epoch,
+            complete_data_loss=avg_loss,
+            log_marginal_likelihood=log_marginal_likelihood,
+            grad_norms=grad_norms,
+        )
         print(f"  [M-step] Average gradient computed. Updating parameters...", flush=True)
         # 2.2 Update the raw parameters using the averaged gradients
         # update the raw parameters using the optimizer
@@ -76,7 +105,7 @@ def run_EM(
         # re-assign raw_params to the updated parameters
         raw_params = optax.apply_updates(raw_params, updates)
 
-        print(f"  [M-step] Parameters updated. Log marginal likelihood: {log_marginal_likelihood:.4f}", flush=True)
+        print(f"  [M-step] Parameters updated.", flush=True)
         monitor_params(decode_EM_params(raw_params, fixed_mean_0), prefix="  ")
         params_history = jax.tree_util.tree_map(
             lambda x, y: jnp.concatenate([x, y[None]], axis=0),
@@ -84,61 +113,9 @@ def run_EM(
         )
         log_marginal_likelihood_history.append(log_marginal_likelihood)
 
+    print_mstep_summary(mstep_history)
+
     return decode_EM_params(raw_params, fixed_mean_0), params_history, log_marginal_likelihood_history
-
-def save_results(
-    latest_params: EMParams,
-    run_config: dict,
-    save_path : str = "rbpf/outputs/smoothing_v2/"
-):
-    # 3. Save the optimized parameters to a file
-    os.makedirs(save_path, exist_ok=True)
-    save_params(latest_params, save_path + "optimized_params.json")
-    # Save the run configuration
-    run_config = {
-        "start_date": run_config["start_date"],
-        "end_date": run_config["end_date"],
-        "n_particles": run_config["n_particles"],
-        "n_smoother_paths": run_config["n_smoother_paths"],
-        "n_epochs": run_config["n_epochs"],
-        "learning_rate": run_config["learning_rate"],
-        "max_goals": run_config["max_goals"],
-        "seed": run_config["seed"],
-        "optax": run_config["optax"],
-        "output_dir": save_path,
-    }
-    with open(save_path + "run_config.json", "w") as f:
-        json.dump(run_config, f, indent=2)
-
-def _resolve_teams(cfg: dict) -> set[str] | None:
-    """Resolve the ``teams`` config entry to a set of team names.
-
-    ``teams`` may be:
-      - a preset name: ``"teams_small"`` | ``"worldcup2026"`` | ``"active"``
-      - an explicit list of team names (e.g. ``["England", "France"]``)
-      - ``"all"`` or empty/missing -> None (use all teams)
-    """
-    from rbpf.src.data import TEAMS_SMALL, WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
-
-    value = cfg.get("teams", "teams_small")
-    presets = {
-        "teams_small": TEAMS_SMALL,
-        "worldcup2026": WORLDCUP_2026_TEAMS,
-        "active": ACTIVE_TEAMS,
-    }
-    if isinstance(value, str):
-        name = value.strip().lower()
-        if name in presets:
-            return presets[name]
-        if name in ("", "all", "none"):
-            return None
-        raise ValueError(
-            f"Unknown 'teams' preset '{value}'. Choose from {sorted(presets)} "
-            "or pass an explicit list of team names."
-        )
-    if isinstance(value, (list, tuple, set)):
-        return set(value)
-    raise ValueError(f"Invalid 'teams' value in config: {value!r}")
 
 
 def main():
@@ -146,7 +123,7 @@ def main():
     cfg = _load_run_config()
     start_date = cfg.get("start_date", "1900-01-01")
     end_date = cfg.get("end_date", "2025-12-31")
-    teams_only = _resolve_teams(cfg)  # None means all teams
+    teams_only = resolve_teams(cfg)  # None means all teams
     max_goals = cfg.get("max_goals", 8)
     N_particles = cfg.get("n_particles", 2500)
     N_smoothed_trajectories = cfg.get("n_smoother_paths", 250)
@@ -154,6 +131,11 @@ def main():
     epochs = cfg.get("n_epochs", 20)
     seed = cfg.get("seed", 0)
     key = jax.random.PRNGKey(seed)
+    # Write outputs to the config's output_dir (e.g. "rbpf/outputs/smoothing_v2_gpu").
+    # This must match the Colab orchestrator's download location.
+    save_path = cfg.get("output_dir", "rbpf/outputs/smoothing_v2/")
+    if not save_path.endswith("/"):
+        save_path += "/"
     ##############
     df, model_inputs, team_id_to_name = get_results(
         start_date=start_date,
@@ -178,7 +160,6 @@ def main():
     )
 
     # 3. Run the E-step one last time to get the smoothed trajectories using the best parameters
-    save_path = "rbpf/outputs/smoothing_v2/"
     os.makedirs(save_path, exist_ok=True)
     save_params(best_params, save_path + "optimized_params.json")
     print("[main] Saved optimized params.")
