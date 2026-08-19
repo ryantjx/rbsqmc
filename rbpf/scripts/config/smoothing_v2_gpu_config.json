@@ -1,5 +1,5 @@
 {
-  "start_date": "1950-01-01",
+  "start_date": "1900-01-01",
   "end_date": "2025-12-31",
   "n_particles": 5000,
   "n_smoother_paths": 1000,
@@ -9,6 +9,9 @@
   "seed": 0,  
   "teams": "teams_small",
   "output_dir": "rbpf/outputs/smoothing_v2_gpu",
+  "fixtures": "rbpf/data/fixtures.json",
+  "prediction_n_particles": 1000,
+  "prediction_seed": 0,
   "m_step": "adam",
   "gpu_type": "A100",
   "colab_timeout": 7200,

@@ -4,12 +4,13 @@ import optax
 
 from rbpf.src.helpers import decode_EM_params, default_init_params, encode_EM_params, monitor_params, record_mstep_diagnostics, print_mstep_summary, resolve_teams, save_params
 from rbpf.src.smoothing import _load_run_config, rbpf_backward_smoothing, E_step
-from rbpf.src.data import get_results, ACTIVE_TEAMS, WORLDCUP_2026_TEAMS, TEAMS_SMALL
+from rbpf.src.data import get_results
 import jax
 from rbpf.src.smoothing import loss_fn, E_step
 from rbpf.src.model import run_filter
 from rbpf.src.utils import FootballResults, EMParams, RawEMParams
-from rbpf.src.graphic import plot_all, plot_all_smoothing, plot_log_marginal_likelihood_curve
+from rbpf.src.graphic import plot_all, plot_all_smoothing, plot_log_marginal_likelihood_curve, plot_em_dual_curve, plot_em_grad_norms
+from rbpf.src.predict import run_predictions_from_config
 import os
 import jax.numpy as jnp
 
@@ -115,7 +116,12 @@ def run_EM(
 
     print_mstep_summary(mstep_history)
 
-    return decode_EM_params(raw_params, fixed_mean_0), params_history, log_marginal_likelihood_history
+    return (
+        decode_EM_params(raw_params, fixed_mean_0),
+        params_history,
+        log_marginal_likelihood_history,
+        mstep_history,
+    )
 
 
 def main():
@@ -126,7 +132,7 @@ def main():
     teams_only = resolve_teams(cfg)  # None means all teams
     max_goals = cfg.get("max_goals", 8)
     N_particles = cfg.get("n_particles", 2500)
-    N_smoothed_trajectories = cfg.get("n_smoother_paths", 250)
+    N_smoothed_trajectories = cfg.get("n_smoother_paths", 100)
     learning_rate = cfg.get("learning_rate", 1e-3)
     epochs = cfg.get("n_epochs", 20)
     seed = cfg.get("seed", 0)
@@ -148,7 +154,7 @@ def main():
     init_params=default_init_params(len(team_id_to_name))
 
     # 2. Run EM algorithm to estimate parameters
-    best_params, params_history, log_marginal_likelihood_history = run_EM(
+    best_params, params_history, log_marginal_likelihood_history, mstep_history = run_EM(
         key=key,
         model_inputs=model_inputs,
         params=init_params,
@@ -204,6 +210,14 @@ def main():
         log_marginal_likelihoods=log_marginal_likelihood_history,
         save_path=save_path + "/em_log_marginal_likelihood_curve.png"
     )
+    plot_em_dual_curve(
+        mstep_history=mstep_history,
+        save_path=save_path + "/em_log_likelihood_curve.png",
+    )
+    plot_em_grad_norms(
+        mstep_history=mstep_history,
+        save_path=save_path + "/em_grad_norms.png",
+    )
     final_smoothed, log_marginal_likelihood, _ = E_step(
         key=smoother_key,
         model_inputs=model_inputs,
@@ -219,5 +233,16 @@ def main():
         top_n=10,
         save_path=save_path + "/smoothing",
     )
+
+    # 6. Sequential match predictions using the fitted params.
+    run_predictions_from_config(
+        cfg=cfg,
+        params=best_params,
+        team_id_to_name=team_id_to_name,
+        save_path=save_path,
+        max_goals=max_goals,
+    )
+
+
 if __name__ == "__main__":
     main()

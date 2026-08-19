@@ -437,6 +437,152 @@ def plot_log_marginal_likelihood_curve(
     return fig, ax
 
 
+def plot_em_dual_curve(
+    mstep_history,
+    save_path=os.path.join(OUTPUT_DIR, "em_log_likelihood_curve.png"),
+):
+    """Plot a dual-axis EM curve: complete-data loss and log marginal likelihood.
+
+    The complete-data loss is what the M-step actually minimizes (left axis),
+    while the log marginal likelihood / logZ is a noisy, lagging monitor of the
+    observed-data likelihood (right axis). Plotting both on shared epochs shows
+    whether the M-step is genuinely improving.
+
+    Args:
+        mstep_history: list of dicts from ``record_mstep_diagnostics``, each
+            containing ``epoch``, ``complete_data_loss`` and
+            ``log_marginal_likelihood``.
+        save_path: where to write the figure.
+
+    Returns:
+        ``(figure, (loss_axis, logz_axis))``.
+    """
+    if not mstep_history:
+        print("No M-step diagnostics to plot.")
+        return None
+
+    epochs = np.asarray([e["epoch"] for e in mstep_history])
+    complete_data_loss = np.asarray([e["complete_data_loss"] for e in mstep_history])
+    log_mll = np.asarray([e["log_marginal_likelihood"] for e in mstep_history])
+
+    fig, ax_loss = plt.subplots(figsize=(11, 6))
+    ax_loss.plot(epochs, complete_data_loss, marker="o", linewidth=1.8,
+                 color="#d62728", label="complete-data loss")
+    ax_loss.set_xlabel("EM epoch")
+    ax_loss.set_ylabel("Complete-data loss (lower is better)", color="#d62728")
+    ax_loss.tick_params(axis="y", labelcolor="#d62728")
+    ax_loss.grid(True, alpha=0.3)
+    ax_loss.set_xticks(epochs)
+
+    ax_logz = ax_loss.twinx()
+    ax_logz.plot(epochs, log_mll, marker="s", linewidth=1.8,
+                 color="darkgreen", label="logZ (log marginal likelihood)")
+    ax_logz.set_ylabel("Log marginal likelihood (logZ)", color="darkgreen")
+    ax_logz.tick_params(axis="y", labelcolor="darkgreen")
+
+    lines1, labels1 = ax_loss.get_legend_handles_labels()
+    lines2, labels2 = ax_logz.get_legend_handles_labels()
+    ax_loss.legend(lines1 + lines2, labels1 + labels2, loc="best")
+
+    ax_loss.set_title("EM Complete-Data Loss vs Log Marginal Likelihood")
+
+    if save_path:
+        directory = os.path.dirname(save_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+
+        # Persist the underlying values alongside the plot.
+        data_path = os.path.splitext(save_path)[0] + ".json"
+        with open(data_path, "w") as f:
+            json.dump(
+                {
+                    "epoch": epochs.astype(int).tolist(),
+                    "complete_data_loss": complete_data_loss.astype(float).tolist(),
+                    "log_marginal_likelihood": log_mll.astype(float).tolist(),
+                },
+                f,
+                indent=2,
+            )
+        print(f"Saved curve data to {os.path.abspath(data_path)}")
+
+    return fig, (ax_loss, ax_logz)
+
+
+def plot_em_grad_norms(
+    mstep_history,
+    save_path=os.path.join(OUTPUT_DIR, "em_grad_norms.png"),
+):
+    """Plot per-parameter gradient norms over epochs.
+
+    Each optimized parameter gets its own subplot (in a single image) showing
+    the L2 norm of its M-step gradient per epoch. This reveals which parameters
+    the optimizer is actually moving vs stalling (near-zero gradients).
+
+    Args:
+        mstep_history: list of dicts from ``record_mstep_diagnostics``, each
+            containing ``epoch`` and a ``grad_norms`` dict {name: value}.
+        save_path: where to write the figure.
+
+    Returns:
+        ``(figure, axes)``.
+    """
+    if not mstep_history:
+        print("No M-step diagnostics to plot.")
+        return None
+
+    epochs = np.asarray([e["epoch"] for e in mstep_history])
+    names = sorted(mstep_history[0]["grad_norms"].keys())
+
+    n = len(names)
+    ncols = 2
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(12, 3.2 * nrows), squeeze=False)
+    axes = axes.ravel()
+
+    for ax, name in zip(axes, names):
+        norms = np.asarray([e["grad_norms"][name] for e in mstep_history])
+        ax.plot(epochs, norms, marker="o", linewidth=1.6)
+        ax.set_yscale("log")
+        ax.set_title(name)
+        ax.set_xlabel("EM epoch")
+        ax.set_ylabel("grad norm (log)")
+        ax.grid(True, alpha=0.3)
+
+    # Hide unused subplots when the parameter count isn't a multiple of ncols.
+    for ax in axes[n:]:
+        ax.set_visible(False)
+
+    fig.suptitle("Per-Parameter M-step Gradient Norms")
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+
+    if save_path:
+        directory = os.path.dirname(save_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+
+        # Persist the per-parameter gradient norms alongside the plot.
+        data_path = os.path.splitext(save_path)[0] + ".json"
+        with open(data_path, "w") as f:
+            json.dump(
+                {
+                    "epoch": epochs.astype(int).tolist(),
+                    "grad_norms": {
+                        name: [e["grad_norms"][name] for e in mstep_history]
+                        for name in names
+                    },
+                },
+                f,
+                indent=2,
+            )
+        print(f"Saved grad-norm data to {os.path.abspath(data_path)}")
+
+    return fig, axes
+
+
 def plot_em_covariance_diagnostics(diagnostics_history, save_path):
     """Plot Gamma_0 eigenvalue, conditioning and scale diagnostics."""
     if not diagnostics_history:
@@ -1003,3 +1149,128 @@ def plot_em_results(
     )
 
     print(f"Saved EM plots to {os.path.abspath(output_dir)}")
+
+
+# ---------------------------------------------------------------------------
+# Match prediction plots (from predict.py)
+# ---------------------------------------------------------------------------
+def plot_prediction_match(
+    pred,
+    max_goals=8,
+    save_path=os.path.join(OUTPUT_DIR, "prediction_match.png"),
+):
+    """Plot a single match: outcome percentages + bivariate-Poisson heatmap.
+
+    One figure per match, with a home/draw/away probability bar on the left
+    and the 8x8 score-probability heatmap on the right.
+    """
+    grid = np.zeros((max_goals + 1, max_goals + 1))
+    for sp in pred.get("score_probabilities", []):
+        grid[sp["home"], sp["away"]] = sp["probability"]
+
+    fig, (ax_out, ax_hm) = plt.subplots(
+        1, 2, figsize=(12, 5.5),
+        gridspec_kw={"width_ratios": [1, 2.2]},
+    )
+
+    # --- Left: home / draw / away outcome percentages ---
+    home_name, away_name = pred["home"], pred["away"]
+    labels = [home_name, "Draw", away_name]
+    values = [pred["prob_home_win"], pred["prob_draw"], pred["prob_away_win"]]
+    colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+    bars = ax_out.bar(labels, values, color=colors, width=0.6)
+    for bar, val in zip(bars, values):
+        ax_out.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                    f"{val * 100:.1f}%", ha="center", va="bottom", fontsize=10, fontweight="bold")
+    ax_out.set_ylim(0, 1)
+    ax_out.set_ylabel("Probability")
+    ax_out.set_title("Win / Draw / Win", fontsize=11)
+    ax_out.grid(True, axis="y", alpha=0.3)
+    # Wrap long team names to avoid overlapping tick labels.
+    ax_out.set_xticks(range(len(labels)))
+    ax_out.set_xticklabels([n.replace(" ", "\n") if len(n) > 8 else n for n in labels], fontsize=9)
+
+    # Highlight the actual outcome.
+    actual_h, actual_a = pred["actual_home_score"], pred["actual_away_score"]
+    if actual_h >= 0 and actual_a >= 0:
+        actual_outcome = (
+            home_name if actual_h > actual_a else ("Draw" if actual_h == actual_a else away_name)
+        )
+        ax_out.set_title(
+            f"Win / Draw / Win\n(actual = {actual_h}-{actual_a}, {actual_outcome})",
+            fontsize=11,
+        )
+    else:
+        ax_out.set_title("Win / Draw / Win", fontsize=11)
+
+    # --- Right: bivariate-Poisson 8x8 score heatmap ---
+    im = ax_hm.imshow(grid.T, origin="lower", aspect="auto",
+                      cmap="viridis", interpolation="nearest")
+    if actual_h >= 0 and actual_a >= 0:
+        ax_hm.add_patch(plt.Rectangle(
+            (actual_h - 0.5, actual_a - 0.5),
+            1, 1, fill=False, edgecolor="red", linewidth=2.5,
+        ))
+    ax_hm.set_xlabel(f"{home_name} goals")
+    ax_hm.set_ylabel(f"{away_name} goals")
+    ax_hm.set_xticks(range(max_goals + 1))
+    ax_hm.set_yticks(range(max_goals + 1))
+    for i in range(max_goals + 1):
+        for j in range(max_goals + 1):
+            ax_hm.text(i, j, f"{grid[i, j]:.2f}",
+                       ha="center", va="center", fontsize=7,
+                       color="white" if grid[i, j] < grid.max() / 1.5 else "black")
+    ax_hm.set_title("Bivariate-Poisson Score Distribution (red box = actual)", fontsize=11)
+    fig.colorbar(im, ax=ax_hm, fraction=0.046, pad=0.04)
+
+    fig.suptitle(
+        f"{pred['home']} vs {pred['away']} — {pred['date']}",
+        fontsize=13, fontweight="bold",
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved plot to {os.path.abspath(save_path)}")
+    return fig
+
+
+def plot_prediction_score_heatmap(
+    predictions,
+    max_goals=8,
+    save_path=os.path.join(OUTPUT_DIR, "prediction_score_heatmap.png"),
+):
+    """Plot one combined match figure (outcome + heatmap) per match.
+
+    ``predictions`` is the list of per-match prediction dicts produced by
+    ``predict.py``. ``save_path`` is a directory; one PNG is written per match
+    named ``<home>_vs_<away>_<date>.png``.
+    """
+    os.makedirs(save_path, exist_ok=True)
+    for pred in predictions:
+        fname = f"{pred['home']}_vs_{pred['away']}_{pred['date']}.png".replace("/", "-")
+        plot_prediction_match(
+            pred,
+            max_goals=max_goals,
+            save_path=os.path.join(save_path, fname),
+        )
+
+
+def plot_all_predictions(
+    predictions_result,
+    max_goals=8,
+    save_path=os.path.join(OUTPUT_DIR, "predictions"),
+):
+    """Generate per-match prediction plots into ``save_path`` (a directory).
+
+    ``predictions_result`` is the dict returned by ``predict.run_predictions``
+    (or the parsed contents of ``predictions.json``). One combined PNG is
+    written per match.
+    """
+    predictions = predictions_result["predictions"]
+    os.makedirs(save_path, exist_ok=True)
+    plot_prediction_score_heatmap(
+        predictions,
+        max_goals=max_goals,
+        save_path=save_path,
+    )
