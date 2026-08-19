@@ -23,7 +23,8 @@ def run_EM(
     N_smoothed_trajectories: int,
     max_goals: int,
     n_epochs: int,
-    learning_rate = 1e-3 # more aggresive learning rates
+    learning_rate = 1e-3, # more aggresive learning rates
+    n_chunks: int = 1,    # split the M-step vmap into this many chunks to cap VRAM
 ):
     current_key = key
     fixed_mean_0 = params.mean_0
@@ -60,29 +61,51 @@ def run_EM(
             max_goals=max_goals
         )
         # 2. Run M_step to update the parameters using the average gradient
-        # vmap the loss_fn over all smoothed trajectories to get the gradients
-        print(f"  [M-step] Computing gradients for {N_smoothed_trajectories} smoothed trajectories...", flush=True)
-        # differentiate the loss w.r.t. raw_params by decoding inside the gradient
-        loss_grads = jax.vmap(
-            lambda traj: jax.grad(
+        # vmap the loss_fn over all smoothed trajectories to get the gradients.
+        # Chunk the vmap over trajectories to cap peak VRAM: each chunk is still
+        # fully parallelised on the GPU, but only `chunk_size` trajectories are
+        # resident in memory at once.
+        n_traj = smoothed_trajectories.x.shape[0]
+        chunk_size = max(1, n_traj // n_chunks) if n_chunks > 0 else n_traj
+        print(
+            f"  [M-step] Computing gradients for {n_traj} smoothed trajectories "
+            f"in {n_chunks} chunk(s) of {chunk_size}...",
+            flush=True,
+        )
+
+        def _grad_fn(traj):
+            return jax.grad(
                 lambda rp: loss_fn(
                     decode_EM_params(rp, fixed_mean_0), traj, model_inputs_rbpf, max_goals
                 )
             )(raw_params)
-        )(smoothed_trajectories)
-        avg_grad = jax.tree_util.tree_map(lambda x: jnp.mean(x, axis=0), loss_grads)
 
-        # Diagnostic: the complete-data loss is what the M-step actually
-        # minimizes (NOT logZ). Track it and per-parameter gradient norms so we
-        # can tell whether the optimizer is stalling (tiny/near-zero gradients)
-        # versus just logZ being a noisy monitor.
-        avg_loss = jnp.mean(
-            jax.vmap(
-                lambda traj: loss_fn(
-                    current_params, traj, model_inputs_rbpf, max_goals
+        def _loss_fn(traj):
+            return loss_fn(current_params, traj, model_inputs_rbpf, max_goals)
+
+        # Accumulate gradient sums and loss sums across chunks.
+        grad_sum = None
+        loss_sum = 0.0
+        for start in range(0, n_traj, chunk_size):
+            end = min(start + chunk_size, n_traj)
+            chunk = jax.tree_util.tree_map(
+                lambda x: x[start:end], smoothed_trajectories
+            )
+            chunk_grads = jax.vmap(_grad_fn)(chunk)
+            chunk_loss = jnp.sum(jax.vmap(_loss_fn)(chunk))
+            if grad_sum is None:
+                grad_sum = jax.tree_util.tree_map(
+                    lambda x: jnp.sum(x, axis=0), chunk_grads
                 )
-            )(smoothed_trajectories)
-        )
+            else:
+                grad_sum = jax.tree_util.tree_map(
+                    lambda a, b: a + jnp.sum(b, axis=0), grad_sum, chunk_grads
+                )
+            loss_sum += chunk_loss
+
+        avg_grad = jax.tree_util.tree_map(lambda x: x / n_traj, grad_sum)
+        avg_loss = loss_sum / n_traj
+
         grad_norms = {
             name: float(jnp.linalg.norm(leaf))
             for name, leaf in avg_grad._asdict().items()
@@ -127,15 +150,16 @@ def run_EM(
 def main():
     #############
     cfg = _load_run_config()
-    start_date = cfg.get("start_date", "1900-01-01")
+    start_date = cfg.get("start_date", "1950-01-01")
     end_date = cfg.get("end_date", "2025-12-31")
     teams_only = resolve_teams(cfg)  # None means all teams
     max_goals = cfg.get("max_goals", 8)
-    N_particles = cfg.get("n_particles", 2500)
+    N_particles = cfg.get("n_particles", 1000)
     N_smoothed_trajectories = cfg.get("n_smoother_paths", 100)
     learning_rate = cfg.get("learning_rate", 1e-3)
     epochs = cfg.get("n_epochs", 20)
     seed = cfg.get("seed", 0)
+    n_chunks = cfg.get("n_chunks", 10)
     key = jax.random.PRNGKey(seed)
     # Write outputs to the config's output_dir (e.g. "rbpf/outputs/smoothing_v2_gpu").
     # This must match the Colab orchestrator's download location.
@@ -162,7 +186,8 @@ def main():
         N_smoothed_trajectories=N_smoothed_trajectories,
         max_goals=max_goals,
         n_epochs=epochs,
-        learning_rate=learning_rate
+        learning_rate=learning_rate,
+        n_chunks=n_chunks,
     )
 
     # 3. Run the E-step one last time to get the smoothed trajectories using the best parameters
@@ -206,10 +231,10 @@ def main():
         save_path=save_path + "/filter"
     )
     log_marginal_likelihood_history.append(filtered_states.log_normalizing_constant[-1])
-    plot_log_marginal_likelihood_curve(
-        log_marginal_likelihoods=log_marginal_likelihood_history,
-        save_path=save_path + "/em_log_marginal_likelihood_curve.png"
-    )
+    # plot_log_marginal_likelihood_curve(
+    #     log_marginal_likelihoods=log_marginal_likelihood_history,
+    #     save_path=save_path + "/em_log_marginal_likelihood_curve.png"
+    # )
     plot_em_dual_curve(
         mstep_history=mstep_history,
         save_path=save_path + "/em_log_likelihood_curve.png",
