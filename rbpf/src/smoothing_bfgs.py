@@ -31,6 +31,7 @@ from rbpf.src.helpers import (
     save_params,
     encode_EM_params,
     decode_EM_params,
+    log_inverse_wishart_kernel,
 )
 from rbpf.src.utils import (
     EMParams, FootballResults, RawEMParams, RBPFState,
@@ -88,8 +89,17 @@ def m_step_bfgs(
     max_goals: int,
     maxiter: int = 1,
     maxcor: int = 10,
+    gamma_0_prior: jax.Array | None = None,
+    gamma_prior_dof: float = 5.0,
 ) -> tuple[RawEMParams, dict]:
-    """One M-step via L-BFGS-B (scipy) with bounded iterations.
+    """One M-step via L-BFGS-B (scipy) on the negative ELBO + gamma_0 prior.
+
+    The loss is the Monte-Carlo negative ELBO (mean of ``loss_fn`` over the
+    fixed smoothed trajectories) plus an inverse-Wishart prior on ``gamma_0``.
+    The prior is centered on the ORIGINAL ``gamma_0`` (from
+    ``default_init_params``), so it shrinks the fitted stationary covariance
+    toward its initial value and prevents the optimizer from collapsing to a
+    degenerate near-stationary solution with tiny variance.
 
     Uses scipy.optimize.minimize with L-BFGS-B, which:
       - Limits memory via the limited-memory Hessian approximation (maxcor).
@@ -100,39 +110,53 @@ def m_step_bfgs(
     triangular solves are recomputed during backprop instead of being stored,
     avoiding OOM on large n_smoother_paths.
     """
+    # --- Flatten the unconstrained params into a 1D vector for scipy. ---
     flat_init = np.asarray(_raw_to_flat(raw_params))
     structure = _raw_structure(raw_params)
 
-    # Checkpointed loss: rematerialize intermediates during backprop
-    _loss_fn = jax.checkpoint(
+    # --- Checkpointed per-trajectory loss (rematerialize during backprop). ---
+    _per_traj_loss = jax.checkpoint(
         lambda raw, traj: loss_fn(
             decode_EM_params(raw, fixed_mean_0), traj, model_inputs, max_goals
         ),
         policy=jax.checkpoint_policies.nothing_saveable(),
     )
 
-    # JIT-compiled value_and_grad for the per-trajectory loss
-    _per_traj_vg = jax.jit(jax.value_and_grad(
-        lambda raw, traj: _loss_fn(raw, traj)
-    ))
+    # --- JIT value_and_grad for one trajectory. ---
+    _per_traj_vg = jax.jit(jax.value_and_grad(_per_traj_loss))
 
-    # Process all trajectories at once. The trajectories are passed as a
-    # runtime arg (not closed over) to avoid embedding the ~2.5 GB array as a
-    # constant in the compiled module.
+    # --- JIT the mean loss/grad over all trajectories (passed as a runtime
+    #     arg, not closed over, to avoid embedding the large array). ---
     @jax.jit
-    def _all_loss_and_grad(raw, trajectories):
-        vals, grads = jax.vmap(
-            lambda traj: _per_traj_vg(raw, traj)
-        )(trajectories)
+    def _mean_loss_and_grad(raw, trajectories):
+        vals, grads = jax.vmap(lambda traj: _per_traj_vg(raw, traj))(trajectories)
         return jnp.mean(vals), jax.tree_util.tree_map(
             lambda g: jnp.mean(g, axis=0), grads
         )
 
+    # --- Add the gamma_0 prior: inverse-Wishart centered on the ORIGINAL
+    #     gamma_0 (shrinkage toward the initialization). ---
+    prior_scale = (
+        gamma_0_prior
+        if gamma_0_prior is not None
+        else decode_EM_params(raw_params, fixed_mean_0).gamma_0
+    )
+
+    def _prior_loss(raw):
+        gamma_0 = decode_EM_params(raw, fixed_mean_0).gamma_0
+        # -log p(gamma_0) = -log_inverse_wishart_kernel(gamma_0, prior_scale, dof)
+        return -log_inverse_wishart_kernel(gamma_0, prior_scale, gamma_prior_dof)
+
+    # --- Total loss/grad as functions of the flat vector. ---
     def _loss_and_grad(flat):
         raw = _flat_to_raw(flat, structure)
-        mean_val, mean_grad = _all_loss_and_grad(raw, smoothed_trajectories)
-        return mean_val, _raw_to_flat(mean_grad)
+        mean_val, mean_grad = _mean_loss_and_grad(raw, smoothed_trajectories)
+        prior_val, prior_grad = jax.value_and_grad(_prior_loss)(raw)
+        return mean_val + prior_val, _raw_to_flat(
+            jax.tree_util.tree_map(lambda a, b: a + b, mean_grad, prior_grad)
+        )
 
+    # --- scipy callbacks: convert flat <-> float / numpy for L-BFGS-B. ---
     def _scipy_loss(flat):
         val, _ = _loss_and_grad(jnp.asarray(flat))
         return float(val)
@@ -141,19 +165,37 @@ def m_step_bfgs(
         _, grad = _loss_and_grad(jnp.asarray(flat))
         return np.asarray(grad)
 
+    # --- Run L-BFGS-B. ---
     result = scipy_minimize(
         fun=_scipy_loss,
         x0=flat_init,
         jac=_scipy_grad,
         method="L-BFGS-B",
-        options={
-            "maxiter": maxiter,
-            "maxcor": maxcor,
-            "ftol": 1e-6,
-            "gtol": 1e-5,
-        },
+        options={"maxiter": maxiter, "maxcor": maxcor, "ftol": 1e-6, "gtol": 1e-5},
     )
 
+    # --- NaN guard: if the optimizer produced NaN/inf params or a non-finite
+    #     loss, fall back to the previous params instead of corrupting the fit. ---
+    result_x = np.asarray(result.x)
+    result_fun = float(result.fun)
+    if not np.all(np.isfinite(result_x)) or not np.isfinite(result_fun):
+        print(
+            f"    [m_step_bfgs] NaN/inf detected (loss={result_fun}); "
+            f"reverting to previous params",
+            flush=True,
+        )
+        raw_next = raw_params
+        diagnostics = {
+            "success": False,
+            "nit": int(result.nit),
+            "nfev": int(result.nfev),
+            "final_loss": result_fun,
+            "status": int(result.status),
+            "nan_guard": True,
+        }
+        return raw_next, diagnostics
+
+    # --- Unflatten the result and return diagnostics. ---
     raw_next = _flat_to_raw(jnp.asarray(result.x), structure)
     diagnostics = {
         "success": bool(result.success),
@@ -161,6 +203,7 @@ def m_step_bfgs(
         "nfev": int(result.nfev),
         "final_loss": float(result.fun),
         "status": int(result.status),
+        "nan_guard": False,
     }
     return raw_next, diagnostics
 
@@ -178,6 +221,8 @@ def run_EM(
     max_goals: int,
     maxiter: int = 1,
     maxcor: int = 10,
+    gamma_0_prior: jax.Array | None = None,
+    gamma_prior_dof: float = 5.0,
 ):
     """EM with a BFGS M-step.
 
@@ -186,6 +231,11 @@ def run_EM(
     """
     fixed_mean_0 = params.mean_0
     raw_params = encode_EM_params(params)
+
+    # The gamma_0 prior is centered on the ORIGINAL gamma_0 (from
+    # default_init_params) unless an explicit prior is supplied.
+    if gamma_0_prior is None:
+        gamma_0_prior = params.gamma_0
 
     # Track decoded params (EMParams) per epoch.
     params_history = jax.tree_util.tree_map(
@@ -224,6 +274,8 @@ def run_EM(
             max_goals=max_goals,
             maxiter=maxiter,
             maxcor=maxcor,
+            gamma_0_prior=gamma_0_prior,
+            gamma_prior_dof=gamma_prior_dof,
         )
         print(f"  [Epoch {epoch+1}/{num_epochs}] M-step done. "
               f"loss={mstep_diag['final_loss']:.4f}, nit={mstep_diag['nit']}, "
@@ -261,12 +313,13 @@ def main():
     end_date = cfg.get("end_date", "2025-12-31")
     teams_only = WORLDCUP_2026_TEAMS
     MAX_GOALS = cfg.get("max_goals", 8)
-    N_particles = cfg.get("n_particles", 1500)
+    N_particles = cfg.get("n_particles", 1000)
     N_smoothed_trajectories = cfg.get("n_smoother_paths", 100)
-    epochs = cfg.get("n_epochs", 15)
+    epochs = cfg.get("n_epochs", 5)
     seed = cfg.get("seed", 0)
-    maxiter = cfg.get("maxiter", 1)
+    maxiter = cfg.get("maxiter", 5)
     maxcor = cfg.get("maxcor", 10)
+    gamma_prior_dof = cfg.get("gamma_prior_dof", 5.0)
     key = jax.random.PRNGKey(seed)
     ############################################
     df, model_inputs, team_id_to_name = get_results(
@@ -280,17 +333,22 @@ def main():
           f"Number of unique dates: {len(df['date'].unique())}. "
           f"Number of unique teams: {len(team_id_to_name)}.")
 
+    # The gamma_0 prior is centered on the ORIGINAL gamma_0 from
+    # default_init_params (shrinkage toward the initialization).
+    init_params = default_init_params(len(team_id_to_name))
     print("[main] Running EM (BFGS M-step)...", flush=True)
     latest_params, params_history, log_marginal_likelihood_history, mstep_history = run_EM(
         key=key,
         model_inputs=model_inputs,
-        params=default_init_params(len(team_id_to_name)),
+        params=init_params,
         n_particles=N_particles,
         n_smoothed_trajectories=N_smoothed_trajectories,
         num_epochs=epochs,
         max_goals=MAX_GOALS,
         maxiter=maxiter,
         maxcor=maxcor,
+        gamma_0_prior=init_params.gamma_0,
+        gamma_prior_dof=gamma_prior_dof,
     )
     print("[main] EM finished.")
 
@@ -312,6 +370,7 @@ def main():
         "m_step": "bfgs",
         "maxiter": maxiter,
         "maxcor": maxcor,
+        "gamma_prior_dof": gamma_prior_dof,
         "output_dir": save_path,
     }
     with open(save_path + "run_config.json", "w") as f:

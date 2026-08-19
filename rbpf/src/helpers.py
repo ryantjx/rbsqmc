@@ -172,6 +172,174 @@ def parameter_diagnostics(
         "Q_eigenvalues_by_dt": q_eigenvalues,
     }
 
+
+def _require_finite(params: EMParams, prefix: str = ""):
+    """Raise if any EM parameter leaf is NaN or infinite."""
+    for name, value in params._asdict().items():
+        arr = jnp.asarray(value)
+        if not bool(jnp.all(jnp.isfinite(arr))):
+            raise RuntimeError(
+                f"{prefix}[monitor_params] Parameter '{name}' is not finite:\n"
+                f"{arr}"
+            )
+
+
+def _validate_diagnostics(diagnostics: dict, prefix: str = ""):
+    """Raise if any monitored parameter falls outside a healthy range.
+
+    Thresholds are conservative and chosen to catch diverging/ill-conditioned
+    EM runs early (typically the cause of a flat log-marginal-likelihood).
+    """
+    def fail(metric: str, value, reason: str):
+        raise RuntimeError(
+            f"{prefix}[monitor_params] Bad parameter value: {metric}={value:.6g} "
+            f"({reason}). EM has likely diverged."
+        )
+
+    # --- attribute covariance B (should be SPD, det = 1) ---
+    B_min = diagnostics["B_min_eigenvalue"]
+    B_max = diagnostics["B_max_eigenvalue"]
+    if B_min <= 0:
+        fail("B_min_eigenvalue", B_min, "B is not positive-definite")
+    if B_max > 1e3:
+        fail("B_max_eigenvalue", B_max, "B eigenvalue exploded")
+    if B_min < 1e-3:
+        fail("B_min_eigenvalue", B_min, "B is near-singular")
+    if not (-1.0 <= diagnostics["B_attack_defence_corr"] <= 1.0):
+        fail(
+            "B_attack_defence_corr",
+            diagnostics["B_attack_defence_corr"],
+            "correlation outside [-1, 1]",
+        )
+
+    # --- team covariance gamma_0 (should be SPD) ---
+    gamma_min = diagnostics["gamma_min_eigenvalue"]
+    gamma_max = diagnostics["gamma_max_eigenvalue"]
+    if gamma_min <= 0:
+        fail("gamma_min_eigenvalue", gamma_min, "gamma_0 is not positive-definite")
+    if gamma_max > 1e4:
+        fail("gamma_max_eigenvalue", gamma_max, "gamma_0 eigenvalue exploded")
+    if gamma_min < 1e-6:
+        fail("gamma_min_eigenvalue", gamma_min, "gamma_0 is near-singular")
+
+    # --- OU dynamics ---
+    kappa = diagnostics["kappa"]
+    if kappa < 0:
+        fail("kappa", kappa, "negative mean-reversion")
+    if kappa > 10.0:
+        fail("kappa", kappa, "kappa exploded (OU collapses to white noise)")
+
+    # --- observation parameters ---
+    alpha = diagnostics["alpha"]
+    if alpha < 0:
+        fail("alpha", alpha, "negative Poisson rate/scale")
+    if alpha > 100.0:
+        fail("alpha", alpha, "alpha exploded")
+
+
+def monitor_params(
+    params: EMParams,
+    prefix: str = "",
+    verbose: bool = True,
+    validate: bool = True,
+) -> dict:
+    """Compute and (optionally) print a readable summary of all EM parameters.
+
+    Returns a flat dict of scalar diagnostics covering every optimized
+    parameter: the attribute covariance ``B`` (including its attack/defence
+    correlation), the team-covariance ``gamma_0`` (trace, condition number and
+    effective rank), the OU ``kappa`` / half-life, and the observation
+    parameters ``alpha``/``beta``.
+
+    Args:
+        params: the EM parameters to inspect.
+        prefix: string prepended to each printed line (e.g. epoch indentation).
+        verbose: if True, print the diagnostics lines.
+        validate: if True, raise ``RuntimeError`` as soon as any parameter
+            drifts into an extreme/invalid region (NaN, non-PD covariance,
+            degenerate conditioning, out-of-range correlation, etc.). This is
+            useful for aborting an EM run early instead of silently returning a
+            flat likelihood.
+    """
+    # NaN / non-finite guard first so downstream checks are meaningful.
+    _require_finite(params, prefix)
+    gamma = 0.5 * (params.gamma_0 + params.gamma_0.T)
+    B = 0.5 * (params.B + params.B.T)
+
+    gamma_evals = jnp.linalg.eigvalsh(gamma)
+    B_evals = jnp.linalg.eigvalsh(B)
+
+    gamma_min, gamma_max = float(gamma_evals[0]), float(gamma_evals[-1])
+    gamma_trace = float(jnp.sum(gamma_evals))
+    gamma_cond = float(gamma_max / gamma_min) if gamma_min > 0 else float("inf")
+
+    eigenvalue_weights = jnp.maximum(gamma_evals, 0.0) / gamma_trace
+    effective_rank = float(
+        jnp.exp(
+            -jnp.sum(
+                jnp.where(
+                    eigenvalue_weights > 0,
+                    eigenvalue_weights * jnp.log(eigenvalue_weights),
+                    0.0,
+                )
+            )
+        )
+    )
+
+    B_min, B_max = float(B_evals[0]), float(B_evals[-1])
+    B_corr = float(B[0, 1] / jnp.sqrt(B[0, 0] * B[1, 1]))
+    B_cond = float(B_max / B_min) if B_min > 0 else float("inf")
+
+    kappa = float(params.kappa)
+    diagnostics = {
+        # attribute covariance B
+        "B_min_eigenvalue": B_min,
+        "B_max_eigenvalue": B_max,
+        "B_condition_number": B_cond,
+        "B_logdet": float(jnp.linalg.slogdet(B)[1]),
+        "B_attack_defence_corr": B_corr,
+        "B_attack_variance": float(B[0, 0]),
+        "B_defence_variance": float(B[1, 1]),
+        # team covariance gamma_0
+        "gamma_min_eigenvalue": gamma_min,
+        "gamma_max_eigenvalue": gamma_max,
+        "gamma_condition_number": gamma_cond,
+        "gamma_trace": gamma_trace,
+        "gamma_effective_rank": effective_rank,
+        "gamma_logdet": float(jnp.linalg.slogdet(gamma)[1]),
+        # OU dynamics
+        "kappa": kappa,
+        "ou_half_life": float(jnp.log(2.0) / kappa) if kappa > 0 else float("inf"),
+        # observation parameters
+        "alpha": float(params.alpha),
+        "beta": float(params.beta),
+    }
+
+    if validate:
+        _validate_diagnostics(diagnostics, prefix)
+
+    if verbose:
+        print(
+            f"{prefix} kappa={kappa:.5f} half_life={diagnostics['ou_half_life']:.2f} "
+            f"alpha={diagnostics['alpha']:.4f} beta={diagnostics['beta']:.4f}",
+            flush=True,
+        )
+        print(
+            f"{prefix} B: min_eig={B_min:.5f} max_eig={B_max:.5f} "
+            f"cond={B_cond:.3f} corr={B_corr:+.4f} det={jnp.sqrt(B_min * B_max):.5f} "
+            f"attack_var={diagnostics['B_attack_variance']:.5f} "
+            f"defence_var={diagnostics['B_defence_variance']:.5f}",
+            flush=True,
+        )
+        print(
+            f"{prefix} gamma_0: min_eig={gamma_min:.5f} max_eig={gamma_max:.5f} "
+            f"cond={gamma_cond:.3f} trace={gamma_trace:.5f} "
+            f"eff_rank={effective_rank:.3f}",
+            flush=True,
+        )
+
+    return diagnostics
+
 def params_to_dict(params: EMParams) -> dict:
     """Convert EMParams to a JSON-serializable dict."""
     return {
@@ -381,17 +549,26 @@ def default_init_params(
         )
     D = jnp.diag(sigmas)
     gamma_0 = D @ C0 @ D
-    # cov_attack_defence = 0.2
-    # B = jnp.array([
-    #     [1.0,  cov_attack_defence],
-    #     [cov_attack_defence,  1.0],
-    # ])
-    B = jnp.eye(2)  # independent attack/defence evolution
+    cov_attack_defence = 0.2
+    B = jnp.array([
+        [1.0,  cov_attack_defence],
+        [cov_attack_defence,  1.0],
+    ])
+    # B=jnp.eye(2)  # For now, use identity for B to avoid identifiability issues
+
+    print(f"Default initial parameters: num_teams={num_teams}, gamma_0.shape={gamma_0.shape}, B.shape={B.shape}")
+    print(f"    B: {B}")
+    print(f"    mean_0: {jnp.mean(jnp.zeros((num_teams, 2)))}")
+    print(f"    gamma_0: {jnp.mean(gamma_0)}")
+    print(f"    kappa: {jnp.array(0.001)}")
+    print(f"    alpha: {jnp.array(0.2)}")
+    print(f"    beta: {jnp.array(-4.0)}")
+
     return EMParams(
         mean_0=jnp.zeros((num_teams, 2)),
         gamma_0=gamma_0,
         B=B,
-        kappa=jnp.array(0.01),
+        kappa=jnp.array(0.001),
         alpha=jnp.array(0.2),
         beta=jnp.array(-4.0),
     )
@@ -420,6 +597,7 @@ def generate_rbpf_trajectory(
 KAPPA_FLOOR = 1e-6
 GAMMA_CHOL_FLOOR = 1e-4
 MAX_B_LOG_RATIO = 5.0
+B_CHOL_FLOOR = 1e-4
 
 def inverse_softplus(x):
     x = jnp.maximum(x, 1e-8)
@@ -454,37 +632,48 @@ def _cholesky_from_psd(A, n):
 
     return L_free
 
-def decode_diagonal_B(B_ratio_raw):
-    log_ratio = MAX_B_LOG_RATIO * jnp.tanh(B_ratio_raw)
+def _cholesky_from_psd_B(A, n):
+    """Encode an SPD attribute covariance into free Cholesky parameters."""
+    A = 0.5 * (A + A.T)
+    L = jnp.linalg.cholesky(A)
 
-    return jnp.diag(
-        jnp.array([
-            jnp.exp(log_ratio),
-            jnp.exp(-log_ratio),
-        ])
+    diagonal = jnp.diag(L)
+    # Inverse of: diagonal = softplus(diag_raw) + B_CHOL_FLOOR
+    diag_raw = inverse_softplus(diagonal - B_CHOL_FLOOR)
+
+    L_free = jnp.tril(L)
+    L_free = L_free.at[jnp.diag_indices(n)].set(diag_raw)
+
+    return L_free
+
+
+def decode_B_cholesky(b_raw):
+    """Decode a free 2x2 factor into a det(B)=1 SPD attribute covariance.
+
+    The overall scale of B is not identified (Gamma_0 (x) B), so we fix
+    det(B) = 1 and absorb the true scale into Gamma_0 in encode_EM_params.
+    """
+    n = b_raw.shape[0]
+    L = jnp.tril(b_raw)
+    diag = (
+        jax.nn.softplus(jnp.diag(L))
+        + B_CHOL_FLOOR
     )
+    L = L.at[jnp.diag_indices(n)].set(diag)
+
+    B = L @ L.T
+    return B / jnp.sqrt(jnp.linalg.det(B))
 
 
 def encode_EM_params(params: EMParams) -> RawEMParams:
     """Encode identified EM parameters into unconstrained parameters."""
     num_teams = params.mean_0.shape[0]
 
-    attack_variance = params.B[0, 0]
-    defence_variance = params.B[1, 1]
-
-    # Overall scale of diagonal B. Move it into Gamma_0 so det(B) = 1.
-    B_scale = jnp.sqrt(attack_variance * defence_variance)
+    B = 0.5 * (params.B + params.B.T)
+    # Full scale of B moves into Gamma_0 so the decoded B has det(B) = 1.
+    B_scale = jnp.sqrt(jnp.linalg.det(B))
     gamma_0_identified = B_scale * params.gamma_0
-
-    log_ratio = 0.5 * jnp.log(
-        attack_variance / defence_variance
-    )
-    bounded_ratio = jnp.clip(
-        log_ratio / MAX_B_LOG_RATIO,
-        -1.0 + 1e-6,
-        1.0 - 1e-6,
-    )
-    B_ratio_raw = jnp.arctanh(bounded_ratio)
+    B_identified = B / B_scale
 
     kappa_raw = inverse_softplus(
         params.kappa - KAPPA_FLOOR
@@ -495,7 +684,7 @@ def encode_EM_params(params: EMParams) -> RawEMParams:
             gamma_0_identified,
             num_teams,
         ),
-        B_ratio_raw=B_ratio_raw,
+        b_chol_raw=_cholesky_from_psd_B(B_identified, 2),
         kappa_raw=kappa_raw,
         alpha=params.alpha,
         beta=params.beta,
@@ -522,7 +711,7 @@ def decode_EM_params(
     return EMParams(
         mean_0=fixed_mean_0,
         gamma_0=gamma_0,
-        B=decode_diagonal_B(raw_params.B_ratio_raw),
+        B=decode_B_cholesky(raw_params.b_chol_raw),
         kappa=kappa,
         alpha=raw_params.alpha,
         beta=raw_params.beta,

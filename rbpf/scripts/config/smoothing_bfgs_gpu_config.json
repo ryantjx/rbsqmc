@@ -8,7 +8,7 @@
   "max_goals": 8,
   "seed": 0,
   "initial_params": "",
-  "output_dir": "rbpf/outputs/smoothing_bfgs",
+  "output_dir": "rbpf/outputs/smoothing_bfgs_gpu",
   "m_step": "bfgs",
   "maxiter": 1,
   "maxcor": 10,

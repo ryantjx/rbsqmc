@@ -8,12 +8,16 @@ _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")  # rbpf/data/
 PARQUET_PATH = os.path.join(_DATA_DIR, "results.parquet")
 WORLDCUP_2026_PATH = os.path.join(_DATA_DIR, "worldcup2026.json")
 ACITVE_TEAMS_PATH = os.path.join(_DATA_DIR, "active_teams.json")
+TEAMS_SMALL_PATH = os.path.join(_DATA_DIR, "teams_small.json")
 
 with open(WORLDCUP_2026_PATH) as f:
     WORLDCUP_2026_TEAMS: set[str] = set(json.load(f))
 
 with open(ACITVE_TEAMS_PATH) as f:
     ACTIVE_TEAMS: set[str] = set(json.load(f)['teams'])
+
+with open(TEAMS_SMALL_PATH) as f:
+    TEAMS_SMALL: set[str] = set(json.load(f)['teams'])
 
 def _drop_duplicate_teams_per_day(data: pd.DataFrame) -> pd.DataFrame:
     """Assume that teams do not play more than once per day, otherwise it causes an issue with the propagation."""

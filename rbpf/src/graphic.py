@@ -420,6 +420,20 @@ def plot_log_marginal_likelihood_curve(
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"Saved plot to {os.path.abspath(save_path)}")
 
+        # Also persist the raw values as JSON alongside the plot, so the
+        # per-epoch log marginal likelihoods can be reused or plotted later.
+        data_path = os.path.splitext(save_path)[0] + ".json"
+        with open(data_path, "w") as f:
+            json.dump(
+                {
+                    "epoch": epochs.astype(int).tolist(),
+                    "log_marginal_likelihood": log_mll.astype(float).tolist(),
+                },
+                f,
+                indent=2,
+            )
+        print(f"Saved curve data to {os.path.abspath(data_path)}")
+
     return fig, ax
 
 

@@ -38,7 +38,7 @@ class EMParams(NamedTuple):
 
 class RawEMParams(NamedTuple):
     gamma_0_chol: jax.Array
-    B_ratio_raw: jax.Array
+    b_chol_raw: jax.Array    # (2, 2) free factor -> decodes to det(B)=1 SPD
     kappa_raw: jax.Array
     alpha: jax.Array
     beta: jax.Array

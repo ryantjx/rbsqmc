@@ -139,7 +139,7 @@ def E_step(
     n_smoothed_trajectories : int,
     max_goals: int
 ):
-    filter_key, smoother_key = jax.random.split(key, 2)
+    key, filter_key, smoother_key = jax.random.split(key, 3)
     # 1. Run RBPF forward pass
     print("  [E-step] Running forward filter...", flush=True)
     filtered_states, model_inputs_rbpf = run_filter(
@@ -160,17 +160,17 @@ def E_step(
         model_inputs_rbpf=model_inputs_rbpf
     )
     print("  [E-step] Smoothing done.", flush=True)
-    return smoothed_trajectories, filtered_states.log_normalizing_constant[-1]
+    return smoothed_trajectories, filtered_states.log_normalizing_constant[-1], model_inputs_rbpf
 
 def loss_fn(
         params: EMParams, 
         smoothed_trajectory: RBPFState, 
-        model_inputs: FootballResults,
+        model_inputs: RBPFFootballResults,
         max_goals: int
     ):
     # initial, transition, and observation
     def _loss_init(x_0):
-            return gaussian_kron_logpdf(x_0, params.mean_0, params.gamma_0, params.B)
+        return gaussian_kron_logpdf(x_0, params.mean_0, params.gamma_0, params.B)
 
     # ---- transition: log p(X_t | X_{t-1}) via OU ----
     def _loss_transition(x_prev, x_next, t):
