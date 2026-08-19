@@ -10,7 +10,7 @@
   "teams": "teams_small",
   "output_dir": "rbpf/outputs/smoothing_v2_gpu",
   "fixtures": "rbpf/data/fixtures.json",
-  "prediction_n_particles": 5000,
+  "prediction_n_particles": 1000,
   "prediction_seed": 0,
   "m_step": "adam",
   "gpu_type": "A100",
