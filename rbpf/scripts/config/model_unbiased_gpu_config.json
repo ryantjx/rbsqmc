@@ -11,7 +11,7 @@
   "gamma_prior_dof": 5.0,
   "gamma_prior_strength": 1.0,
   "include_friendly": false,
-  "teams": "teams_small",
+  "teams": "worldcup2026",
   "output_dir": "rbpf/outputs/filter_unbiased_gpu",
   "gpu_type": "A100",
   "colab_timeout": 14400,
