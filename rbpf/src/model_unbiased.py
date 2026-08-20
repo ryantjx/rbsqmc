@@ -306,6 +306,17 @@ def main():
     print(f"Finished initial filtering with default parameters. logZ = {baseline_logz:.4f}")
     ######################
     key, optimize_key = jax.random.split(key, 2)
+    # gamma_0 prior: if the config gives a scalar multiplier, scale the initial
+    # gamma_0 by it (e.g. 4.0 -> diag std ~2x); if a full matrix is given, use
+    # it directly; otherwise default to the initial gamma_0 (shrinkage).
+    _g0_prior = cfg.get("gamma_0_prior")
+    if _g0_prior is None:
+        gamma_0_prior = params.gamma_0
+    elif isinstance(_g0_prior, (int, float)):
+        gamma_0_prior = float(_g0_prior) * params.gamma_0
+    else:
+        gamma_0_prior = jnp.asarray(_g0_prior)
+
     best_params, logz_history = logmarginal_maximize(
         key=optimize_key,
         model_inputs=model_inputs,
@@ -315,9 +326,7 @@ def main():
         n_epochs=cfg["n_epochs"],
         learning_rate=cfg["learning_rate"],
         n_reps=cfg["n_reps"],
-        # gamma_0 prior: centered on the (possibly widened) initial gamma_0.
-        # Defaults to params.gamma_0 when gamma_0_prior is None.
-        gamma_0_prior=cfg.get("gamma_0_prior"),
+        gamma_0_prior=gamma_0_prior,
         gamma_prior_dof=cfg.get("gamma_prior_dof", 5.0),
         gamma_prior_strength=cfg.get("gamma_prior_strength", 1.0),
     )
