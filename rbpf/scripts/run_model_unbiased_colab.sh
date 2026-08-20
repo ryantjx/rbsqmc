@@ -31,7 +31,7 @@ progress() {
     local outer inner
     outer="$(date '+%Y-%m-%d %H:%M:%S')"
     inner="$(date '+%H:%M:%S')"
-    printf '[%s] %s: [%s] %s\n' "${outer}" "${stream}" "${inner}" "$*"
+    printf '[%s] %s: [%s] %s\n' "${outer}" "${stream}" "${inner}" "$*" | tee -a "${RUN_LOG:-/dev/null}"
 }
 
 read_config() {
@@ -112,6 +112,11 @@ main() {
     LOCAL_OUTPUTS="${REPO_ROOT}/${output_dir}"
     REMOTE_OUTPUTS="/content/rbsqmc/${output_dir}"
 
+    # Store a per-run log in the output directory (named with a timestamp).
+    mkdir -p "${LOCAL_OUTPUTS}"
+    RUN_LOG="${LOCAL_OUTPUTS}/run_$(date '+%Y%m%d_%H%M%S').log"
+    progress OUT "logging this run to ${RUN_LOG}"
+
     # Dry-run validation of the bootstrap (use local path for validation only)
     python3 "${BOOTSTRAP}" --config "${CONFIG}" --dry-run >/dev/null
 
@@ -128,8 +133,10 @@ main() {
     SESSION_LAUNCHED=1
     # Use --keep so the session stays alive after the script finishes.
     # Run in the background so we can download immediately after completion.
+    # Tee colab's output into the per-run log as well.
     colab run --gpu "${gpu_type}" --keep --timeout "${timeout}" \
-        --session "${SESSION}" "${BOOTSTRAP}" --config "$(basename "${CONFIG}")" &
+        --session "${SESSION}" "${BOOTSTRAP}" --config "$(basename "${CONFIG}")" \
+        > >(tee -a "${RUN_LOG}") 2>&1 &
     local colab_pid=$!
 
     # Wait for the training to complete (colab run returns when the script

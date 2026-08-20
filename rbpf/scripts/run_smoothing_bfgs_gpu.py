@@ -75,6 +75,27 @@ def is_colab() -> bool:
     return Path("/content").exists()
 
 
+def resolve_python(repo_root: Path) -> str:
+    """Return the Python interpreter to use for the pipeline.
+
+    Prefer the repository's virtualenv (``<repo>/../.venv/bin/python`` or
+    ``<repo>/.venv/bin/python``) when present and on a local machine, so we do
+    not accidentally fall back to a system python without JAX installed. On
+    Colab, fall back to the active interpreter (``sys.executable``).
+    """
+    if not is_colab():
+        candidates = [
+            repo_root / ".venv" / "bin" / "python",
+            repo_root.parent / ".venv" / "bin" / "python",
+            Path(sys.executable),
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+        return sys.executable
+    return sys.executable
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap: clone repo + install deps
 # ---------------------------------------------------------------------------
@@ -306,13 +327,12 @@ def main(argv=None) -> int:
 
     repo_root, uv_bin = bootstrap(no_clone=args.no_clone) if is_colab() else (Path(__file__).resolve().parents[2], "uv")
     config = load_config(repo_root, args.config)
+    py = resolve_python(repo_root)
+    log(f"Using Python interpreter: {py}")
 
-    # Verify GPU using uv run (uses the isolated .venv)
-    venv_python = str(repo_root / ".venv" / "bin" / "python")
-    if not Path(venv_python).exists():
-        venv_python = sys.executable
+    # Verify GPU using the selected Python.
     run([
-        venv_python, "-c",
+        py, "-c",
         "import jax; print('JAX devices:', jax.devices()); "
         "assert jax.default_backend() == 'gpu', 'Colab GPU is not active'",
     ], cwd=repo_root)
@@ -337,7 +357,7 @@ def main(argv=None) -> int:
     os.environ["PYTHONUNBUFFERED"] = "1"
 
     run([
-        venv_python, "-c",
+        py, "-c",
         "import sys; sys.path.insert(0, '.'); "
         "from rbpf.src.smoothing_bfgs import main; main()",
     ], cwd=repo_root, forward_raw=True)
