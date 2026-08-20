@@ -6,10 +6,10 @@
   "seed": 0,
   "n_epochs": 200,
   "learning_rate": 0.001,
-  "n_reps": 2,
+  "n_reps": 5,
   "include_friendly": false,
   "teams": "teams_small",
-  "output_dir": "rbpf/outputs/filter_unbiased",
+  "output_dir": "rbpf/outputs/filter_unbiased_gpu",
   "gpu_type": "A100",
   "colab_timeout": 14400,
   "repo_url": "https://github.com/ryantjx/rbsqmc.git"

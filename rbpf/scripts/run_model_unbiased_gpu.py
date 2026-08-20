@@ -38,7 +38,7 @@ DEFAULT_CONFIG = {
     "learning_rate": 0.001,
     "n_reps": 4,
     "include_friendly": False,
-    "output_dir": "rbpf/outputs/filter_unbiased",
+    "output_dir": "rbpf/outputs/filter_unbiased_gpu",
     "gpu_type": "A100",
     "colab_timeout": 14400,
     "repo_url": "https://github.com/ryantjx/rbsqmc.git",

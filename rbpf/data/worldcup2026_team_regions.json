@@ -113,7 +113,7 @@
     ]
   },
   "correlation": {
-    "state_standard_deviation": 0.4,
+    "state_standard_deviation": 1.5,
     "within_region": 0.5,
     "between_regions": 0.03
   }

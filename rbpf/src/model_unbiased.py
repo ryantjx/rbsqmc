@@ -12,7 +12,14 @@ from cuthbertlib.resampling import autodiff
 import optax
 
 from rbpf.src.utils import EMParams, FootballResults, RBPFFootballResults, RawEMParams
-from rbpf.src.helpers import decode_EM_params, encode_EM_params, default_init_params, save_params, resolve_teams
+from rbpf.src.helpers import (
+    decode_EM_params,
+    encode_EM_params,
+    default_init_params,
+    save_params,
+    resolve_teams,
+    log_inverse_wishart_kernel,
+)
 from rbpf.src.data import get_results, WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
 from rbpf.src.model import init_sample, propagate_sample, _log_potential, compute_gamma_trajectory, generate_rbpf_trajectory
 
@@ -93,6 +100,9 @@ def loss_fn(
     params : EMParams,
     n_particles : int,
     max_goals: int,
+    gamma_0_prior: jax.Array | None = None,
+    gamma_prior_dof: float = 5.0,
+    gamma_prior_strength: float = 1.0,
 ):
     """Negative log marginal likelihood, averaged over ``n_reps`` filter replicas.
 
@@ -101,17 +111,27 @@ def loss_fn(
         model_inputs: FootballResults (raw inputs; RBPF trajectory built inside
             ``run_filter_unbiased``).
         params: EMParams to score.
+        gamma_0_prior: optional scale matrix for an inverse-Wishart prior on
+            ``gamma_0``. If given, a regularizer ``-strength * log p(gamma_0)``
+            is added to the loss, pulling ``gamma_0`` toward ``gamma_0_prior``
+            (which widens team separation if its scale is larger).
+        gamma_prior_dof: inverse-Wishart degrees of freedom.
+        gamma_prior_strength: multiplicative strength of the prior term.
 
     Returns:
-        ``-mean(log Z)`` where ``log Z`` is the filter's accumulated log
-        marginal likelihood across replicas.
+        ``-mean(log Z)`` plus the (optional) gamma_0 prior regularizer.
     """
     logz = jax.vmap(
         lambda k: run_filter_unbiased(
             k, model_inputs, params, n_particles, max_goals
         )[0].log_normalizing_constant[-1]
     )(keys)
-    return -jnp.mean(logz)
+    loss = -jnp.mean(logz)
+    if gamma_0_prior is not None:
+        loss = loss - gamma_prior_strength * log_inverse_wishart_kernel(
+            params.gamma_0, gamma_0_prior, gamma_prior_dof
+        )
+    return loss
 
 
 @partial(jax.jit, static_argnames=("n_particles", "max_goals"))
@@ -122,6 +142,9 @@ def loss_and_grad_raw(
         fixed_mean_0: jax.Array,
         n_particles: int,
         max_goals: int,
+        gamma_0_prior: jax.Array | None = None,
+        gamma_prior_dof: float = 5.0,
+        gamma_prior_strength: float = 1.0,
 ):
     """Value and gradient of ``loss_fn`` w.r.t. unconstrained raw params.
 
@@ -131,7 +154,10 @@ def loss_and_grad_raw(
     """
     def _loss(raw):
         params = decode_EM_params(raw, fixed_mean_0=fixed_mean_0)
-        return loss_fn(keys, model_inputs, params, n_particles, max_goals)
+        return loss_fn(
+            keys, model_inputs, params, n_particles, max_goals,
+            gamma_0_prior, gamma_prior_dof, gamma_prior_strength,
+        )
     return jax.value_and_grad(_loss)(raw_params)
 
 
@@ -144,6 +170,9 @@ def logmarginal_maximize(
     n_epochs: int = 100,
     learning_rate: float = 1e-3,
     n_reps: int = 4,
+    gamma_0_prior: jax.Array | None = None,
+    gamma_prior_dof: float = 5.0,
+    gamma_prior_strength: float = 1.0,
 ):
     """Maximize the log marginal likelihood ``log Z`` with Adam (optax).
 
@@ -154,13 +183,22 @@ def logmarginal_maximize(
     ``run_filter_unbiased``. The learning rate is cosine-annealed from
     ``learning_rate`` to 0 over ``n_epochs``.
 
+    Args:
+        gamma_0_prior: optional inverse-Wishart scale for a ``gamma_0`` prior.
+            If None, defaults to the initial ``params.gamma_0`` (shrinkage
+            toward the starting value).
+        gamma_prior_dof: inverse-Wishart degrees of freedom.
+        gamma_prior_strength: multiplicative strength of the prior term.
+
     Returns:
         (best_params, history) where ``best_params`` is the decoded ``EMParams``
-        achieving the highest ``log Z`` over training, and ``history`` is the
-        ``log Z`` per epoch.
+        achieving the lowest loss over training, and ``history`` is the
+        (regularized) negative loss per epoch.
     """
     fixed_mean_0 = params.mean_0
     raw_params = encode_EM_params(params)
+    if gamma_0_prior is None:
+        gamma_0_prior = params.gamma_0
 
     # Cosine-anneal the learning rate from `learning_rate` down to 0 over the
     # training run. This lets Adam take large early steps and shrink to small
@@ -187,6 +225,9 @@ def logmarginal_maximize(
             fixed_mean_0=fixed_mean_0,
             n_particles=n_particles,
             max_goals=max_goals,
+            gamma_0_prior=gamma_0_prior,
+            gamma_prior_dof=gamma_prior_dof,
+            gamma_prior_strength=gamma_prior_strength,
         )
         loss = float(loss)
         logz = -loss
@@ -274,6 +315,11 @@ def main():
         n_epochs=cfg["n_epochs"],
         learning_rate=cfg["learning_rate"],
         n_reps=cfg["n_reps"],
+        # gamma_0 prior: centered on the (possibly widened) initial gamma_0.
+        # Defaults to params.gamma_0 when gamma_0_prior is None.
+        gamma_0_prior=cfg.get("gamma_0_prior"),
+        gamma_prior_dof=cfg.get("gamma_prior_dof", 5.0),
+        gamma_prior_strength=cfg.get("gamma_prior_strength", 1.0),
     )
 
     best_logz = float(jnp.max(logz_history))

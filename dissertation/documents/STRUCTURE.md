@@ -9,22 +9,22 @@ Abstract: SQMC is an extension of the particle filter / smc algorithm by replaci
 ## Content
 
 1. High-Performance SQMC
-   1. QMC - Introduction to QMC literature, and the properties.
-   2. SMC - Introduction to SMC
+   1. QMC - QMC literature, and the properties.
+   2. SMC - SMC and a short section on bootstrap particle filter.
    3. SQMC - Introduction to SQMC
    4. Implementation of SQMC on GPU hardware
-   5. Performance comparison of SQMC compared to SMC
+   5. Performance comparison of SQMC compared to SMC (With toy example)
 2. Applications: Rao-Blackwellized SQMC on Football Matches
-   1. Model - How the model can be rao-blackwellized
+   1. Model - How the football model can be rao-blackwellized
    2. Rao-Blackwellized SMC
       1. Rao-Blackwellized Filtering
       2. Smoothing - FFBSi
-      3. Parameter Estimation - Limitations, progress, solutions (inverse-wishart)
+      3. Parameter Estimation - what the moment I am having difficulty with the EM on the joint likelihood to converge, and I am considering using log marginal maximization instead, which is showing some sort of convergence and more sane results.
    3. Rao-Blackwellized SQMC
       1. Filtering
+      2. Parameter estimation - similar to the previous section.
    4. Performance
       1. Factorial Extended Kalman Filter - independence of teams
-      2. Rao-Blackwellized SQMC
+      2. Rao-Blackwellized SQMC - able to introduce correlation between teams in a scalable manner.
          1. smoothing issues
          2. log marginal likelihood maximization - using `cuthbertlib.resampling.autodiff` from Differentiable Particle Filtering without Modifying the Forward Pass to achieve an unbiased estimate.
-         3. correlation term integrated to teams.

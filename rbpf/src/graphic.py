@@ -285,7 +285,8 @@ def plot_correlation_matrix(augmented_results, team_id_to_name, num_teams=None,
     names = [team_id_to_name[i] for i in active_idx]
 
     fig, ax = plt.subplots(figsize=(12, 10))
-    im = ax.imshow(corr_sub, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
+    # Negative = red, positive = blue (RdBu maps low->red, high->blue).
+    im = ax.imshow(corr_sub, cmap="RdBu", vmin=-1, vmax=1, aspect="auto")
     ax.set_xticks(range(len(names)))
     ax.set_yticks(range(len(names)))
     ax.set_xticklabels(names, rotation=90, fontsize=6)
@@ -325,7 +326,8 @@ def plot_initial_correlation_matrix(params, team_id_to_name, num_teams=None,
     names = [team_id_to_name[i] for i in range(num_teams)]
 
     fig, ax = plt.subplots(figsize=(12, 10))
-    im = ax.imshow(corr, cmap="RdBu_r", vmin=-1, vmax=1, aspect="auto")
+    # Negative = red, positive = blue (RdBu keeps low->red, high->blue).
+    im = ax.imshow(corr, cmap="RdBu", vmin=-1, vmax=1, aspect="auto")
     ax.set_xticks(range(num_teams))
     ax.set_yticks(range(num_teams))
     ax.set_xticklabels(names, rotation=90, fontsize=6)
@@ -345,11 +347,12 @@ def plot_correlation_topn_bar(
     top_n=5,
     save_path=os.path.join(OUTPUT_DIR, "correlation_topn_bar.png"),
 ):
-    """Bar chart of the top-N strongest positive and negative team correlations.
+    """Diverging bar chart of the top-N strongest positive and negative team correlations.
 
     Uses the final-state team correlation matrix (from ``correlation_matrix``).
-    The off-diagonal entries are ranked separately for the most positive and
-    most negative pairs, and plotted as horizontal bars split by sign.
+    The off-diagonal entries are ranked; the strongest are shown on a single
+    centered horizontal axis: positive correlations extend right (blue),
+    negative correlations extend left (red).
 
     Args:
         augmented_results: RBPFFootballResults with gamma shape (T, M, M).
@@ -364,50 +367,185 @@ def plot_correlation_topn_bar(
     iu = np.triu_indices(num_teams, k=1)
     vals = corr[iu]
     pairs = [(int(i), int(j)) for i, j in zip(*iu)]
-    idx_sorted = np.argsort(vals)
-    order = idx_sorted[::-1]  # most positive -> most negative
 
-    # Split into positive and negative tails.
-    pos_mask = vals[order] > 1e-8
-    neg_mask = vals[order] < -1e-8
-    pos_idx = order[pos_mask][:top_n]
-    neg_idx = order[neg_mask][:top_n]
-
-    pos_pairs = [(pairs[k], vals[k]) for k in pos_idx]
-    neg_pairs = [(pairs[k], vals[k]) for k in neg_idx]
+    # Rank from most positive to most negative.
+    order = np.argsort(vals)[::-1]
+    pos_idx = order[vals[order] > 1e-8][:top_n]
+    neg_idx = order[vals[order] < -1e-8][:top_n]
 
     # Build labels like "TeamA - TeamB".
     def label_for(i, j):
         return f"{team_id_to_name[i]} - {team_id_to_name[j]}"
 
-    fig, (ax_pos, ax_neg) = plt.subplots(1, 2, figsize=(16, 6))
+    # Stack negative bars first (they'll be drawn from the center leftward),
+    # then positive bars (drawn from the center rightward).
+    neg_labels = [label_for(pairs[k][0], pairs[k][1]) for k in neg_idx]
+    neg_values = [vals[k] for k in neg_idx]
+    pos_labels = [label_for(pairs[k][0], pairs[k][1]) for k in pos_idx]
+    pos_values = [vals[k] for k in pos_idx]
 
-    # Positive correlations.
-    if pos_pairs:
-        labels_pos = [label_for(i, j) for (i, j), _ in pos_pairs]
-        values_pos = [v for _, v in pos_pairs]
-        ax_pos.barh(labels_pos, values_pos, color="steelblue")
-        ax_pos.set_xlabel("Positive Correlation")
-        ax_pos.set_title(f"Top {len(pos_pairs)} Most Positively Correlated Team Pairs")
-        ax_pos.set_xlim(0, 1)
-        ax_pos.invert_yaxis()
-    else:
-        ax_pos.set_title("No positive correlations found")
+    # Order rows from most extreme at the top.
+    neg_labels = neg_labels[::-1]
+    neg_values = neg_values[::-1]
+    pos_labels = pos_labels[::-1]
+    pos_values = pos_values[::-1]
 
-    # Negative correlations (shown as absolute magnitude with sign in color).
-    if neg_pairs:
-        labels_neg = [label_for(i, j) for (i, j), _ in neg_pairs]
-        values_neg = [v for _, v in neg_pairs]
-        ax_neg.barh(labels_neg, values_neg, color="firebrick")
-        ax_neg.set_xlabel("Negative Correlation")
-        ax_neg.set_title(f"Top {len(neg_pairs)} Most Negatively Correlated Team Pairs")
-        ax_neg.set_xlim(-1, 0)
-        ax_neg.invert_yaxis()
-    else:
-        ax_neg.set_title("No negative correlations found")
+    fig, ax = plt.subplots(figsize=(14, max(6, 0.6 * (len(pos_idx) + len(neg_idx)))))
 
-    fig.suptitle("Final-State Team Correlations", fontsize=14)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    # Negative correlations extend left from the center (red).
+    if neg_values:
+        ax.barh(neg_labels, neg_values, color="red")
+    # Positive correlations extend right from the center (blue).
+    if pos_values:
+        ax.barh(pos_labels, pos_values, color="blue")
+
+    # Center the y-axis at the divider between the two groups, so negatives
+    # appear above and positives below (or vice versa) around the zero line.
+    ax.axvline(0, color="black", linewidth=1)
+    ax.set_xlim(-1, 1)
+    ax.set_xlabel("Correlation")
+    ax.set_title(
+        f"Top {len(pos_idx)} Positively / Top {len(neg_idx)} Negatively Correlated Team Pairs (Final State)"
+    )
+    ax.grid(True, axis="x", alpha=0.3)
+
+    if not pos_values and not neg_values:
+        ax.set_title("No significant positive or negative correlations found")
+
+    fig.tight_layout()
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+    plt.close(fig)
+
+
+def correlation_change(params, augmented_results):
+    """Return the change in team correlation (prior -> final).
+
+    Computes the correlation matrices from the prior ``gamma_0`` (in ``params``)
+    and the final-state covariance (in ``augmented_results``), then returns
+    ``corr_final - corr_prior`` plus the per-team standard deviations for masking
+    inactive teams.
+
+    Args:
+        params: EMParams with gamma_0 shape (M, M).
+        augmented_results: RBPFFootballResults with gamma shape (T, M, M).
+
+    Returns:
+        ``(delta, std_final)`` where ``delta`` is the ``(M, M)`` change in
+        correlation and ``std_final`` is the final-state team std.
+    """
+    gamma_0 = np.asarray(params.gamma_0)
+    std0 = np.sqrt(np.diag(gamma_0))
+    std0_safe = np.where(std0 > 1e-10, std0, 1.0)
+    corr_init = gamma_0 / np.outer(std0_safe, std0_safe)
+
+    corr_final, std_final = correlation_matrix(augmented_results)
+    return np.clip(corr_final, -1, 1) - np.clip(corr_init, -1, 1), std_final
+
+
+def plot_correlation_change_matrix(
+    params,
+    augmented_results,
+    team_id_to_name,
+    num_teams=None,
+    save_path=os.path.join(OUTPUT_DIR, "correlation_change_matrix.png"),
+):
+    """Heatmap of the change in team correlation (final - prior).
+
+    Args:
+        params: EMParams with gamma_0 shape (M, M).
+        augmented_results: RBPFFootballResults with gamma shape (T, M, M).
+        team_id_to_name: dict mapping team_id -> team name.
+        num_teams: number of teams (inferred from team_id_to_name if None).
+        save_path: if given, save figure to this path.
+    """
+    if num_teams is None:
+        num_teams = len(team_id_to_name)
+    delta, std_final = correlation_change(params, augmented_results)
+
+    active = std_final > 1e-10
+    active_idx = np.where(active)[0]
+    delta_sub = delta[np.ix_(active_idx, active_idx)]
+    names = [team_id_to_name[i] for i in active_idx]
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    # Symmetric diverging scale around 0; negative = red, positive = blue.
+    vmax = max(np.max(np.abs(delta_sub)), 1e-8)
+    im = ax.imshow(delta_sub, cmap="RdBu", vmin=-vmax, vmax=vmax, aspect="auto")
+    ax.set_xticks(range(len(names)))
+    ax.set_yticks(range(len(names)))
+    ax.set_xticklabels(names, rotation=90, fontsize=6)
+    ax.set_yticklabels(names, fontsize=6)
+    ax.set_title("Team Correlation Change (Final - Prior)")
+    fig.colorbar(im, ax=ax, label="Δ Correlation")
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+    plt.close(fig)
+
+
+def plot_correlation_change_topn_bar(
+    params,
+    augmented_results,
+    team_id_to_name,
+    top_n=5,
+    save_path=os.path.join(OUTPUT_DIR, "correlation_change_topn_bar.png"),
+):
+    """Diverging bar chart of the top-N increases / decreases in correlation.
+
+    Compares the prior (``gamma_0``) and final-state correlation matrices and
+    plots the largest changes on a single centered axis: increases extend right
+    (blue), decreases extend left (red).
+
+    Args:
+        params: EMParams with gamma_0 shape (M, M).
+        augmented_results: RBPFFootballResults with gamma shape (T, M, M).
+        team_id_to_name: dict mapping team_id -> team name.
+        top_n: number of pairs to show for each of the increase and decrease tails.
+        save_path: if given, save figure to this path.
+    """
+    delta, std_final = correlation_change(params, augmented_results)
+    num_teams = len(team_id_to_name)
+
+    # Off-diagonal changes, excluding the diagonal.
+    iu = np.triu_indices(num_teams, k=1)
+    vals = delta[iu]
+    pairs = [(int(i), int(j)) for i, j in zip(*iu)]
+
+    # Rank from most positive change to most negative change.
+    order = np.argsort(vals)[::-1]
+    pos_idx = order[vals[order] > 1e-8][:top_n]
+    neg_idx = order[vals[order] < -1e-8][:top_n]
+
+    def label_for(i, j):
+        return f"{team_id_to_name[i]} - {team_id_to_name[j]}"
+
+    neg_labels = [label_for(pairs[k][0], pairs[k][1]) for k in neg_idx][::-1]
+    neg_values = [vals[k] for k in neg_idx][::-1]
+    pos_labels = [label_for(pairs[k][0], pairs[k][1]) for k in pos_idx][::-1]
+    pos_values = [vals[k] for k in pos_idx][::-1]
+
+    fig, ax = plt.subplots(figsize=(14, max(6, 0.6 * (len(pos_idx) + len(neg_idx)))))
+
+    if neg_values:
+        ax.barh(neg_labels, neg_values, color="red")
+    if pos_values:
+        ax.barh(pos_labels, pos_values, color="blue")
+
+    ax.axvline(0, color="black", linewidth=1)
+    ax.set_xlabel("Δ Correlation (Final - Prior)")
+    ax.set_title(
+        f"Top {len(pos_idx)} Increases / Top {len(neg_idx)} Decreases in Team Correlation"
+    )
+    ax.grid(True, axis="x", alpha=0.3)
+
+    if not pos_values and not neg_values:
+        ax.set_title("No significant correlation changes found")
+
+    fig.tight_layout()
     if save_path:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
@@ -483,11 +621,15 @@ def plot_log_marginal_likelihood_curve(
 
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(epochs, log_mll, marker="o", linewidth=1.8, color="darkgreen")
-    ax.set_xlabel("Parameter index (theta_k)")
+    ax.set_xlabel("Epoch")
     ax.set_ylabel("Log Marginal Likelihood")
-    ax.set_title("EM Log Marginal Likelihood Curve")
+    ax.set_title("Log Marginal Likelihood Curve")
     ax.grid(True, alpha=0.3)
-    ax.set_xticks(epochs)
+    # Limit the number of x-ticks so labels don't overlap when there are many
+    # epochs (e.g. 200). Use a MaxNLocator with ~10 ticks.
+    from matplotlib.ticker import MaxNLocator
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=10, integer=True))
+    ax.tick_params(axis="x", rotation=45)
 
     if save_path:
         directory = os.path.dirname(save_path)
@@ -953,14 +1095,13 @@ def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_pa
                            top_n=top_n,
                            timestamps=timestamps,
                            save_path=os.path.join(save_path, "timeseries_states.png"))
-    plot_correlation_matrix(augmented_results, team_id_to_name, num_teams=num_teams,
-                            save_path=os.path.join(save_path, "correlation_matrix.png"))
-    plot_correlation_topn_bar(augmented_results, team_id_to_name,
-                              top_n=top_n,
-                              save_path=os.path.join(save_path, "correlation_topn_bar.png"))
     plot_log_normalizing_constant(filtered_states,
                                   save_path=os.path.join(save_path, "log_normalizing_constant.png"))
     if params is not None:
+        # Per-pair correlation plots are intentionally skipped: the final-state
+        # correlation matrix is near-zero for observed teams after Kalman
+        # conditioning, and the prior gamma_0 carries the between-team
+        # correlation structure. Only the prior correlation matrix is plotted.
         plot_initial_correlation_matrix(params, team_id_to_name, num_teams=num_teams,
                                 save_path=os.path.join(save_path, "initial_correlation_matrix.png"))
         save_filter_states(filtered_states, augmented_results,
