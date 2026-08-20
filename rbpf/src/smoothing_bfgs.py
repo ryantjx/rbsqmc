@@ -34,7 +34,7 @@ from rbpf.src.helpers import (
     log_inverse_wishart_kernel,
 )
 from rbpf.src.utils import (
-    EMParams, FootballResults, RawEMParams, RBPFState,
+    EMParams, FootballResults, RawEMParams, RBPFState, RBPFFootballResults,
 )
 from rbpf.src.graphic import plot_all, plot_log_marginal_likelihood_curve, plot_all_smoothing
 
@@ -84,11 +84,12 @@ def _flat_to_raw(flat: jnp.ndarray, structure) -> RawEMParams:
 def m_step_bfgs(
     raw_params: RawEMParams,
     smoothed_trajectories: RBPFState,
-    model_inputs: FootballResults,
+    model_inputs_rbpf: RBPFFootballResults,
     fixed_mean_0: jax.Array,
     max_goals: int,
     maxiter: int = 1,
     maxcor: int = 10,
+    n_chunks: int = 1,
     gamma_0_prior: jax.Array | None = None,
     gamma_prior_dof: float = 5.0,
 ) -> tuple[RawEMParams, dict]:
@@ -109,6 +110,11 @@ def m_step_bfgs(
     The loss uses jax.checkpoint (rematerialization) so Cholesky factors and
     triangular solves are recomputed during backprop instead of being stored,
     avoiding OOM on large n_smoother_paths.
+
+    Batching: when ``n_chunks > 1``, the trajectory vmap is split into
+    ``n_chunks`` chunks (``n_traj // n_chunks`` trajectories per chunk). Each
+    chunk is still fully parallelised on the GPU, but only one chunk is
+    resident in memory at a time, capping peak VRAM.
     """
     # --- Flatten the unconstrained params into a 1D vector for scipy. ---
     flat_init = np.asarray(_raw_to_flat(raw_params))
@@ -117,7 +123,7 @@ def m_step_bfgs(
     # --- Checkpointed per-trajectory loss (rematerialize during backprop). ---
     _per_traj_loss = jax.checkpoint(
         lambda raw, traj: loss_fn(
-            decode_EM_params(raw, fixed_mean_0), traj, model_inputs, max_goals
+            decode_EM_params(raw, fixed_mean_0), traj, model_inputs_rbpf, max_goals
         ),
         policy=jax.checkpoint_policies.nothing_saveable(),
     )
@@ -125,13 +131,36 @@ def m_step_bfgs(
     # --- JIT value_and_grad for one trajectory. ---
     _per_traj_vg = jax.jit(jax.value_and_grad(_per_traj_loss))
 
-    # --- JIT the mean loss/grad over all trajectories (passed as a runtime
-    #     arg, not closed over, to avoid embedding the large array). ---
+    n_traj = smoothed_trajectories.x.shape[0]
+    chunk_size = max(1, n_traj // n_chunks) if n_chunks > 0 else n_traj
+    n_chunks_eff = int(np.ceil(n_traj / chunk_size))
+
+    # --- JIT the mean loss/grad over ONE chunk (passed as a runtime arg). ---
     @jax.jit
-    def _mean_loss_and_grad(raw, trajectories):
-        vals, grads = jax.vmap(lambda traj: _per_traj_vg(raw, traj))(trajectories)
+    def _chunk_mean_loss_and_grad(raw, traj_chunk):
+        vals, grads = jax.vmap(lambda traj: _per_traj_vg(raw, traj))(traj_chunk)
         return jnp.mean(vals), jax.tree_util.tree_map(
             lambda g: jnp.mean(g, axis=0), grads
+        )
+
+    # --- Accumulate the mean loss/grad over all trajectories in chunks. ---
+    def _mean_loss_and_grad(raw, trajectories):
+        val_sum = 0.0
+        grad_sum = None
+        for start in range(0, n_traj, chunk_size):
+            end = min(start + chunk_size, n_traj)
+            chunk = jax.tree_util.tree_map(lambda x: x[start:end], trajectories)
+            v, g = _chunk_mean_loss_and_grad(raw, chunk)
+            n = end - start
+            val_sum = val_sum + v * n
+            if grad_sum is None:
+                grad_sum = jax.tree_util.tree_map(lambda gg: gg * n, g)
+            else:
+                grad_sum = jax.tree_util.tree_map(
+                    lambda a, b: a + b * n, grad_sum, g
+                )
+        return val_sum / n_traj, jax.tree_util.tree_map(
+            lambda g: g / n_traj, grad_sum
         )
 
     # --- Add the gamma_0 prior: inverse-Wishart centered on the ORIGINAL
@@ -221,6 +250,7 @@ def run_EM(
     max_goals: int,
     maxiter: int = 1,
     maxcor: int = 10,
+    n_chunks: int = 1,
     gamma_0_prior: jax.Array | None = None,
     gamma_prior_dof: float = 5.0,
 ):
@@ -254,7 +284,7 @@ def run_EM(
 
         # E-step
         print(f"  [Epoch {epoch+1}/{num_epochs}] Running E-step (filter + backward sampling)...", flush=True)
-        smoothed_trajectories, log_marginal_likelihood = E_step(
+        smoothed_trajectories, log_marginal_likelihood, model_inputs_rbpf = E_step(
             key=key,
             model_inputs=model_inputs,
             params=params,
@@ -269,11 +299,12 @@ def run_EM(
         raw_params, mstep_diag = m_step_bfgs(
             raw_params=raw_params,
             smoothed_trajectories=smoothed_trajectories,
-            model_inputs=model_inputs,
+            model_inputs_rbpf=model_inputs_rbpf,
             fixed_mean_0=fixed_mean_0,
             max_goals=max_goals,
             maxiter=maxiter,
             maxcor=maxcor,
+            n_chunks=n_chunks,
             gamma_0_prior=gamma_0_prior,
             gamma_prior_dof=gamma_prior_dof,
         )
@@ -319,6 +350,7 @@ def main():
     seed = cfg.get("seed", 0)
     maxiter = cfg.get("maxiter", 5)
     maxcor = cfg.get("maxcor", 10)
+    n_chunks = cfg.get("n_chunks", 1)
     gamma_prior_dof = cfg.get("gamma_prior_dof", 5.0)
     key = jax.random.PRNGKey(seed)
     ############################################
@@ -347,6 +379,7 @@ def main():
         max_goals=MAX_GOALS,
         maxiter=maxiter,
         maxcor=maxcor,
+        n_chunks=n_chunks,
         gamma_0_prior=init_params.gamma_0,
         gamma_prior_dof=gamma_prior_dof,
     )
@@ -405,7 +438,7 @@ def main():
 
     # 6. Run a final smoothing pass with the optimized params and plot
     print("[main] Running final smoothing pass...")
-    final_smoothed, _ = E_step(
+    final_smoothed, _, _ = E_step(
         key=key,
         model_inputs=model_inputs,
         params=latest_params,
