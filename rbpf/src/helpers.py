@@ -641,7 +641,7 @@ def default_init_params(
         C0, state_std = _regional_correlation_matrix(team_id_to_name)
         sigmas = state_std * jnp.ones(num_teams)
     else:
-        sigmas = 0.4 * jnp.ones(num_teams)
+        sigmas = 1 * jnp.ones(num_teams)
         rho_team = 0.03
         C0 = (
             (1.0 - rho_team) * jnp.eye(num_teams)

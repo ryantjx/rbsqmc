@@ -339,6 +339,82 @@ def plot_initial_correlation_matrix(params, team_id_to_name, num_teams=None,
     plt.close(fig)
 
 
+def plot_correlation_topn_bar(
+    augmented_results,
+    team_id_to_name,
+    top_n=5,
+    save_path=os.path.join(OUTPUT_DIR, "correlation_topn_bar.png"),
+):
+    """Bar chart of the top-N strongest positive and negative team correlations.
+
+    Uses the final-state team correlation matrix (from ``correlation_matrix``).
+    The off-diagonal entries are ranked separately for the most positive and
+    most negative pairs, and plotted as horizontal bars split by sign.
+
+    Args:
+        augmented_results: RBPFFootballResults with gamma shape (T, M, M).
+        team_id_to_name: dict mapping team_id -> team name.
+        top_n: number of pairs to show for each of the positive and negative tails.
+        save_path: if given, save figure to this path.
+    """
+    corr, _ = correlation_matrix(augmented_results)
+    num_teams = len(team_id_to_name)
+
+    # Off-diagonal correlations, excluding the diagonal.
+    iu = np.triu_indices(num_teams, k=1)
+    vals = corr[iu]
+    pairs = [(int(i), int(j)) for i, j in zip(*iu)]
+    idx_sorted = np.argsort(vals)
+    order = idx_sorted[::-1]  # most positive -> most negative
+
+    # Split into positive and negative tails.
+    pos_mask = vals[order] > 1e-8
+    neg_mask = vals[order] < -1e-8
+    pos_idx = order[pos_mask][:top_n]
+    neg_idx = order[neg_mask][:top_n]
+
+    pos_pairs = [(pairs[k], vals[k]) for k in pos_idx]
+    neg_pairs = [(pairs[k], vals[k]) for k in neg_idx]
+
+    # Build labels like "TeamA - TeamB".
+    def label_for(i, j):
+        return f"{team_id_to_name[i]} - {team_id_to_name[j]}"
+
+    fig, (ax_pos, ax_neg) = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Positive correlations.
+    if pos_pairs:
+        labels_pos = [label_for(i, j) for (i, j), _ in pos_pairs]
+        values_pos = [v for _, v in pos_pairs]
+        ax_pos.barh(labels_pos, values_pos, color="steelblue")
+        ax_pos.set_xlabel("Positive Correlation")
+        ax_pos.set_title(f"Top {len(pos_pairs)} Most Positively Correlated Team Pairs")
+        ax_pos.set_xlim(0, 1)
+        ax_pos.invert_yaxis()
+    else:
+        ax_pos.set_title("No positive correlations found")
+
+    # Negative correlations (shown as absolute magnitude with sign in color).
+    if neg_pairs:
+        labels_neg = [label_for(i, j) for (i, j), _ in neg_pairs]
+        values_neg = [v for _, v in neg_pairs]
+        ax_neg.barh(labels_neg, values_neg, color="firebrick")
+        ax_neg.set_xlabel("Negative Correlation")
+        ax_neg.set_title(f"Top {len(neg_pairs)} Most Negatively Correlated Team Pairs")
+        ax_neg.set_xlim(-1, 0)
+        ax_neg.invert_yaxis()
+    else:
+        ax_neg.set_title("No negative correlations found")
+
+    fig.suptitle("Final-State Team Correlations", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+    plt.close(fig)
+
+
 def save_filter_states(filtered_states, augmented_results, save_path):
     """Save filter states and augmented results to an .npz file.
 
@@ -879,6 +955,9 @@ def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_pa
                            save_path=os.path.join(save_path, "timeseries_states.png"))
     plot_correlation_matrix(augmented_results, team_id_to_name, num_teams=num_teams,
                             save_path=os.path.join(save_path, "correlation_matrix.png"))
+    plot_correlation_topn_bar(augmented_results, team_id_to_name,
+                              top_n=top_n,
+                              save_path=os.path.join(save_path, "correlation_topn_bar.png"))
     plot_log_normalizing_constant(filtered_states,
                                   save_path=os.path.join(save_path, "log_normalizing_constant.png"))
     if params is not None:
