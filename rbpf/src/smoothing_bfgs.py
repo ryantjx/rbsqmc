@@ -37,6 +37,7 @@ from rbpf.src.utils import (
     EMParams, FootballResults, RawEMParams, RBPFState, RBPFFootballResults,
 )
 from rbpf.src.graphic import plot_all, plot_log_marginal_likelihood_curve, plot_all_smoothing
+from rbpf.src.predict import run_predictions_from_config
 
 # Reuse the E-step (filter + backward sampling) and loss_fn from smoothing.py.
 # smoothing.py now has the fixed backward sampler (stable Cholesky + correct
@@ -353,6 +354,11 @@ def main():
     n_chunks = cfg.get("n_chunks", 1)
     gamma_prior_dof = cfg.get("gamma_prior_dof", 5.0)
     key = jax.random.PRNGKey(seed)
+    # Write outputs to the config's output_dir. This must match the Colab
+    # orchestrator's download location.
+    save_path = cfg.get("output_dir", "./rbpf/outputs/smoothing_bfgs/")
+    if not save_path.endswith("/"):
+        save_path += "/"
     ############################################
     df, model_inputs, team_id_to_name = get_results(
         start_date=start_date,
@@ -385,7 +391,6 @@ def main():
     )
     print("[main] EM finished.")
 
-    save_path = "./rbpf/outputs/smoothing_bfgs/"
     os.makedirs(save_path, exist_ok=True)
     save_params(latest_params, save_path + "optimized_params.json")
     print("[main] Saved optimized params.")
@@ -454,6 +459,15 @@ def main():
         save_path=save_path + "/smoothing",
     )
     print("[main] Saved smoothing plots.")
+
+    # 7. Sequential match predictions using the fitted params.
+    run_predictions_from_config(
+        cfg=cfg,
+        params=latest_params,
+        team_id_to_name=team_id_to_name,
+        save_path=save_path,
+        max_goals=MAX_GOALS,
+    )
 
 
 if __name__ == "__main__":
