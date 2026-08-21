@@ -6,7 +6,7 @@
   "seed": 0,
   "n_epochs": 200,
   "learning_rate": 0.001,
-  "n_reps": 5,
+  "n_reps": 11,
   "gamma_0_prior": 4.0,
   "gamma_prior_dof": 5.0,
   "gamma_prior_strength": 1.0,
