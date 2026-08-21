@@ -309,8 +309,12 @@ def run_EM(
     print(f"[run_EM] Starting EM: {num_epochs} epochs, lr={learning_rate}, "
           f"N_particles={n_particles}, N_trajectories={n_smoothed_trajectories}")
 
+    import time as _time
     log_marginal_likelihood_history = []
+    epoch_times = []
+    total_start = _time.perf_counter()
     for epoch in range(num_epochs):
+        epoch_start = _time.perf_counter()
         # Decode the current unconstrained params into identified EMParams.
         params = decode_EM_params(raw_params, fixed_mean_0)
 
@@ -331,7 +335,17 @@ def run_EM(
 
         # Track the log marginal likelihood
         log_marginal_likelihood_history.append(log_marginal_likelihood)
-        print(f"  [Epoch {epoch+1}/{num_epochs}] M-step done.")
+
+        epoch_sec = _time.perf_counter() - epoch_start
+        epoch_times.append(epoch_sec)
+        elapsed = _time.perf_counter() - total_start
+        avg_sec = sum(epoch_times) / len(epoch_times)
+        remaining = avg_sec * (num_epochs - (epoch + 1))
+        print(
+            f"  [Epoch {epoch+1}/{num_epochs}] M-step done. logZ={log_marginal_likelihood:.4f}  "
+            f"[{epoch_sec:6.1f}s this epoch, {elapsed:6.1f}s elapsed, ETA {remaining:6.1f}s]",
+            flush=True,
+        )
 
         params = decode_EM_params(raw_params, fixed_mean_0)
         params_history = jax.tree_util.tree_map(

@@ -46,7 +46,12 @@ def run_EM(
     print("[Init] Parameters before any EM update:", flush=True)
     monitor_params(decode_EM_params(raw_params, fixed_mean_0), prefix="  ")
 
+    import time as _time
+    epoch_times = []
+    total_start = _time.perf_counter()
+
     for epoch in range(n_epochs):
+        epoch_start = _time.perf_counter()
         print(f"EM Epoch {epoch+1}/{n_epochs}...", flush=True)
         current_key, e_key = jax.random.split(current_key, 2)
         current_params = decode_EM_params(raw_params, fixed_mean_0)
@@ -136,6 +141,17 @@ def run_EM(
             params_history, decode_EM_params(raw_params, fixed_mean_0)
         )
         log_marginal_likelihood_history.append(log_marginal_likelihood)
+
+        epoch_sec = _time.perf_counter() - epoch_start
+        epoch_times.append(epoch_sec)
+        elapsed = _time.perf_counter() - total_start
+        avg_sec = sum(epoch_times) / len(epoch_times)
+        remaining = avg_sec * (n_epochs - (epoch + 1))
+        print(
+            f"  [Epoch {epoch+1}/{n_epochs}] done. "
+            f"[{epoch_sec:6.1f}s this epoch, {elapsed:6.1f}s elapsed, ETA {remaining:6.1f}s]",
+            flush=True,
+        )
 
     print_mstep_summary(mstep_history)
 

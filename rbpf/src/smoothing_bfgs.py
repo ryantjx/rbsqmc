@@ -277,10 +277,14 @@ def run_EM(
           f"N_particles={n_particles}, N_trajectories={n_smoothed_trajectories}",
           flush=True)
 
+    import time as _time
     log_marginal_likelihood_history = []
     mstep_history = []
+    epoch_times = []
+    total_start = _time.perf_counter()
 
     for epoch in range(num_epochs):
+        epoch_start = _time.perf_counter()
         params = decode_EM_params(raw_params, fixed_mean_0)
 
         # E-step
@@ -320,6 +324,17 @@ def run_EM(
         params_history = jax.tree_util.tree_map(
             lambda track, new: jnp.concatenate([track, new[None]], axis=0),
             params_history, params,
+        )
+
+        epoch_sec = _time.perf_counter() - epoch_start
+        epoch_times.append(epoch_sec)
+        elapsed = _time.perf_counter() - total_start
+        avg_sec = sum(epoch_times) / len(epoch_times)
+        remaining = avg_sec * (num_epochs - (epoch + 1))
+        print(
+            f"  [Epoch {epoch+1}/{num_epochs}] done. "
+            f"[{epoch_sec:6.1f}s this epoch, {elapsed:6.1f}s elapsed, ETA {remaining:6.1f}s]",
+            flush=True,
         )
 
     print(f"[run_EM/BFGS] EM complete. Final log marginal = {log_marginal_likelihood_history[-1]:.4f}", flush=True)

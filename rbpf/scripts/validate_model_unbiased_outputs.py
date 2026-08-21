@@ -17,7 +17,6 @@ REQUIRED = (
     "run_config.json",
     "optimization_summary.json",
     "optimization_logZ_curve.png",
-    "filter_states.npz",
     "top_strengths.png",
     "timeseries_states.png",
     "correlation_matrix.png",

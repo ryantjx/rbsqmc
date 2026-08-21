@@ -210,11 +210,15 @@ def logmarginal_maximize(
     optimizer = optax.adam(schedule)
     opt_state = optimizer.init(raw_params)
 
+    import time as _time
     history = []
     best_logz = -jnp.inf
     best_params = params
+    epoch_times = []  # seconds per epoch, for ETA estimation
+    total_start = _time.perf_counter()
 
     for epoch in range(n_epochs):
+        epoch_start = _time.perf_counter()
         key, subkey = jax.random.split(key)
         keys = jax.random.split(subkey, n_reps)
 
@@ -240,9 +244,23 @@ def logmarginal_maximize(
         updates, opt_state = optimizer.update(grads, opt_state)
         raw_params = optax.apply_updates(raw_params, updates)
 
-        if epoch % 10 == 0 or epoch == n_epochs - 1:
-            print(f"[epoch {epoch:4d}] logZ = {logz:.4f}  (best {best_logz:.4f})", flush=True)
+        epoch_secs = _time.perf_counter() - epoch_start
+        epoch_times.append(epoch_secs)
 
+        if epoch % 10 == 0 or epoch == n_epochs - 1:
+            elapsed = _time.perf_counter() - total_start
+            avg_sec = sum(epoch_times) / len(epoch_times)
+            remaining = avg_sec * (n_epochs - (epoch + 1))
+            print(
+                f"[epoch {epoch:4d}] logZ = {logz:.4f}  (best {best_logz:.4f})  "
+                f"[{epoch_sec:6.1f}s this epoch, {elapsed:6.1f}s elapsed, "
+                f"ETA {remaining:6.1f}s]",
+                flush=True,
+            )
+
+    total_sec = _time.perf_counter() - total_start
+    print(f"[optimization] finished {n_epochs} epochs in {total_sec:.1f}s "
+          f"(avg {total_sec / max(n_epochs, 1):.1f}s/epoch)", flush=True)
     return best_params, jnp.asarray(history)
 
 def main():

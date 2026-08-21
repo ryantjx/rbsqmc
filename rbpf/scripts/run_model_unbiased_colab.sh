@@ -55,13 +55,21 @@ require_file() {
 
 download_required() {
     local file="$1"
+    local attempt retries=3
     progress OUT "downloading required artifact ${file}"
     mkdir -p "$(dirname "${LOCAL_OUTPUTS}/${file}")"
-    colab download -s "${SESSION}" "${REMOTE_OUTPUTS}/${file}" "${LOCAL_OUTPUTS}/${file}"
-    [[ -s "${LOCAL_OUTPUTS}/${file}" ]] || {
-        progress ERR "required artifact is unavailable or empty: ${file}"
-        return 1
-    }
+    for attempt in $(seq 1 "${retries}"); do
+        colab download -s "${SESSION}" "${REMOTE_OUTPUTS}/${file}" "${LOCAL_OUTPUTS}/${file}" >/dev/null 2>&1
+        if [[ -s "${LOCAL_OUTPUTS}/${file}" ]]; then
+            return 0
+        fi
+        if [[ ${attempt} -lt ${retries} ]]; then
+            progress ERR "download of ${file} failed (attempt ${attempt}/${retries}); retrying in 5s"
+            sleep 5
+        fi
+    done
+    progress ERR "required artifact is unavailable or empty after ${retries} attempts: ${file}"
+    return 1
 }
 
 validate_local_outputs() {
@@ -157,7 +165,6 @@ main() {
         run_config.json
         optimization_summary.json
         optimization_logZ_curve.png
-        filter_states.npz
         top_strengths.png
         timeseries_states.png
         correlation_matrix.png
