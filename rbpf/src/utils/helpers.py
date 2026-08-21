@@ -1,13 +1,13 @@
 import jax
 
-from rbpf.src.utils import EMParams, FootballResults, RBPFFootballResults, Matches, RawEMParams
+from rbpf.src.utils.type import EMParams, FootballResults, RBPFFootballResults, Matches, RawEMParams
 import jax.numpy as jnp
 import json
 import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from rbpf.src.graphic import plot_log_marginal_likelihood_curve
+from rbpf.src.utils.graphic import plot_log_marginal_likelihood_curve
 from optax import Params
 
 TEAM_CORRELATION_PATH = os.path.join(
@@ -417,7 +417,7 @@ def resolve_teams(cfg: dict) -> set[str] | None:
       - an explicit list of team names (e.g. ``["England", "France"]``)
       - ``"all"`` or empty/missing -> None (use all teams)
     """
-    from rbpf.src.data import TEAMS_SMALL, WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
+    from rbpf.src.data.data import TEAMS_SMALL, WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
 
     value = cfg.get("teams", "teams_small")
     presets = {

@@ -11,8 +11,8 @@ import cuthbertlib
 from cuthbertlib.resampling import autodiff
 import optax
 
-from rbpf.src.utils import EMParams, FootballResults, RBPFFootballResults, RawEMParams
-from rbpf.src.helpers import (
+from rbpf.src.utils.type import EMParams, FootballResults, RBPFFootballResults, RawEMParams
+from rbpf.src.utils.helpers import (
     decode_EM_params,
     encode_EM_params,
     default_init_params,
@@ -20,8 +20,8 @@ from rbpf.src.helpers import (
     resolve_teams,
     log_inverse_wishart_kernel,
 )
-from rbpf.src.data import get_results, WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
-from rbpf.src.model import init_sample, propagate_sample, _log_potential, compute_gamma_trajectory, generate_rbpf_trajectory
+from rbpf.src.data.data import get_results, WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
+from rbpf.src.model.model import init_sample, propagate_sample, _log_potential, compute_gamma_trajectory, generate_rbpf_trajectory
 
 @partial(jax.jit, static_argnames=("n_particles", "max_goals"))
 def run_filter_unbiased(
@@ -372,7 +372,7 @@ def main():
     print(f"Final filter (best params). logZ = {final_logz:.4f}")
 
     # Write filter outputs (.npz) and plots into the output directory.
-    from rbpf.src.graphic import (
+    from rbpf.src.utils.graphic import (
         save_filter_states,
         plot_all,
         plot_log_marginal_likelihood_curve,
@@ -426,7 +426,7 @@ def main():
 
     ######################
     # Prediction step: score upcoming fixtures from the fitted posterior.
-    from rbpf.src.predict import run_predictions, _load_fixtures
+    from rbpf.src.predict.predict import run_predictions, _load_fixtures
 
     fixtures_path = "rbpf/data/fixtures.json"
     if not os.path.isfile(fixtures_path):
@@ -457,7 +457,7 @@ def main():
         print(f"[predict] Wrote predictions to {os.path.abspath(pred_out)}", flush=True)
 
         # Generate per-match prediction images (heatmaps + outcome breakdowns).
-        from rbpf.src.graphic import plot_all_predictions
+        from rbpf.src.utils.graphic import plot_all_predictions
         plot_all_predictions(
             pred_result,
             max_goals=MAX_GOALS,

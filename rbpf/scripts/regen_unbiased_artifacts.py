@@ -35,7 +35,7 @@ def main() -> int:
 
     out = args.out.rstrip("/")
     # Load fitted params.
-    from rbpf.src.helpers import load_params
+    from rbpf.src.utils.helpers import load_params
     params = load_params(os.path.join(out, "params_unbiased.json"))
 
     # Load config (teams set, dates, seed, particles).
@@ -50,12 +50,12 @@ def main() -> int:
     max_goals = cfg.get("max_goals", 8)
     seed = cfg.get("seed", 0)
 
-    from rbpf.src.data import get_results
-    from rbpf.src.helpers import resolve_teams
+    from rbpf.src.data.data import get_results
+    from rbpf.src.utils.helpers import resolve_teams
     from rbpf.src.model_unbiased import run_filter_unbiased
-    from rbpf.src.graphic import plot_all
-    from rbpf.src.predict import run_predictions, _load_fixtures
-    from rbpf.src.graphic import plot_all_predictions
+    from rbpf.src.utils.graphic import plot_all
+    from rbpf.src.predict.predict import run_predictions, _load_fixtures
+    from rbpf.src.utils.graphic import plot_all_predictions
 
     import jax
 
@@ -77,7 +77,7 @@ def main() -> int:
     print(f"Final filter logZ = {float(filtered_states.log_normalizing_constant[-1]):.4f}")
 
     # 2. Write filter states + plots (matches main()).
-    from rbpf.src.graphic import save_filter_states, plot_all
+    from rbpf.src.utils.graphic import save_filter_states, plot_all
     save_filter_states(filtered_states, model_inputs_rbpf,
                        save_path=os.path.join(out, "filter_states.npz"))
     plot_all(filtered_states=filtered_states,

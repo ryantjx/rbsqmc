@@ -5,10 +5,10 @@ import cuthbert
 import cuthbertlib
 from functools import partial
 
-from rbpf.src.bivariate_poisson import loglik
-from rbpf.src.data import get_results, WORLDCUP_2026_TEAMS
-from rbpf.src.helpers import default_init_params, generate_rbpf_trajectory
-from rbpf.src.utils import RBPFState, RBPFFootballResults, EMParams, FootballResults
+from rbpf.src.data.bivariate_poisson import loglik
+from rbpf.src.data.data import get_results, WORLDCUP_2026_TEAMS
+from rbpf.src.utils.helpers import default_init_params, generate_rbpf_trajectory
+from rbpf.src.utils.type import RBPFState, RBPFFootballResults, EMParams, FootballResults
 
 # Default to CPU locally, but allow the GPU pipeline to force a device via
 # the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).
@@ -312,7 +312,7 @@ def main():
     # print("Final filtered state shape:", filtered_states.particles.x.shape)
     # print("Final log-normalizing constant:", filtered_states.log_normalizing_constant[-1])
 
-    from rbpf.src.graphic import plot_all
+    from rbpf.src.utils.graphic import plot_all
     plot_all(
         filtered_states=filtered_states,
         augmented_results=model_inputs_rbpf,

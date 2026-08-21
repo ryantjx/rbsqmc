@@ -34,9 +34,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from rbpf.src.helpers import load_params
-from rbpf.src.bivariate_poisson import loglik_grid
-from rbpf.src.utils import EMParams, FootballResults
+from rbpf.src.utils.helpers import load_params
+from rbpf.src.data.bivariate_poisson import loglik_grid
+from rbpf.src.utils.type import EMParams, FootballResults
 
 
 def _load_fixtures(path: str) -> list[dict[str, Any]]:
@@ -216,7 +216,7 @@ def _build_timeline(
     mirrors how the model was trained (one conditioning step per day).
     """
     import pandas as pd
-    from rbpf.src.data import generate_results_jax
+    from rbpf.src.data.data import generate_results_jax
 
     name_to_id = {name: i for i, name in team_id_to_name.items()}
     rows = []
@@ -253,7 +253,7 @@ def run_predictions(
     state before conditioning on day t's scores) is used to score day t's
     matches. This gives a genuine sequential / out-of-sample prediction.
     """
-    from rbpf.src.model import run_filter
+    from rbpf.src.model.model import run_filter
 
     # Drop fixtures involving teams not in the model.
     fixtures, n_dropped = _filter_known_teams(fixtures, team_id_to_name)
@@ -373,7 +373,7 @@ def run_predictions_from_config(
     print(f"[predict] Wrote predictions to {os.path.abspath(pred_path + '/predictions.json')}", flush=True)
 
     # Generate prediction plots (score heatmaps + outcome probabilities).
-    from rbpf.src.graphic import plot_all_predictions
+    from rbpf.src.utils.graphic import plot_all_predictions
     plot_all_predictions(
         result,
         max_goals=max_goals,
@@ -423,8 +423,8 @@ def main(argv=None) -> int:
             cfg = _json.load(f)
         print(f"Loaded config from {args.config}")
 
-    from rbpf.src.data import get_results
-    from rbpf.src.helpers import resolve_teams
+    from rbpf.src.data.data import get_results
+    from rbpf.src.utils.helpers import resolve_teams
 
     teams_only = resolve_teams(cfg) if cfg else None
     max_goals = int(cfg.get("max_goals", args.max_goals)) if cfg else args.max_goals
@@ -476,7 +476,7 @@ def main(argv=None) -> int:
         if not args.plot:
             # Default to the directory containing the output file.
             args.plot = os.path.dirname(args.out) or "."
-        from rbpf.src.graphic import plot_all_predictions
+        from rbpf.src.utils.graphic import plot_all_predictions
         plot_all_predictions(
             result,
             max_goals=max_goals,

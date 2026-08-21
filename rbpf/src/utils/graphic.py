@@ -18,7 +18,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import jax.numpy as jnp
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "outputs", "graphic")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "outputs", "graphic")
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +97,68 @@ def plot_top_strengths(filtered_states, team_id_to_name, top_n=5,
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"Saved plot to {os.path.abspath(save_path)}")
+    plt.close(fig)
+
+
+def plot_final_rankings(
+    filtered_states,
+    team_id_to_name,
+    save_path=os.path.join(OUTPUT_DIR, "final_rankings.png"),
+):
+    """Bar chart of ALL teams ranked by final-state total strength.
+
+    Ranks every team by ``attack + defense`` at the final timestep, best at the
+    top, and colors each bar by the sign of the total strength (green = positive
+    net strength, red = negative).
+
+    Args:
+        filtered_states: cuthbert FilterStates with particles.x shape (T, N, M, 2).
+        team_id_to_name: dict mapping team_id -> team name.
+        save_path: if given, save figure to this path.
+    """
+    x_final = np.asarray(filtered_states.particles.x[-1])  # (N, M, 2)
+    mean_strengths = x_final.mean(axis=0)  # (M, 2)
+    total = mean_strengths[:, 0] + mean_strengths[:, 1]  # (M,)
+
+    # Rank best first.
+    order = np.argsort(total)[::-1]
+    ranked = total[order]
+    names = [team_id_to_name[i] for i in order]
+
+    # Color by sign of strength.
+    colors = ["darkgreen" if v >= 0 else "firebrick" for v in ranked]
+
+    fig, ax = plt.subplots(figsize=(10, max(8, 0.4 * len(names))))
+    ax.barh(range(len(names)), ranked, color=colors)
+    ax.set_yticks(range(len(names)))
+    ax.set_yticklabels(names, fontsize=9)
+    ax.invert_yaxis()  # rank 1 at top
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_xlabel("Total Strength (Attack + Defense)")
+    ax.set_title("Final Team Rankings (Final-State Total Strength)")
+    ax.grid(True, axis="x", alpha=0.3)
+
+    # Annotate each bar with its rank number.
+    for i, v in enumerate(ranked):
+        ax.text(v, i, f"  #{i+1}", va="center", ha="left", fontsize=8, color="gray")
+
+    fig.tight_layout()
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+        # Persist the rankings data alongside the plot.
+        import json
+        data_path = os.path.splitext(save_path)[0] + ".json"
+        with open(data_path, "w") as f:
+            json.dump({
+                "rank": list(range(1, len(names) + 1)),
+                "team": [team_id_to_name.get(int(i), str(i)) for i in order],
+                "attack": mean_strengths[order, 0].astype(float).tolist(),
+                "defense": mean_strengths[order, 1].astype(float).tolist(),
+                "total": ranked.astype(float).tolist(),
+            }, f, indent=2)
+        print(f"Saved rankings data to {os.path.abspath(data_path)}")
     plt.close(fig)
 
 
@@ -221,6 +283,27 @@ def plot_timeseries_states(
             os.makedirs(directory, exist_ok=True)
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"Saved plot to {os.path.abspath(save_path)}")
+        # Persist the per-team time series alongside the plot.
+        import json
+        data_path = os.path.splitext(save_path)[0] + ".json"
+        ts = np.asarray(timestamps)
+        # Convert datetime timestamps to strings for JSON serializability.
+        ts_json = [str(t) for t in ts.tolist()]
+        with open(data_path, "w") as f:
+            json.dump({
+                "teams": names,
+                "team_indices": [int(i) for i in top_indices],
+                "timestamps": ts_json,
+                "attack": {
+                    name: filter_means[:, idx, 0].astype(float).tolist()
+                    for idx, name in zip(top_indices, names)
+                },
+                "defense": {
+                    name: filter_means[:, idx, 1].astype(float).tolist()
+                    for idx, name in zip(top_indices, names)
+                },
+            }, f, indent=2)
+        print(f"Saved timeseries data to {os.path.abspath(data_path)}")
 
     return fig, (attack_ax, defense_ax)
 
@@ -597,6 +680,15 @@ def plot_log_normalizing_constant(filtered_states,
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"Saved plot to {os.path.abspath(save_path)}")
+        # Persist the logZ trajectory alongside the plot.
+        import json
+        data_path = os.path.splitext(save_path)[0] + ".json"
+        with open(data_path, "w") as f:
+            json.dump({
+                "time_step": list(range(log_z.size)),
+                "log_normalizing_constant": log_z.astype(float).tolist(),
+            }, f, indent=2)
+        print(f"Saved logZ data to {os.path.abspath(data_path)}")
     plt.close(fig)
 
 
@@ -1091,6 +1183,8 @@ def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_pa
     plot_top_strengths(filtered_states, team_id_to_name,
                        top_n=top_n,
                        save_path=os.path.join(save_path, "top_strengths.png"))
+    plot_final_rankings(filtered_states, team_id_to_name,
+                        save_path=os.path.join(save_path, "final_rankings.png"))
     plot_timeseries_states(filtered_states, team_id_to_name,
                            top_n=top_n,
                            timestamps=timestamps,
@@ -1278,6 +1372,61 @@ def plot_all_smoothing(smoothed_trajectories, team_id_to_name, df, top_n, save_p
         top_n=top_n,
         save_path=os.path.join(save_path, "smoothed_uncertainty.png"),
     )
+    plot_smoothed_final_rankings(
+        smoothed_trajectories=smoothed_trajectories,
+        team_id_to_name=team_id_to_name,
+        save_path=os.path.join(save_path, "smoothed_final_rankings.png"),
+    )
+
+
+def plot_smoothed_final_rankings(
+    smoothed_trajectories,
+    team_id_to_name,
+    save_path=os.path.join(OUTPUT_DIR, "smoothed_final_rankings.png"),
+):
+    """Bar chart of ALL teams ranked by final smoothed total strength.
+
+    Ranks every team by ``attack + defense`` averaged over the smoothed
+    trajectories at the final timestep, best at the top, colored by the sign of
+    the total strength (green = positive net strength, red = negative).
+
+    Args:
+        smoothed_trajectories: array of shape (N_traj, T+1, M, 2) from
+            rbpf_backward_smoothing.
+        team_id_to_name: dict mapping team index -> team name.
+        save_path: if given, save figure to this path.
+    """
+    trajs = np.asarray(smoothed_trajectories)  # (N, T+1, M, 2)
+    n_traj, n_steps, n_teams, _ = trajs.shape
+
+    # Final smoothed total strength: mean over trajectories, at last step.
+    smooth_mean = trajs.mean(axis=0)  # (T+1, M, 2)
+    total = smooth_mean[-1, :, 0] + smooth_mean[-1, :, 1]  # (M,)
+
+    order = np.argsort(total)[::-1]
+    ranked = total[order]
+    names = [team_id_to_name[i] for i in order]
+    colors = ["darkgreen" if v >= 0 else "firebrick" for v in ranked]
+
+    fig, ax = plt.subplots(figsize=(10, max(8, 0.4 * n_teams)))
+    ax.barh(range(n_teams), ranked, color=colors)
+    ax.set_yticks(range(n_teams))
+    ax.set_yticklabels(names, fontsize=9)
+    ax.invert_yaxis()
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_xlabel("Total Strength (Attack + Defense)")
+    ax.set_title("Final Smoothed Team Rankings (mean over trajectories)")
+    ax.grid(True, axis="x", alpha=0.3)
+    for i, v in enumerate(ranked):
+        ax.text(v, i, f"  #{i+1}", va="center", ha="left", fontsize=8, color="gray")
+
+    fig.tight_layout()
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+    plt.close(fig)
+    return fig
 
 
 def plot_em_results(

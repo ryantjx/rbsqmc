@@ -209,7 +209,7 @@ def main(argv=None) -> int:
     run([
         py, "-c",
         "import sys; sys.path.insert(0, '.'); "
-        "from rbpf.src.smoothing_v2 import main; main()",
+        "from rbpf.src.model.smoothing_v2 import main; main()",
     ], cwd=repo_root, forward_raw=True)
 
     log("GPU smoothing v2 completed")

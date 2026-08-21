@@ -2,15 +2,15 @@ import json
 
 import optax
 
-from rbpf.src.helpers import decode_EM_params, default_init_params, encode_EM_params, monitor_params, record_mstep_diagnostics, print_mstep_summary, resolve_teams, save_params
-from rbpf.src.smoothing import _load_run_config, rbpf_backward_smoothing, E_step
-from rbpf.src.data import get_results
+from rbpf.src.utils.helpers import decode_EM_params, default_init_params, encode_EM_params, monitor_params, record_mstep_diagnostics, print_mstep_summary, resolve_teams, save_params
+from rbpf.src.model.smoothing import _load_run_config, rbpf_backward_smoothing, E_step
+from rbpf.src.data.data import get_results
 import jax
-from rbpf.src.smoothing import loss_fn, E_step
-from rbpf.src.model import run_filter
-from rbpf.src.utils import FootballResults, EMParams, RawEMParams
-from rbpf.src.graphic import plot_all, plot_all_smoothing, plot_log_marginal_likelihood_curve, plot_em_dual_curve, plot_em_grad_norms
-from rbpf.src.predict import run_predictions_from_config
+from rbpf.src.model.smoothing import loss_fn, E_step
+from rbpf.src.model.model import run_filter
+from rbpf.src.utils.type import FootballResults, EMParams, RawEMParams
+from rbpf.src.utils.graphic import plot_all, plot_all_smoothing, plot_log_marginal_likelihood_curve, plot_em_dual_curve, plot_em_grad_norms
+from rbpf.src.predict.predict import run_predictions_from_config
 import os
 import jax.numpy as jnp
 

@@ -1,10 +1,10 @@
 import os
 import json
 import pandas as pd
-from rbpf.src.helpers import generate_results_jax
+from rbpf.src.utils.helpers import generate_results_jax
 
 RAW_URL="https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
-_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")  # rbpf/data/
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")  # rbpf/data/
 PARQUET_PATH = os.path.join(_DATA_DIR, "results.parquet")
 WORLDCUP_2026_PATH = os.path.join(_DATA_DIR, "worldcup2026.json")
 ACITVE_TEAMS_PATH = os.path.join(_DATA_DIR, "active_teams.json")

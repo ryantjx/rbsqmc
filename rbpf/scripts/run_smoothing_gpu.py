@@ -181,11 +181,11 @@ def train(config: dict, repo_root: Path) -> None:
     os.environ.setdefault("XLA_PYTHON_CLIENT_ALLOCATOR", "platform")
     os.environ.setdefault("MPLCONFIGDIR", "/tmp/rbpf_matplotlib")
 
-    from rbpf.src.data import get_results, WORLDCUP_2026_TEAMS
-    from rbpf.src.helpers import default_init_params, save_params
-    from rbpf.src.model import run_filter
-    from rbpf.src.smoothing import run_EM, E_step
-    from rbpf.src.graphic import plot_all, plot_log_marginal_likelihood_curve, plot_all_smoothing
+    from rbpf.src.data.data import get_results, WORLDCUP_2026_TEAMS
+    from rbpf.src.utils.helpers import default_init_params, save_params
+    from rbpf.src.model.model import run_filter
+    from rbpf.src.model.smoothing import run_EM, E_step
+    from rbpf.src.utils.graphic import plot_all, plot_log_marginal_likelihood_curve, plot_all_smoothing
 
     import jax
 
@@ -341,7 +341,7 @@ def main(argv=None) -> int:
     run([
         py, "-c",
         "import sys; sys.path.insert(0, '.'); "
-        "from rbpf.src.smoothing import main; main()",
+        "from rbpf.src.model.smoothing import main; main()",
     ], cwd=repo_root, forward_raw=True)
 
     log("GPU smoothing completed")
