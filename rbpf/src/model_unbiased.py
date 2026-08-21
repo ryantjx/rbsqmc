@@ -253,7 +253,7 @@ def logmarginal_maximize(
             remaining = avg_sec * (n_epochs - (epoch + 1))
             print(
                 f"[epoch {epoch:4d}] logZ = {logz:.4f}  (best {best_logz:.4f})  "
-                f"[{epoch_sec:6.1f}s this epoch, {elapsed:6.1f}s elapsed, "
+                f"[{epoch_secs:6.1f}s this epoch, {elapsed:6.1f}s elapsed, "
                 f"ETA {remaining:6.1f}s]",
                 flush=True,
             )
