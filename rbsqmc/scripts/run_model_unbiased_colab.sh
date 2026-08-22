@@ -20,7 +20,7 @@
 # Environment overrides:
 #   GPU_TYPE       e.g. A100, T4 (default: from config)
 #   COLAB_TIMEOUT  seconds (default: from config)
-#   SESSION        colab session name (default: rbsqmc-rbsqmc-model-unbiased)
+#   SESSION        colab session name (default: rbsqmc_model_unbiased_gpu)
 
 set -euo pipefail
 
@@ -155,7 +155,7 @@ main() {
     gpu_type="${GPU_TYPE:-$(read_config gpu_type)}"
     timeout="${COLAB_TIMEOUT:-$(read_config colab_timeout)}"
     base_output_dir="$(read_config output_dir)"
-    SESSION="${SESSION:-rbsqmc-rbsqmc-model-unbiased}"
+    SESSION="${SESSION:-rbsqmc_model_unbiased_gpu}"
 
     # Timestamped per-run output directory (TASK step 1), as a slash-delimited
     # subfolder under the base output dir: .../train_model_gpu/YYYYMMDD_HHmm/.
