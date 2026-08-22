@@ -11,7 +11,7 @@ import sys
 from functools import partial
 
 # Create output directory
-OUTPUT_DIR = "/Users/ryant/Github/ryantjx/rbsqmc/src/scripts/hilbert_sort/outputs"
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 import numpy as np
@@ -21,11 +21,10 @@ import jax
 import jax.numpy as jnp
 
 # Import the JAX implementation
-import hilbert_sort as jax_backend
+import sqmc.hilbert_sort.hilbert_sort as jax_backend
 
 # Import the Numba implementation
-sys.path.insert(0, '/Users/ryant/Github/ryantjx/rbsqmc/src/scripts/hilbert_sort')
-from hilbert_particles import hilbert_sort as nb_hilbert_sort
+from sqmc.hilbert_sort.hilbert_particles import hilbert_sort as nb_hilbert_sort
 
 # Enable 64-bit integers for JAX
 jax.config.update("jax_enable_x64", True)

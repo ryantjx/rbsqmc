@@ -11,7 +11,7 @@ import sys
 from functools import partial
 
 # Output directory configuration
-OUTPUT_DIR = "/Users/ryant/Github/ryantjx/rbsqmc/src/scripts/hilbert_sort/outputs"
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 import numpy as np
@@ -21,15 +21,14 @@ import jax
 import jax.numpy as jnp
 
 # Add the hilbert_sort directory to Python path for imports
-sys.path.insert(0, '/Users/ryant/Github/ryantjx/rbsqmc/src/scripts/hilbert_sort')
 
 # Import the JAX implementation (module name: hilbert_sort)
-import hilbert_sort
+import sqmc.hilbert_sort.hilbert_sort as hilbert_sort
 
 # Import the Numba implementation (module name: hilbert_particles
 
 # Import the Numba implementation (module name: hilbert_particles)
-import hilbert_particles
+import sqmc.hilbert_sort.hilbert_particles as hilbert_particles
 
 # Auto-detect 64-bit support based on backend
 # GPU (CUDA) and TPU support 64-bit, Metal (macOS) does not

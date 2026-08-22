@@ -16,8 +16,8 @@ from scipy.stats import qmc
 # Import JAX implementations
 import jax
 import jax.numpy as jnp
-from scripts.qmc.qmc_archive.halton import halton_sample
-from scripts.qmc.qmc_archive.sobol import sobol_sample
+from sqmc.qmc.qmc_archive.halton import halton_sample
+from sqmc.qmc.qmc_archive.sobol import sobol_sample
 
 # Detect backend and platform
 BACKEND = jax.default_backend()
@@ -36,7 +36,7 @@ print(f"Platform: {PLATFORM}")
 print()
 
 # Create output directory
-OUTPUT_DIR = "/Users/ryant/Github/ryantjx/rbsqmc/src/scripts/qmc/outputs/images"
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs", "images")
 if IS_COLAB:
     OUTPUT_DIR = "/content/qmc_images"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
