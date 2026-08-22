@@ -1,5 +1,5 @@
 {
-  "training_start_date": "1950-01-01",
+  "training_start_date": "1980-01-01",
   "test_start_date": "2024-01-01",
   "prediction_start_date": "2026-06-11",
   "n_particles": 250,
@@ -7,7 +7,7 @@
   "seed": 0,
   "n_epochs": 200,
   "learning_rate": 0.1,
-  "n_reps": 20,
+  "n_reps": 15,
   "include_friendly": true,
   "teams": "worldcup2026",
   "output_dir": "rbsqmc/outputs/train_model_gpu",
