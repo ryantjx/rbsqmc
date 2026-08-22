@@ -38,16 +38,20 @@ DEFAULT_CONFIG = {
     "test_start_date": "2025-01-01",
     "prediction_start_date": "2026-06-11",
     "n_particles": 250,
-    "test_n_particles": 250,
     "max_goals": 8,
     "seed": 0,
     "n_epochs": 20,
     "learning_rate": 0.1,
     "n_reps": 20,
-    "include_friendly": False,
+    "include_friendly": True,
     "teams": "worldcup2026",
     "download": False,
     "output_dir": None,
+    "gamma_0_prior_params": {
+        "scale": 1.0,
+        "dof": 5.0,
+        "strength": 1.0
+    },
 }
 
 DEFAULT_CONFIG_PATH = "rbsqmc/scripts/config/model_unbiased_gpu_config.json"
@@ -133,6 +137,13 @@ def run_optimize(cfg: dict, output_dir: str):
     print(f"[optimize] baseline train logZ = {baseline_logz:.4f}")
 
     key, opt_key = jax.random.split(key, 2)
+    gamma_0_prior_params = None
+    if cfg.get("gamma_prior_strength") is not None:
+        gamma_0_prior_params = {
+            "scale": None,  # will default to initial params.gamma_0
+            "dof": cfg.get("gamma_prior_dof", 5.0),
+            "strength": cfg["gamma_prior_strength"],
+        }
     best_params, train_logz_history, test_logz_history, grad_norm_history = logmarginal_maximize(
         key=opt_key,
         train_model_inputs=train_model_inputs,
@@ -143,6 +154,7 @@ def run_optimize(cfg: dict, output_dir: str):
         n_epochs=cfg["n_epochs"],
         learning_rate=cfg["learning_rate"],
         n_reps=cfg["n_reps"],
+        gamma_0_prior_params=gamma_0_prior_params,
     )
 
     # Final filter logZ on train+test with the best params.

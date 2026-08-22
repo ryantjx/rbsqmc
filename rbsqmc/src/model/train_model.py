@@ -21,18 +21,23 @@ def main():
     output_dir = f"rbsqmc/outputs/train_model/{date_text}/"
 
     cfg = {
-        "training_start_date": "1980-01-01",
-        "test_start_date": "2025-01-01",
+        "training_start_date": "1970-01-01",
+        "test_start_date": "2024-01-01",
         "prediction_start_date": "2026-06-11",
         "n_particles": 250,          # N
         "max_goals": 8,               # MAX_GOALS
         "seed": 0,                    # PRNG seed
         # optimization
-        "n_epochs": 200,
-        "learning_rate": 0.1,
+        "n_epochs": 100,
+        "learning_rate": 0.05,
         "n_reps": 25,
+        "gamma_0_prior_params" : {
+            "scale" : 1.0,
+            "dof" : 5.0,
+            "strength" : 1.0
+        },
         # data / output
-        "include_friendly": False,
+        "include_friendly": True,
         "teams": "worldcup2026",
         "output_dir": output_dir,
     }

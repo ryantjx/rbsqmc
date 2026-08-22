@@ -1,4 +1,5 @@
 from functools import partial
+import math
 import os
 import json
 
@@ -92,9 +93,7 @@ def loss_fn(
     params : EMParams,
     n_particles : int,
     max_goals: int,
-    # gamma_0_prior: jax.Array | None = None,
-    # gamma_prior_dof: float = 5.0,
-    # gamma_prior_strength: float = 1.0,
+    gamma_0_prior_params: dict | None = None,
 ):
     """Negative log marginal likelihood, averaged over ``n_reps`` filter replicas.
 
@@ -103,12 +102,11 @@ def loss_fn(
         model_inputs: FootballResults (raw inputs; RBPF trajectory built inside
             ``run_filter_unbiased``).
         params: EMParams to score.
-        # gamma_0_prior: optional scale matrix for an inverse-Wishart prior on
-        #     ``gamma_0``. If given, a regularizer ``-strength * log p(gamma_0)``
-        #     is added to the loss, pulling ``gamma_0`` toward ``gamma_0_prior``
-        #     (which widens team separation if its scale is larger).
-        # gamma_prior_dof: inverse-Wishart degrees of freedom.
-        # gamma_prior_strength: multiplicative strength of the prior term.
+        gamma_0_prior_params: optional dict with keys ``scale`` (jax.Array),
+            ``dof`` (float), and ``strength`` (float). If given, an
+            inverse-Wishart prior regularizer ``-strength * log p(gamma_0)``
+            is added to the loss, pulling ``gamma_0`` toward ``scale``.
+            If None, the original unregularized loss is used.
 
     Returns:
         ``-mean(log Z)`` plus the (optional) gamma_0 prior regularizer.
@@ -119,10 +117,10 @@ def loss_fn(
         )[0].log_normalizing_constant[-1]
     )(keys)
     loss = -jnp.mean(logz)
-    # if gamma_0_prior is not None:
-    #     loss = loss - gamma_prior_strength * log_inverse_wishart_kernel(
-    #         params.gamma_0, gamma_0_prior, gamma_prior_dof
-    #     )
+    if gamma_0_prior_params is not None:
+        loss = loss - gamma_0_prior_params["strength"] * log_inverse_wishart_kernel(
+            params.gamma_0, gamma_0_prior_params["scale"], gamma_0_prior_params["dof"]
+        )
     return loss
 
 @partial(jax.jit, static_argnames=("n_particles", "max_goals"))
@@ -133,9 +131,7 @@ def loss_and_grad_raw(
         fixed_mean_0: jax.Array,
         n_particles: int,
         max_goals: int,
-        # gamma_0_prior: jax.Array | None = None,
-        # gamma_prior_dof: float = 5.0,
-        # gamma_prior_strength: float = 1.0,
+        gamma_0_prior_params: dict | None = None,
 ):
     """Value and gradient of ``loss_fn`` w.r.t. unconstrained raw params.
 
@@ -146,14 +142,12 @@ def loss_and_grad_raw(
     def _loss(raw):
         params = decode_EM_params(raw, fixed_mean_0=fixed_mean_0)
         return loss_fn(
-            keys=keys, 
-            model_inputs=model_inputs, 
-            params=params, 
-            n_particles=n_particles, 
+            keys=keys,
+            model_inputs=model_inputs,
+            params=params,
+            n_particles=n_particles,
             max_goals=max_goals,
-            # gamma_0_prior, 
-            # gamma_prior_dof, 
-            # gamma_prior_strength,
+            gamma_0_prior_params=gamma_0_prior_params,
         )
     return jax.value_and_grad(_loss)(raw_params)
 
@@ -167,9 +161,7 @@ def logmarginal_maximize(
     n_epochs: int = 100,
     learning_rate: float = 1e-3,
     n_reps: int = 4,
-    # gamma_0_prior: jax.Array | None = None,
-    # gamma_prior_dof: float = 5.0,
-    # gamma_prior_strength: float = 1.0,
+    gamma_0_prior_params: dict | None = None,
 ):
     """Maximize the log marginal likelihood ``log Z`` with Adam (optax).
 
@@ -187,11 +179,11 @@ def logmarginal_maximize(
 
     Args:
         test_model_inputs: held-out ``FootballResults`` (test split).
-        gamma_0_prior: optional inverse-Wishart scale for a ``gamma_0`` prior.
-            If None, defaults to the initial ``params.gamma_0`` (shrinkage
-            toward the starting value).
-        gamma_prior_dof: inverse-Wishart degrees of freedom.
-        gamma_prior_strength: multiplicative strength of the prior term.
+        gamma_0_prior_params: optional dict with keys ``scale`` (jax.Array),
+            ``dof`` (float), and ``strength`` (float). If given, an
+            inverse-Wishart prior regularizer is added to the loss, pulling
+            ``gamma_0`` toward ``scale``. If None, the original unregularized
+            loss is used.
 
     Returns:
         (best_params, history, test_history, grad_norm_history) where
@@ -203,8 +195,8 @@ def logmarginal_maximize(
     """
     fixed_mean_0 = params.mean_0
     raw_params = encode_EM_params(params)
-    # if gamma_0_prior is None:
-    #     gamma_0_prior = params.gamma_0
+    if gamma_0_prior_params is not None and gamma_0_prior_params.get("scale") is None:
+        gamma_0_prior_params["scale"] = params.gamma_0
 
     # Cosine-anneal the learning rate from `learning_rate` down to 0 over the
     # training run. This lets Adam take large early steps and shrink to small
@@ -240,9 +232,7 @@ def logmarginal_maximize(
             fixed_mean_0=fixed_mean_0,
             n_particles=n_particles,
             max_goals=max_goals,
-            # gamma_0_prior=gamma_0_prior,
-            # gamma_prior_dof=gamma_prior_dof,
-            # gamma_prior_strength=gamma_prior_strength,
+            gamma_0_prior_params=gamma_0_prior_params,
         )
         loss = float(loss)
         logz = -loss
@@ -306,6 +296,13 @@ def logmarginal_maximize(
                 max_goals=max_goals,
             )[0].log_normalizing_constant[-1]
         )
+        # The test forward filter can occasionally produce NaN for certain
+        # intermediate parameter states (GPU float32 instability in the
+        # particle filter).  This does not affect the training loss/grads
+        # (which are guarded separately), so carry forward the last finite
+        # test logZ instead of recording NaN in the history.
+        if not math.isfinite(test_logz):
+            test_logz = test_logz_history[-1] if test_logz_history else float("nan")
         test_logz_history.append(test_logz)
 
         epoch_secs = _time.perf_counter() - epoch_start

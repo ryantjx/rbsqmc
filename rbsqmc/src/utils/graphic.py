@@ -454,7 +454,10 @@ def plot_correlation_topn_bar(
     # Rank from most positive to most negative.
     order = np.argsort(vals)[::-1]
     pos_idx = order[vals[order] > 1e-8][:top_n]
-    neg_idx = order[vals[order] < -1e-8][:top_n]
+    # For negatives, sort ascending (most negative first) to get the strongest
+    # negative correlations, not the ones closest to zero.
+    neg_order = np.argsort(vals)
+    neg_idx = neg_order[vals[neg_order] < -1e-8][:top_n]
 
     # Build labels like "TeamA - TeamB".
     def label_for(i, j):
@@ -534,7 +537,10 @@ def prior_correlation_topn(params, team_id_to_name, top_n=10, save_path=None):
 
     order = np.argsort(vals)[::-1]
     pos_idx = order[vals[order] > 1e-8][:top_n]
-    neg_idx = order[vals[order] < -1e-8][:top_n]
+    # For negatives, sort ascending (most negative first) to get the strongest
+    # negative correlations, not the ones closest to zero.
+    neg_order = np.argsort(vals)
+    neg_idx = neg_order[vals[neg_order] < -1e-8][:top_n]
 
     def label_for(i, j):
         return f"{team_id_to_name[i]} - {team_id_to_name[j]}"
@@ -575,6 +581,21 @@ def prior_correlation_topn(params, team_id_to_name, top_n=10, save_path=None):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"Saved plot to {os.path.abspath(save_path)}")
+        # Persist the top-N correlation data alongside the plot.
+        import json
+        data_path = os.path.splitext(save_path)[0] + ".json"
+        with open(data_path, "w") as f:
+            json.dump({
+                "positive": [
+                    {"pair": label, "correlation": float(val)}
+                    for label, val in zip(pos_labels, pos_values)
+                ],
+                "negative": [
+                    {"pair": label, "correlation": float(val)}
+                    for label, val in zip(neg_labels, neg_values)
+                ],
+            }, f, indent=2)
+        print(f"Saved correlation data to {os.path.abspath(data_path)}")
     plt.close(fig)
 
 
@@ -676,7 +697,10 @@ def plot_correlation_change_topn_bar(
     # Rank from most positive change to most negative change.
     order = np.argsort(vals)[::-1]
     pos_idx = order[vals[order] > 1e-8][:top_n]
-    neg_idx = order[vals[order] < -1e-8][:top_n]
+    # For negatives, sort ascending (most negative first) to get the strongest
+    # negative changes, not the ones closest to zero.
+    neg_order = np.argsort(vals)
+    neg_idx = neg_order[vals[neg_order] < -1e-8][:top_n]
 
     def label_for(i, j):
         return f"{team_id_to_name[i]} - {team_id_to_name[j]}"

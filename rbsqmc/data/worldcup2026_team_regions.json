@@ -1,5 +1,10 @@
 {
   "description": "Regional prior correlation structure for the 2026 World Cup teams.",
+  "correlation": {
+    "state_standard_deviation": 1.5,
+    "within_region": 0.2,
+    "between_regions": 0.00
+  },
   "team_order": [
     "Algeria",
     "Argentina",
@@ -111,10 +116,5 @@
       "Australia",
       "New Zealand"
     ]
-  },
-  "correlation": {
-    "state_standard_deviation": 1.5,
-    "within_region": 0.5,
-    "between_regions": 0.03
   }
 }
