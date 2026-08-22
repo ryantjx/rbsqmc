@@ -10,7 +10,7 @@
   "n_reps": 30,
   "include_friendly": false,
   "teams": "worldcup2026",
-  "output_dir": "rbsqmc/outputs/model_unbiased_gpu",
+  "output_dir": "rbsqmc/outputs/train_model_gpu",
   "gpu_type": "A100",
   "colab_timeout": 14400,
   "repo_url": "https://github.com/ryantjx/rbsqmc.git"

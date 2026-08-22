@@ -5,7 +5,7 @@
 # This script runs LOCALLY. It:
 #   1. Validates the config, bootstrap, and validator.
 #   2. Creates a timestamped run directory
-#      (rbsqmc/outputs/model_unbiased_gpu_DDMMYYYY_HHMM/).
+#      (rbsqmc/outputs/train_model_gpu_YYYYMMDD_HHmm/).
 #   3. Launches the optimization-only phase on a Colab GPU via `colab run`.
 #   4. Downloads the optimization artifacts from the session.
 #   5. Stops the Colab session (server no longer needed).
@@ -157,33 +157,25 @@ main() {
     base_output_dir="$(read_config output_dir)"
     SESSION="${SESSION:-rbsqmc-rbsqmc-model-unbiased}"
 
-    # Timestamped per-run output directory (TASK step 1).
-    RUN_SUFFIX="$(date '+%d%m%Y_%H%M')"
-    RUN_DIR="${REPO_ROOT}/${base_output_dir}_${RUN_SUFFIX}"
+    # Timestamped per-run output directory (TASK step 1), as a slash-delimited
+    # subfolder under the base output dir: .../train_model_gpu/YYYYMMDD_HHmm/.
+    RUN_SUFFIX="$(date '+%Y%m%d_%H%M')"
+    RUN_DIR="${REPO_ROOT}/${base_output_dir}/${RUN_SUFFIX}"
     LOCAL_OUTPUTS="${RUN_DIR}"
-    REMOTE_OUTPUTS="/content/rbsqmc/${base_output_dir}_${RUN_SUFFIX}"
+    REMOTE_OUTPUTS="/content/rbsqmc/${base_output_dir}/${RUN_SUFFIX}"
 
-    # Write a resolved config for this run (output_dir set to the run dir) that
-    # is passed to the GPU bootstrap.
-    RESOLVED_CONFIG="${LOCAL_OUTPUTS}/resolved_run_config.json"
+    # Ensure the local run dir exists (for the run log + downloaded artifacts).
     mkdir -p "${LOCAL_OUTPUTS}"
-    python3 - "${CONFIG}" "${RESOLVED_CONFIG}" "${REMOTE_OUTPUTS}" <<'PY'
-import json, sys
-with open(sys.argv[1]) as f:
-    cfg = json.load(f)
-cfg["output_dir"] = sys.argv[3]
-with open(sys.argv[2], "w") as f:
-    json.dump(cfg, f, indent=2)
-PY
     RUN_LOG="${LOCAL_OUTPUTS}/run_$(date '+%Y%m%d_%H%M%S').log"
     progress OUT "logging this run to ${RUN_LOG}"
 
-    # Dry-run validation of the bootstrap (use the resolved config).
-    python3 "${BOOTSTRAP}" --config "${RESOLVED_CONFIG}" --dry-run >/dev/null
+    # Dry-run validation of the bootstrap against the committed config.
+    python3 "${BOOTSTRAP}" --config "${CONFIG}" --dry-run >/dev/null
 
     if [[ "${DRY_RUN}" -eq 1 ]]; then
-        printf 'colab run --gpu %q --keep --timeout %q --session %q %q --config %q\n' \
-            "${gpu_type}" "${timeout}" "${SESSION}" "${BOOTSTRAP}" "$(basename "${RESOLVED_CONFIG}")"
+        printf 'colab run --gpu %q --keep --timeout %q --session %q %q --config %q --output-dir %q\n' \
+            "${gpu_type}" "${timeout}" "${SESSION}" "${BOOTSTRAP}" \
+            "$(basename "${CONFIG}")" "${REMOTE_OUTPUTS}"
         return 0
     fi
 
@@ -195,7 +187,8 @@ PY
     # --keep keeps the VM alive after the script finishes so artifacts can be
     # downloaded. Run in the background and tee colab's output into the log.
     colab run --gpu "${gpu_type}" --keep --timeout "${timeout}" \
-        --session "${SESSION}" "${BOOTSTRAP}" --config "$(basename "${RESOLVED_CONFIG}")" \
+        --session "${SESSION}" "${BOOTSTRAP}" \
+        --config "$(basename "${CONFIG}")" --output-dir "${REMOTE_OUTPUTS}" \
         > >(tee -a "${RUN_LOG}") 2>&1 &
     local colab_pid=$!
 
@@ -236,7 +229,7 @@ PY
     local filter_dir="${LOCAL_OUTPUTS}/filtered"
     (cd "${REPO_ROOT}" && python3 -m rbsqmc.src.model.train_model_gpu filter \
         --params "${LOCAL_OUTPUTS}/params_unbiased.json" \
-        --config "${RESOLVED_CONFIG}" \
+        --config "${CONFIG}" \
         --out "${filter_dir}")
 
     # ------------------------------------------------------------------
@@ -246,7 +239,7 @@ PY
     local predict_dir="${LOCAL_OUTPUTS}/predict"
     (cd "${REPO_ROOT}" && python3 -m rbsqmc.src.model.train_model_gpu predict \
         --params "${LOCAL_OUTPUTS}/params_unbiased.json" \
-        --config "${RESOLVED_CONFIG}" \
+        --config "${CONFIG}" \
         --out "${predict_dir}")
 
     # ------------------------------------------------------------------

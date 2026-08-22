@@ -11,6 +11,7 @@ from rbsqmc.src.model.optimization import (
 from rbsqmc.src.utils.helpers import default_init_params, resolve_teams, save_params
 from rbsqmc.src.utils.graphic import (
     plot_all,
+    plot_gradient_norm_curve,
     plot_logmarginal_history_train_test,
 )
 from datetime import datetime
@@ -20,16 +21,16 @@ def main():
     output_dir = f"rbsqmc/outputs/train_model/{date_text}/"
 
     cfg = {
-        "training_start_date": "1950-01-01",
+        "training_start_date": "1980-01-01",
         "test_start_date": "2025-01-01",
         "prediction_start_date": "2026-06-11",
-        "n_particles": 500,          # N
+        "n_particles": 250,          # N
         "max_goals": 8,               # MAX_GOALS
         "seed": 0,                    # PRNG seed
         # optimization
         "n_epochs": 200,
         "learning_rate": 0.1,
-        "n_reps": 30,
+        "n_reps": 25,
         # data / output
         "include_friendly": False,
         "teams": "worldcup2026",
@@ -65,7 +66,7 @@ def main():
 
     ############# LOG MARGINALIZATION OPTIMIZATION ################
     key, opt_key = jax.random.split(key, 2)
-    best_params, train_logz_history, test_logz_history = logmarginal_maximize(
+    (best_params, train_logz_history, test_logz_history, grad_norm_history) = logmarginal_maximize(
         key=opt_key,
         train_model_inputs=train_model_inputs,       # train on the train split
         test_model_inputs=test_model_inputs,   # score the held-out test split each epoch
@@ -79,6 +80,10 @@ def main():
         # gamma_prior_dof=cfg.get("gamma_prior_dof", 5.0),
         # gamma_prior_strength=cfg.get("gamma_prior_strength", 1.0),
     )
+    train_logz = [float(v) for v in train_logz_history]
+    test_logz = [float(v) for v in test_logz_history]
+    grad_norms = [float(v) for v in grad_norm_history]
+
     # plot the logZ history
     plot_logmarginal_history_train_test(
         train_logz_history=train_logz_history,
@@ -86,6 +91,10 @@ def main():
         test_logz_history=test_logz_history,
         test_match_count=int(test_model_inputs.match_mask.sum()),
         save_path=os.path.join(cfg["output_dir"], "logmarginal_history_train_test.png"),
+    )
+    plot_gradient_norm_curve(
+        grad_norm_history=grad_norm_history,
+        save_path=os.path.join(output_dir, "gradient_norm_curve.png"),
     )
     # save best params to output_dir
     save_params(

@@ -22,6 +22,7 @@ Usage (Colab, via the orchestrator):
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -33,20 +34,27 @@ from pathlib import Path
 REPO_DIR = Path("/content/rbsqmc")
 REPO_URL = "https://github.com/ryantjx/rbsqmc.git"
 
-# Packages the pipeline needs at runtime, mapped to the module we probe to
-# decide whether an install is required (skip-if-present).
-REQUIRED_MODULES = [
-    "jax",
-    "cuthbert",
-    "cuthbertlib",
-    "optax",
-    "numpy",
-    "scipy",
-    "pandas",
-    "pyarrow",
-    "matplotlib",
-    "tqdm",
-]
+# Packages the pipeline needs at runtime, mapped to their pip package names
+# (module -> package). We only ever install a package if its module is NOT
+# importable in the active environment, and we never install ``jax``/``jaxlib``:
+# Colab ships a working CUDA JAX and re-pinning it (e.g. from requirements.txt)
+# can leave a broken mix of jax vs jax._src that breaks imports like
+# ``from jax.scipy.linalg import ...``.
+REQUIRED_PACKAGES = {
+    "cuthbert": "cuthbert",
+    "cuthbertlib": "cuthbertlib",
+    "optax": "optax",
+    "numpy": "numpy",
+    "scipy": "scipy",
+    "pandas": "pandas",
+    "pyarrow": "pyarrow",
+    "matplotlib": "matplotlib",
+    "tqdm": "tqdm",
+}
+
+# Modules Colab is expected to already provide; we probe these but never try to
+# reinstall them (installing jax/jaxlib can corrupt Colab's CUDA setup).
+PROTECTED_MODULES = ("jax",)
 
 
 def log(message: str, *, stream: str = "OUT") -> None:
@@ -97,14 +105,22 @@ def resolve_python(repo_root: Path) -> str:
     return sys.executable
 
 
-def _missing_modules() -> list[str]:
-    """Return the subset of REQUIRED_MODULES not importable in this env."""
+def _missing_packages() -> list[str]:
+    """Return the pip package names we need to install.
+
+    A package is installed only if its module is not importable AND it is not a
+    protected module (jax). Colab already provides a working JAX; we never
+    reinstall it.
+    """
     missing = []
-    for module in REQUIRED_MODULES:
+    for module, package in REQUIRED_PACKAGES.items():
         try:
             __import__(module)
         except Exception:
-            missing.append(module)
+            if module in PROTECTED_MODULES:
+                log(f"module {module} not importable but protected; trusting Colab's install")
+            else:
+                missing.append(package)
     return missing
 
 
@@ -116,7 +132,8 @@ def bootstrap(no_clone: bool = False) -> Path:
 
     Uses Colab's pre-installed Python environment (which already ships JAX,
     NumPy, SciPy, Matplotlib, etc.). Only missing packages are installed via
-    pip, so we do not disturb Colab's CUDA/JAX setup.
+    pip, by name, and never ``jax``/``jaxlib`` — so we do not disturb Colab's
+    CUDA/JAX setup.
 
     Returns the repository root.
     """
@@ -148,13 +165,13 @@ def bootstrap(no_clone: bool = False) -> Path:
         if last_error is not None:
             raise last_error
 
-    # Install only missing runtime dependencies into the active environment.
-    missing = _missing_modules()
+    # Install only the missing runtime packages into the active environment, by
+    # name, so pip does not try to reconcile (downgrade) Colab's working jax.
+    missing = _missing_packages()
     if missing:
         log(f"Installing missing packages (modules not importable): {missing}")
         run([
-            sys.executable, "-m", "pip", "install",
-            "-r", str(REPO_DIR / "rbsqmc" / "requirements.txt"),
+            sys.executable, "-m", "pip", "install", *missing,
         ])
     else:
         log("All required modules already importable; skipping pip install")
@@ -200,6 +217,7 @@ def parser() -> argparse.ArgumentParser:
         description="Colab GPU bootstrap for the rbsqmc model_unbiased optimization"
     )
     p.add_argument("--config", help="Optional config JSON override")
+    p.add_argument("--output-dir", help="Override the config output_dir (repo-relative remote path)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--no-clone", action="store_true",
                    help="Skip git clone; use the repo already uploaded to /content/rbsqmc")
@@ -228,12 +246,24 @@ def main(argv=None) -> int:
         "assert jax.default_backend() == 'gpu', 'Colab GPU is not active'",
     ], cwd=repo_root)
 
+    # The optimization child process reloads its config from RBSQMC_CONFIG. If
+    # --output-dir was given (per-run timestamped dir), write a resolved config
+    # on the VM (so the child writes outputs there) and point RBSQMC_CONFIG at it.
+    if args.output_dir:
+        config["output_dir"] = args.output_dir
+        resolved_path = repo_root / args.output_dir / "resolved_run_config.json"
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_path.write_text(json.dumps(config, indent=2))
+        log(f"Wrote resolved config to {resolved_path}")
+        config_path = resolved_path
+    else:
+        config_path = Path(args.config) if args.config else repo_root / "rbsqmc/scripts/config/model_unbiased_gpu_config.json"
+        if not config_path.is_absolute():
+            config_path = repo_root / "rbsqmc/scripts/config" / config_path
+
     log(f"output_dir={config['output_dir']}")
     log(f"Writing remote outputs to {repo_root / config['output_dir']}")
 
-    config_path = Path(args.config) if args.config else repo_root / "rbsqmc/scripts/config/model_unbiased_gpu_config.json"
-    if not config_path.is_absolute():
-        config_path = repo_root / "rbsqmc/scripts/config" / config_path
     os.environ["RBSQMC_CONFIG"] = str(config_path)
     os.environ.setdefault("RBSQMC_PLATFORM", "cuda")
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
