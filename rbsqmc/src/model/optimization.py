@@ -253,7 +253,13 @@ def logmarginal_maximize(
         # not finite (GPU float32 instability), keeping the last valid params.
         # best_params is only updated while logz is finite, so it still holds
         # the best finite parameters seen so far.
-        if not (jnp.isfinite(loss) and jnp.all(jnp.isfinite(grads))):
+        # `grads` is a RawEMParams pytree (NamedTuple), so check finiteness
+        # across its leaves rather than passing the whole pytree to jnp.isfinite
+        # (which raises TypeError for non-ndarray arguments).
+        grads_finite = jax.tree_util.tree_all(
+            jax.tree_util.tree_map(jnp.all, jax.tree_util.tree_map(jnp.isfinite, grads))
+        )
+        if not (jnp.isfinite(loss) and grads_finite):
             elapsed = _time.perf_counter() - total_start
             print(
                 f"[epoch {epoch:4d}] non-finite loss/gradient detected "
