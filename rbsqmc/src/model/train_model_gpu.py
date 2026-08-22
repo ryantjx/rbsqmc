@@ -46,6 +46,7 @@ DEFAULT_CONFIG = {
     "n_reps": 20,
     "include_friendly": False,
     "teams": "worldcup2026",
+    "download": False,
     "output_dir": None,
 }
 
@@ -65,8 +66,14 @@ def load_config(config_path: str | None = None) -> dict:
     return cfg
 
 
-def prepare_data(cfg: dict):
-    """Resolve teams, load train/test/prediction splits, and build init params."""
+def prepare_data(cfg: dict, download: bool = False):
+    """Resolve teams, load train/test/prediction splits, and build init params.
+
+    Args:
+        download: if True, pull the results CSV from the network instead of
+            reading the local ``results.parquet`` cache (required on a fresh
+            clone such as the Colab VM, where the parquet cache is absent).
+    """
     teams_only = resolve_teams(cfg)
     (train_df, test_df, prediction_df), (
         train_model_inputs,
@@ -79,6 +86,7 @@ def prepare_data(cfg: dict):
         max_goals=cfg["max_goals"],
         include_friendly=cfg["include_friendly"],
         teams_only=teams_only,
+        download=download,
     )
     print("Extracted training data:")
     print(f"  Training data: {len(train_df)} matches. Training data from {train_df['date'].min().date()} to {train_df['date'].max().date()}")
@@ -109,7 +117,7 @@ def run_optimize(cfg: dict, output_dir: str):
         train_df, test_df, prediction_df,
         train_model_inputs, test_model_inputs, prediction_model_inputs,
         team_id_to_name, params,
-    ) = prepare_data(cfg)
+    ) = prepare_data(cfg, download=cfg.get("download", False))
 
     # Baseline train logZ with the initial params (for improvement comparison).
     key, baseline_key = jax.random.split(key, 2)

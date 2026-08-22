@@ -239,6 +239,11 @@ def main(argv=None) -> int:
     py = resolve_python(repo_root)
     log(f"Using Python interpreter: {py}")
 
+    # On Colab the repo is a fresh clone, so the local results.parquet cache is
+    # absent. Force data download for the optimize phase.
+    if is_colab():
+        config["download"] = True
+
     # Verify GPU using the selected Python.
     run([
         py, "-c",
