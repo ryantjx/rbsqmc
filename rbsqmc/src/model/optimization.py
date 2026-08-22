@@ -19,7 +19,7 @@ from rbsqmc.src.utils.helpers import (
     resolve_teams,
     log_inverse_wishart_kernel,
 )
-from rbsqmc.src.data.data import get_results, WORLDCUP_2026_TEAMS
+from rbsqmc.src.data.data import get_results, get_training_data, WORLDCUP_2026_TEAMS
 from rbsqmc.src.model.model import init_sample, propagate_sample, _log_potential, compute_gamma_trajectory, generate_rbpf_trajectory
 
 @partial(jax.jit, static_argnames=("n_particles", "max_goals"))
@@ -159,7 +159,8 @@ def loss_and_grad_raw(
 
 def logmarginal_maximize(
     key: jax.Array,
-    model_inputs: FootballResults,
+    train_model_inputs: FootballResults,
+    test_model_inputs: FootballResults,
     params: EMParams,
     n_particles: int,
     max_goals: int,
@@ -179,7 +180,13 @@ def logmarginal_maximize(
     ``run_filter_unbiased``. The learning rate is cosine-annealed from
     ``learning_rate`` to 0 over ``n_epochs``.
 
+    The **held-out** test split is scored each epoch by running the forward
+    filter (no gradient) with the **current** Adam-updated parameters,
+    recording ``test_logz_history``. This lets you monitor generalization on
+    data that never influences the gradient updates.
+
     Args:
+        test_model_inputs: held-out ``FootballResults`` (test split).
         gamma_0_prior: optional inverse-Wishart scale for a ``gamma_0`` prior.
             If None, defaults to the initial ``params.gamma_0`` (shrinkage
             toward the starting value).
@@ -187,9 +194,12 @@ def logmarginal_maximize(
         gamma_prior_strength: multiplicative strength of the prior term.
 
     Returns:
-        (best_params, history) where ``best_params`` is the decoded ``EMParams``
-        achieving the lowest loss over training, and ``history`` is the
-        (regularized) negative loss per epoch.
+        (best_params, history, test_history, grad_norm_history) where
+        ``best_params`` is the decoded ``EMParams`` achieving the lowest
+        training loss, ``history`` is the (regularized) negative training loss
+        per epoch, ``test_history`` is the forward-filter test logZ per epoch,
+        and ``grad_norm_history`` is the global gradient norm per epoch
+        (convergence / instability diagnostic).
     """
     fixed_mean_0 = params.mean_0
     raw_params = encode_EM_params(params)
@@ -210,6 +220,9 @@ def logmarginal_maximize(
 
     import time as _time
     logz_history = []
+    test_logz_history = []
+    grad_norm_history = []
+    test_logz = float("nan")  # last held-out test logZ
     best_logz = -jnp.inf
     best_params = params
     epoch_times = []  # seconds per epoch, for ETA estimation
@@ -222,7 +235,7 @@ def logmarginal_maximize(
 
         loss, grads = loss_and_grad_raw(
             keys=keys,
-            model_inputs=model_inputs,
+            model_inputs=train_model_inputs,
             raw_params=raw_params,
             fixed_mean_0=fixed_mean_0,
             n_particles=n_particles,
@@ -234,6 +247,7 @@ def logmarginal_maximize(
         loss = float(loss)
         logz = -loss
         logz_history.append(logz)
+        grad_norm_history.append(float(optax.global_norm(grads)))
 
         if logz > best_logz:
             best_logz = logz
@@ -244,6 +258,22 @@ def logmarginal_maximize(
         # Apply updates to raw_params (unconstrained space)
         raw_params = optax.apply_updates(raw_params, updates)
 
+        # --- held-out test logZ (forward filter, no gradient) ---
+        # Score the test split with the *current* Adam-updated params, so each
+        # entry reflects the exact parameter state at that epoch.
+        key, test_key = jax.random.split(key)
+        current_params = decode_EM_params(raw_params, fixed_mean_0=fixed_mean_0)
+        test_logz = float(
+            run_filter_unbiased(
+                key=test_key,
+                model_inputs=test_model_inputs,
+                params=current_params,
+                n_particles=n_particles,
+                max_goals=max_goals,
+            )[0].log_normalizing_constant[-1]
+        )
+        test_logz_history.append(test_logz)
+
         epoch_secs = _time.perf_counter() - epoch_start
         epoch_times.append(epoch_secs)
 
@@ -251,9 +281,11 @@ def logmarginal_maximize(
             elapsed = _time.perf_counter() - total_start
             avg_sec = sum(epoch_times) / len(epoch_times)
             remaining = avg_sec * (n_epochs - (epoch + 1))
+            test_str = f"  test logZ = {test_logz:.4f}" if test_logz_history else ""
             print(
-                f"[epoch {epoch:4d}] logZ = {logz:.4f}  (best {best_logz:.4f})  "
-                f"[{epoch_secs:6.1f}s this epoch, {elapsed:6.1f}s elapsed, "
+                f"[epoch {epoch:4d}] logZ = {logz:.4f}  (best {best_logz:.4f})"
+                f"{test_str}"
+                f"  [{epoch_secs:6.1f}s this epoch, {elapsed:6.1f}s elapsed, "
                 f"ETA {remaining:6.1f}s]",
                 flush=True,
             )
@@ -261,22 +293,28 @@ def logmarginal_maximize(
     total_sec = _time.perf_counter() - total_start
     print(f"[optimization] finished {n_epochs} epochs in {total_sec:.1f}s "
           f"(avg {total_sec / max(n_epochs, 1):.1f}s/epoch)", flush=True)
-    return best_params, jnp.asarray(logz_history)
+    return (
+        best_params,
+        jnp.asarray(logz_history),
+        jnp.asarray(test_logz_history),
+        jnp.asarray(grad_norm_history),
+    )
 
 def main():
     date_text = datetime.now().strftime("gd_%Y%m%d_%H%M%S")
-    output_dir = f"rbpf/outputs/{date_text}/"
+    output_dir = f"rbsqmc/outputs/optimization/{date_text}/"
 
     cfg = {
         "start_date": "1900-01-01",
+        "split_date": "2025-01-01",  # matches on/before are train, after are test
         "end_date": "2026-01-01",
-        "n_particles": 50,          # N
+        "n_particles": 20,          # N (reduced for a quick validation run)
         "max_goals": 8,               # MAX_GOALS
         "seed": 0,                    # PRNG seed
         # optimization
-        "n_epochs": 200,
+        "n_epochs": 10,               # reduced for a quick validation run
         "learning_rate": 1e-3,
-        "n_reps": 10,
+        "n_reps": 5,
         # data / output
         "include_friendly": False,
         "teams": "worldcup2026",
@@ -284,16 +322,33 @@ def main():
     }
     key = jax.random.PRNGKey(cfg["seed"])
     teams_only = resolve_teams(cfg)
-    data, model_inputs, team_id_to_name = get_results(
-        start_date=cfg["start_date"],
-        end_date=cfg["end_date"],
-        max_goals=cfg["max_goals"],
-        include_friendly=cfg["include_friendly"],
-        teams_only=teams_only,
-    )
-    num_teams = len(team_id_to_name)
-    print(f"Extracted data from {cfg['start_date']} to {cfg['end_date']}, with {num_teams} teams and {len(data)} dates.")
-    print("Number of teams:", num_teams)
+
+    # Full dataset (used for baseline/final filtering and plotting).
+    # data, model_inputs, team_id_to_name = get_results(
+    #     start_date=cfg["start_date"],
+    #     end_date=cfg["end_date"],
+    #     max_goals=cfg["max_goals"],
+    #     include_friendly=cfg["include_friendly"],
+    #     teams_only=teams_only,
+    # )
+    # num_teams = len(team_id_to_name)
+    # print(f"Extracted data from {cfg['start_date']} to {cfg['end_date']}, with {num_teams} teams and {len(data)} dates.")
+    # print("Number of teams:", num_teams)
+
+    # Train/test split: train = on/before split_date, test = after.
+    # Prediction split is pushed beyond end_date so it is empty here.
+    (train_df, test_df, _pred_df), (train_inputs, test_inputs, _pred_inputs), team_id_to_name = \
+        get_training_data(
+            train_start_date=cfg["start_date"],
+            test_start_date=cfg["split_date"],
+            prediction_start_date=cfg["end_date"],
+            prediction_end_date=None,
+            max_goals=cfg["max_goals"],
+            include_friendly=cfg["include_friendly"],
+            teams_only=teams_only,
+        )
+    print(f"Train: {len(train_df)} dates (<= {cfg['split_date']}); "
+          f"Test: {len(test_df)} dates (from {cfg['split_date']}).")
 
     params = default_init_params(num_teams=num_teams, team_id_to_name=team_id_to_name)
 
@@ -311,10 +366,11 @@ def main():
 
     ############# LOG MARGINALIZATION OPTIMIZATION ################
     key, opt_key = jax.random.split(key, 2)
-    best_params, logz_history = logmarginal_maximize(
+    best_params, logz_history, test_logz_history = logmarginal_maximize(
         key=opt_key,
+        train_model_inputs=train_inputs,       # train on the train split
+        test_model_inputs=test_inputs,   # score the held-out test split each epoch
         params=params,
-        model_inputs=model_inputs,
         n_particles=cfg["n_particles"],
         max_goals=cfg["max_goals"],
         n_epochs=cfg["n_epochs"],
@@ -327,6 +383,7 @@ def main():
 
     ############## FILTER WITH BEST PARAMETERS ################
     key, final_filter_key = jax.random.split(key, 2)
+
     final_states, final_model_inputs_rbpf = run_filter_unbiased(
         key=final_filter_key,
         model_inputs=model_inputs,
@@ -357,5 +414,6 @@ def main():
         save_path=os.path.join(cfg["output_dir"], "optimization_logZ_curve.png"),
     )
     print(f"Smoothing Optimization completed. Saved results to {cfg['output_dir']}")
+
 if __name__ == "__main__":
     main()

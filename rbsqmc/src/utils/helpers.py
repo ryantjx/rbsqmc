@@ -750,3 +750,107 @@ def log_inverse_wishart_kernel(
 def _ensure_symmetric(matrix: jnp.ndarray) -> jnp.ndarray:
     """Ensure that a matrix is symmetric."""
     return 0.5 * (matrix + matrix.T)
+
+
+# ---------------------------------------------------------------------------
+# Per-match prediction records (JSON) + win/draw/lose percentages
+# ---------------------------------------------------------------------------
+def build_match_predictions(
+    all_grids,            # (P, M, G, G) from run_sequential_predict
+    all_logp_actual,      # (P, M)
+    prediction_inputs: FootballResults,
+    team_id_to_name: dict[int, str],
+    max_goals: int,
+) -> list[dict]:
+    """Convert the raw prediction grids into per-match dicts.
+
+    Each dict matches the schema consumed by ``plot_all_predictions`` and adds
+    the win/draw/lose percentages. One dict per *valid* (non-padded) match.
+    """
+    grids = np.asarray(all_grids)                 # (P, M, G, G)
+    logp = np.asarray(all_logp_actual)            # (P, M)
+    home_ids = np.asarray(prediction_inputs.matches.home_id)    # (P, M)
+    away_ids = np.asarray(prediction_inputs.matches.away_id)
+    home_sc = np.asarray(prediction_inputs.matches.home_score)
+    away_sc = np.asarray(prediction_inputs.matches.away_score)
+    valid = np.asarray(prediction_inputs.match_mask).astype(bool)
+    dates = np.asarray(prediction_inputs.date)    # (P,) int days-since-epoch
+
+    G = max_goals + 1
+    i_idx = np.arange(G)[:, None]
+    j_idx = np.arange(G)[None, :]
+
+    predictions: list[dict] = []
+    P = grids.shape[0]
+    for p in range(P):
+        date_str = str(np.datetime64(int(dates[p]), "D"))
+        for m in range(grids.shape[1]):
+            if not valid[p, m]:
+                continue
+            grid = grids[p, m]                    # (G, G) normalized
+            h = int(home_ids[p, m])
+            a = int(away_ids[p, m])
+            yh = int(home_sc[p, m])
+            ya = int(away_sc[p, m])
+
+            # win / draw / lose percentages (home team perspective)
+            prob_home = float(grid[i_idx > j_idx].sum())
+            prob_draw = float(grid[i_idx == j_idx].sum())
+            prob_away = float(grid[i_idx < j_idx].sum())
+
+            # most likely scoreline
+            flat = int(np.argmax(grid))
+            pred_h, pred_a = flat // G, flat % G
+
+            score_probabilities = [
+                {"home": int(i), "away": int(j), "probability": float(grid[i, j])}
+                for i in range(G) for j in range(G)
+            ]
+
+            predictions.append({
+                "date": date_str,
+                "home": team_id_to_name.get(h, str(h)),
+                "away": team_id_to_name.get(a, str(a)),
+                "actual_home_score": yh,
+                "actual_away_score": ya,
+                "predicted_home_score": int(pred_h),
+                "predicted_away_score": int(pred_a),
+                "log_likelihood": float(logp[p, m]),
+                "prob_home_win": prob_home,
+                "prob_draw": prob_draw,
+                "prob_away_win": prob_away,
+                "score_probabilities": score_probabilities,
+            })
+    return predictions
+
+
+def save_match_predictions(
+    predictions: list[dict],
+    save_dir: str,
+    max_goals: int | None = None,
+) -> None:
+    """Write one JSON file per match plus a combined ``predictions.json``.
+
+    Per-match files are named ``<home>_vs_<away>_<date>.json`` so they line up
+    with the per-match PNGs produced by ``plot_all_predictions``.
+
+    If ``max_goals`` is given, also render the per-match outcome + score-heatmap
+    plots into ``<save_dir>/prediction_plots/``.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    # for pred in predictions:
+    #     fname = f"{pred['home']}_vs_{pred['away']}_{pred['date']}.json".replace("/", "-")
+    #     with open(os.path.join(save_dir, fname), "w") as f:
+    #         json.dump(pred, f, indent=2)
+    with open(os.path.join(save_dir, "predictions.json"), "w") as f:
+        json.dump({"predictions": predictions}, f, indent=2)
+    print(f"[predict] Saved {len(predictions)} match predictions to {os.path.abspath(save_dir)}")
+
+    if max_goals is not None:
+        from rbsqmc.src.utils.graphic import plot_all_predictions
+        plot_dir = os.path.join(save_dir, "prediction_plots")
+        plot_all_predictions(
+            {"predictions": predictions},
+            max_goals=max_goals,
+            save_path=plot_dir,
+        )

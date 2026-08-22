@@ -747,6 +747,159 @@ def plot_log_marginal_likelihood_curve(
     return fig, ax
 
 
+def plot_logmarginal_history_train_test(
+    train_logz_history,
+    test_logz_history,
+    train_match_count=None,
+    test_match_count=None,
+    save_path=os.path.join(OUTPUT_DIR, "logmarginal_history_train_test.png"),
+):
+    """Plot train and test logZ histories vs epoch on twin axes.
+
+    ``logmarginal_maximize`` returns ``(best_params, train_logz_history,
+    test_logz_history)``; this function plots both per-epoch sequences so the
+    training logZ (optimized) and the held-out test logZ (forward filter only)
+    can be compared directly.
+
+    The train and test logZ live on very different scales (the train logZ
+    accumulates over many more matches), so they are drawn on **twin axes**:
+    the train logZ uses the left axis and the test logZ uses the right axis.
+    This keeps both curves readable without either being squashed flat. If the
+    match counts are supplied they are annotated in the legend.
+
+    Args:
+        train_logz_history: array/list of per-epoch train logZ (length =
+            n_epochs).
+        test_logz_history: array/list of per-epoch held-out test logZ (same
+            length as ``train_logz_history``).
+        train_match_count: optional number of training matches, annotated on
+            the train label.
+        test_match_count: optional number of test matches, annotated on the
+            test label.
+        save_path: if given, save the figure to this path.
+
+    Returns:
+        ``(figure, (train_axis, test_axis))``.
+    """
+    train_logz = np.asarray(train_logz_history).reshape(-1)
+    test_logz = np.asarray(test_logz_history).reshape(-1)
+    epochs = np.arange(train_logz.size)
+
+    train_label = "train logZ"
+    test_label = "test logZ"
+    if train_match_count is not None:
+        train_label += f" ({int(train_match_count)} matches)"
+    if test_match_count is not None:
+        test_label += f" ({int(test_match_count)} matches)"
+
+    fig, ax_train = plt.subplots(figsize=(11, 6))
+    ax_train.plot(epochs, train_logz, marker="o", linewidth=1.8,
+                  color="steelblue", label=train_label)
+    ax_train.set_xlabel("Epoch")
+    ax_train.set_ylabel("Train Log Marginal Likelihood (logZ)", color="steelblue")
+    ax_train.tick_params(axis="y", labelcolor="steelblue")
+    ax_train.grid(True, alpha=0.3)
+
+    # Twin axis for the test logZ (different scale -> right axis).
+    ax_test = ax_train.twinx()
+    ax_test.plot(epochs, test_logz, marker="s", linewidth=1.8,
+                 color="darkred", label=test_label)
+    ax_test.set_ylabel("Test Log Marginal Likelihood (logZ)", color="darkred")
+    ax_test.tick_params(axis="y", labelcolor="darkred")
+
+    # Combine legends from both axes.
+    lines1, labels1 = ax_train.get_legend_handles_labels()
+    lines2, labels2 = ax_test.get_legend_handles_labels()
+    ax_train.legend(lines1 + lines2, labels1 + labels2, loc="best")
+
+    ax_train.set_title("Train vs Test Log Marginal Likelihood per Epoch (twin axes)")
+
+    # Limit x-tick density when there are many epochs.
+    from matplotlib.ticker import MaxNLocator
+    ax_train.xaxis.set_major_locator(MaxNLocator(nbins=10, integer=True))
+    ax_train.tick_params(axis="x", rotation=45)
+
+    if save_path:
+        directory = os.path.dirname(save_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+
+        # Persist the raw values alongside the plot.
+        data_path = os.path.splitext(save_path)[0] + ".json"
+        with open(data_path, "w") as f:
+            json.dump(
+                {
+                    "epoch": epochs.astype(int).tolist(),
+                    "train_logz": train_logz.astype(float).tolist(),
+                    "test_logz": test_logz.astype(float).tolist(),
+                    "train_match_count": train_match_count,
+                    "test_match_count": test_match_count,
+                },
+                f,
+                indent=2,
+            )
+        print(f"Saved curve data to {os.path.abspath(data_path)}")
+
+    return fig, (ax_train, ax_test)
+
+
+def plot_gradient_norm_curve(
+    grad_norm_history,
+    save_path=os.path.join(OUTPUT_DIR, "gradient_norm_curve.png"),
+):
+    """Plot the per-epoch global gradient norm (convergence / instability check).
+
+    ``logmarginal_maximize`` returns the gradient norm history as its 4th value;
+    this plots it against epoch. A smoothly decaying norm indicates convergence;
+    spikes or a rising trend indicate instability (e.g. learning rate too high).
+
+    Args:
+        grad_norm_history: array/list of per-epoch global gradient norms
+            (length = n_epochs).
+        save_path: if given, save the figure to this path.
+
+    Returns:
+        ``(figure, axis)``.
+    """
+    norms = np.asarray(grad_norm_history).reshape(-1)
+    epochs = np.arange(norms.size)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(epochs, norms, marker="o", linewidth=1.8, color="darkslateblue")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Global Gradient Norm")
+    ax.set_title("Gradient Norm per Epoch")
+    ax.grid(True, alpha=0.3)
+
+    from matplotlib.ticker import MaxNLocator
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=10, integer=True))
+    ax.tick_params(axis="x", rotation=45)
+
+    if save_path:
+        directory = os.path.dirname(save_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+
+        # Persist the raw values alongside the plot.
+        data_path = os.path.splitext(save_path)[0] + ".json"
+        with open(data_path, "w") as f:
+            json.dump(
+                {
+                    "epoch": epochs.astype(int).tolist(),
+                    "gradient_norm": norms.astype(float).tolist(),
+                },
+                f,
+                indent=2,
+            )
+        print(f"Saved curve data to {os.path.abspath(data_path)}")
+
+    return fig, ax
+
+
 def plot_em_dual_curve(
     mstep_history,
     save_path=os.path.join(OUTPUT_DIR, "em_log_likelihood_curve.png"),
@@ -1613,11 +1766,11 @@ def plot_prediction_score_heatmap(
 
     ``predictions`` is the list of per-match prediction dicts produced by
     ``predict.py``. ``save_path`` is a directory; one PNG is written per match
-    named ``<home>_vs_<away>_<date>.png``.
+    named ``<date>_<home>_vs_<away>.png``.
     """
     os.makedirs(save_path, exist_ok=True)
     for pred in predictions:
-        fname = f"{pred['home']}_vs_{pred['away']}_{pred['date']}.png".replace("/", "-")
+        fname = f"{pred['date']}_{pred['home']}_vs_{pred['away']}.png".replace("/", "-")
         plot_prediction_match(
             pred,
             max_goals=max_goals,

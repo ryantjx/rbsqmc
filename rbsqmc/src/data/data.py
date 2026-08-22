@@ -4,6 +4,8 @@ import pandas as pd
 from rbsqmc.src.utils.type import Matches, FootballResults
 import numpy as np
 import jax.numpy as jnp
+import jax
+from datetime import datetime
 
 RAW_URL="https://raw.githubusercontent.com/martj42/international_results/master/results.csv"
 _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")  # rbpf/data/
@@ -175,6 +177,77 @@ def generate_results_jax(matches: pd.DataFrame) -> tuple[pd.DataFrame, FootballR
     )
     return df, results
 
+def concat_football_results(*splits: FootballResults) -> FootballResults:
+    """Concatenate football result splits along the time axis.
+
+    Each split is a ``FootballResults`` with time-varying arrays shaped ``(T_i, ...)``
+    (matches / match_mask are ``(T_i, M_i)`` where ``M_i`` can differ between
+    splits). This helper:
+
+    - Pads ``matches`` / ``match_mask`` to a shared ``M`` (max over splits) so the
+      tensors can be stacked.
+    - Fixes the ``timestamp_prev`` boundary: each split was built with its first
+      ``timestamp_prev`` reset to 0, but a continuous forward filter must carry the
+      previous split's final timestamp across the boundary. Here we recompute it so
+      every row's ``timestamp_prev`` equals the timestamp of the prior row.
+
+    Args:
+        *splits: two or more ``FootballResults`` to concatenate in order.
+
+    Returns:
+        A single ``FootballResults`` spanning the full time range, with team
+        coordinate padding to the maximum per-day match count.
+    """
+    if len(splits) == 1:
+        return splits[0]
+
+    # Common number of matches per day across all splits.
+    max_m = max(int(s.matches.home_score.shape[1]) for s in splits)
+
+    def _pad_matches(
+        matches: Matches, m: int, mask: jax.Array
+    ) -> tuple[Matches, jax.Array]:
+        n = matches.home_score.shape[0]
+        if n == 0:
+            return matches, mask
+        pad_width = ((0, 0), (0, max_m - m))
+        return (
+            Matches(
+                home_id=jnp.pad(matches.home_id, pad_width),
+                away_id=jnp.pad(matches.away_id, pad_width),
+                home_score=jnp.pad(matches.home_score, pad_width),
+                away_score=jnp.pad(matches.away_score, pad_width),
+            ),
+            jnp.pad(mask, pad_width),
+        )
+
+    dates, timestamps, masks = [], [], []
+    matches_fields = {"home_id": [], "away_id": [], "home_score": [], "away_score": []}
+
+    for s in splits:
+        m = s.matches.home_score.shape[1]
+        padded_matches, padded_mask = _pad_matches(s.matches, m, s.match_mask)
+        dates.append(s.date)
+        timestamps.append(s.timestamp)
+        masks.append(padded_mask)
+        for key in matches_fields:
+            matches_fields[key].append(getattr(padded_matches, key))
+
+    date = jnp.concatenate(dates)
+    timestamp = jnp.concatenate(timestamps)
+    # Fix the timestamp_prev boundary: previous row's timestamp (0 for the
+    # very first row of the combined sequence).
+    timestamp_prev = jnp.concatenate([jnp.array([0]), timestamp[:-1]])
+
+    return FootballResults(
+        date=date,
+        timestamp=timestamp,
+        timestamp_prev=timestamp_prev,
+        matches=Matches(**{k: jnp.concatenate(v) for k, v in matches_fields.items()}),
+        match_mask=jnp.concatenate(masks),
+    )
+
+
 def get_results(
     start_date: str = "1872-11-30",  # date of first game
     end_date: str | None = None,
@@ -229,6 +302,7 @@ def get_training_data(
     train_start_date: str,  # date of first game
     test_start_date: str,
     prediction_start_date: str,
+    prediction_end_date: str | None = None,
     max_goals: int = 8,
     include_friendly: bool = False,
     teams_only: set[str] | None = None,
@@ -236,17 +310,46 @@ def get_training_data(
 ):
     """
     Train, Test, Prediction data split.
+
+    Outputs:
+        - (train_df, test_df, prediction_df): tuple of pd.DataFrames for each split
+        - (train_results, test_results, prediction_results): tuple of FootballResults named tuples for each split
+        - team_id_to_name: dict mapping team_id to team_name
     """
     if download:
         data = pd.read_csv(RAW_URL, date_format="%Y-%m-%d")
     else:
         data = pd.read_parquet(PARQUET_PATH)
-    train_start_date, test_start_date, prediction_start_date = map(
+    train_start_datetime, test_start_datetime, prediction_start_datetime = map(
         pd.to_datetime, [train_start_date, test_start_date, prediction_start_date]
     )
+    prediction_end_datetime = pd.to_datetime(prediction_end_date) if prediction_end_date else None
+
     data["date"] = pd.to_datetime(data["date"])
     data.sort_values(by="date", inplace=True)
 
+    data = filter_teams(
+        data=data,
+        start_datetime=train_start_datetime,
+        end_datetime=prediction_end_datetime,
+        max_goals=max_goals,
+        include_friendly=include_friendly,
+        teams_only=teams_only,
+    )
+    _, team_id_to_name = generate_team_id_mapping(data)
+    data["timestamp"] = (data["date"] - train_start_datetime).dt.days
+
+    # Split data into train, test, and prediction sets
+    train_data = data[(data["date"] >= train_start_datetime) & (data["date"] < test_start_datetime)]
+    test_data = data[(data["date"] >= test_start_datetime) & (data["date"] < prediction_start_datetime)]
+    prediction_data = data[(data["date"] >= prediction_start_datetime) & (data["date"] <= prediction_end_datetime if prediction_end_datetime is not None else True)]
+
+    # Generate JAX arrays for each split
+    train_df, train_results = generate_results_jax(train_data)
+    test_df, test_results = generate_results_jax(test_data)
+    prediction_df, prediction_results = generate_results_jax(prediction_data)
+
+    return (train_df, test_df, prediction_df), (train_results, test_results, prediction_results), team_id_to_name
 
 def main():
     df, results_jax, team_id_to_name = get_results(
