@@ -503,6 +503,81 @@ def plot_correlation_topn_bar(
     plt.close(fig)
 
 
+def prior_correlation_topn(params, team_id_to_name, top_n=10, save_path=None):
+    """Two-panel bar chart of the top-N positive and negative prior correlations.
+
+    Uses the learned *prior* covariance ``gamma_0`` (from ``params``), which
+    carries the between-team correlation structure. This differs from
+    ``plot_correlation_topn_bar``, which uses the final-state ``gamma_T`` that is
+    near-zero after Kalman conditioning.
+
+    Two panels side-by-side:
+      - left : top ``top_n`` most positively correlated pairs (blue)
+      - right: top ``top_n`` most negatively correlated pairs (red)
+
+    Args:
+        params: EMParams with gamma_0 shape (M, M).
+        team_id_to_name: dict mapping team_id -> team name.
+        top_n: number of pairs to show for each of the positive and negative tails.
+        save_path: if given, save figure to this path.
+    """
+    gamma_0 = np.asarray(params.gamma_0)
+    std = np.sqrt(np.diag(gamma_0))
+    std_safe = np.where(std > 1e-10, std, 1.0)
+    corr = gamma_0 / np.outer(std_safe, std_safe)
+    corr = np.clip(corr, -1, 1)
+
+    num_teams = len(team_id_to_name)
+    iu = np.triu_indices(num_teams, k=1)
+    vals = corr[iu]
+    pairs = [(int(i), int(j)) for i, j in zip(*iu)]
+
+    order = np.argsort(vals)[::-1]
+    pos_idx = order[vals[order] > 1e-8][:top_n]
+    neg_idx = order[vals[order] < -1e-8][:top_n]
+
+    def label_for(i, j):
+        return f"{team_id_to_name[i]} - {team_id_to_name[j]}"
+
+    # Most extreme at the top.
+    pos_labels = [label_for(*pairs[k]) for k in pos_idx[::-1]]
+    pos_values = [vals[k] for k in pos_idx[::-1]]
+    neg_labels = [label_for(*pairs[k]) for k in neg_idx[::-1]]
+    neg_values = [vals[k] for k in neg_idx[::-1]]
+
+    fig, (ax_left, ax_right) = plt.subplots(
+        1, 2, figsize=(16, max(6, 0.5 * max(len(pos_idx), len(neg_idx))))
+    )
+
+    if neg_values:
+        ax_right.barh(neg_labels, neg_values, color="red")
+    ax_right.set_xlim(-1, 0)
+    ax_right.axvline(0, color="black", linewidth=1)
+    ax_right.set_xlabel("Correlation")
+    ax_right.set_title(f"Top {len(neg_idx)} Negative Correlations (Prior gamma_0)")
+    ax_right.grid(True, axis="x", alpha=0.3)
+
+    if pos_values:
+        ax_left.barh(pos_labels, pos_values, color="blue")
+    ax_left.set_xlim(0, 1)
+    ax_left.axvline(0, color="black", linewidth=1)
+    ax_left.set_xlabel("Correlation")
+    ax_left.set_title(f"Top {len(pos_idx)} Positive Correlations (Prior gamma_0)")
+    ax_left.grid(True, axis="x", alpha=0.3)
+
+    if not pos_values:
+        ax_left.set_title("No significant positive correlations found")
+    if not neg_values:
+        ax_right.set_title("No significant negative correlations found")
+
+    fig.tight_layout()
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Saved plot to {os.path.abspath(save_path)}")
+    plt.close(fig)
+
+
 def correlation_change(params, augmented_results):
     """Return the change in team correlation (prior -> final).
 
@@ -1351,6 +1426,9 @@ def plot_all(filtered_states, augmented_results, team_id_to_name, top_n, save_pa
         # correlation structure. Only the prior correlation matrix is plotted.
         plot_initial_correlation_matrix(params, team_id_to_name, num_teams=num_teams,
                                 save_path=os.path.join(save_path, "initial_correlation_matrix.png"))
+        # Also plot the top-N positive / negative prior-correlation pairs.
+        prior_correlation_topn(params, team_id_to_name, top_n=top_n,
+                               save_path=os.path.join(save_path, "prior_correlation_topn.png"))
         save_filter_states(filtered_states, augmented_results,
                            save_path=os.path.join(save_path, "filter_states.npz"))
 

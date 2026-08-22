@@ -249,6 +249,34 @@ def logmarginal_maximize(
         logz_history.append(logz)
         grad_norm_history.append(float(optax.global_norm(grads)))
 
+        # NaN guard: stop the run immediately if the loss or gradient norm is
+        # not finite (GPU float32 instability), keeping the last valid params.
+        # best_params is only updated while logz is finite, so it still holds
+        # the best finite parameters seen so far.
+        if not (jnp.isfinite(loss) and jnp.all(jnp.isfinite(grads))):
+            elapsed = _time.perf_counter() - total_start
+            print(
+                f"[epoch {epoch:4d}] non-finite loss/gradient detected "
+                f"(logZ = {logz}); stopping early after {epoch} epochs "
+                f"({elapsed:.1f}s elapsed). "
+                f"Best finite logZ = {best_logz:.4f}",
+                flush=True,
+            )
+            # Record a NaN for the current epoch so the history length still
+            # matches the number of epochs actually attempted.
+            test_logz_history.append(float("nan"))
+            # Keep the best finite params; skip the Adam update.
+            total_sec = _time.perf_counter() - total_start
+            print(f"[optimization] stopped early at epoch {epoch} in "
+                  f"{total_sec:.1f}s (avg {total_sec / max(epoch + 1, 1):.1f}s/epoch)",
+                  flush=True)
+            return (
+                best_params,
+                jnp.asarray(logz_history),
+                jnp.asarray(test_logz_history),
+                jnp.asarray(grad_norm_history),
+            )
+
         if logz > best_logz:
             best_logz = logz
             best_params = decode_EM_params(raw_params, fixed_mean_0=fixed_mean_0)

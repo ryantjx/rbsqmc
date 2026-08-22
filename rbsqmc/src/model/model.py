@@ -7,7 +7,12 @@ from functools import partial
 
 from rbsqmc.src.data.bivariate_poisson import loglik
 from rbsqmc.src.data.data import get_results, WORLDCUP_2026_TEAMS
-from rbsqmc.src.utils.helpers import default_init_params, generate_rbpf_trajectory, _ensure_symmetric
+from rbsqmc.src.utils.helpers import (
+    default_init_params,
+    generate_rbpf_trajectory,
+    _ensure_symmetric,
+    _scale_aware_jitter,
+)
 from rbsqmc.src.utils.type import RBPFState, RBPFFootballResults, EMParams, FootballResults
 
 # Default to CPU locally, but allow the GPU pipeline to force a device via
@@ -50,6 +55,14 @@ def compute_gamma_trajectory(
 
                 gamma_OO = gamma_current[jnp.ix_(obs_indices, obs_indices)]
                 gamma_RO = gamma_current[:, obs_indices]
+                # Scale-aware jitter so the 2x2 pinv is strictly positive-
+                # definite. Without it, GPU float32 rounding can leave gamma_OO
+                # with a tiny negative eigenvalue, making pinv / the Cholesky in
+                # the downstream sampler return NaN. The jitter is small relative
+                # to the matrix scale, so it does not perturb the Kalman gain.
+                gamma_OO = _ensure_symmetric(
+                    gamma_OO + _scale_aware_jitter(gamma_OO) * jnp.eye(2)
+                )
                 K = gamma_RO @ jnp.linalg.pinv(gamma_OO)
 
                 # Kalman update: sequentially update gamma_current for each match
@@ -59,11 +72,6 @@ def compute_gamma_trajectory(
                 obs_mask = jnp.zeros(num_teams, dtype=bool).at[obs_indices].set(True)
                 keep_mask = jnp.outer(~obs_mask, ~obs_mask)
                 gamma_updated = gamma_updated * keep_mask
-                # No jitter needed here: the unobserved block is PSD (min eig
-                # ~0.15) and the observed block is exactly 0. The full matrix
-                # is structurally PSD. Tiny negative eigenvalues (~-5e-10) on
-                # the zero eigenvalues are float32 noise that is handled by
-                # the stable Cholesky in the downstream sampler.
                 return (gamma_updated, (gamma_OO, K))
 
             # Padded (invalid) matches pass through unchanged.
@@ -148,6 +156,16 @@ def propagate_sample(
             Sigma_OO = jnp.kron(gamma_OO, B)  # (4, 4)
 
             key, subkey = jax.random.split(key)
+            # Scale-aware jitter on the 4x4 sampling covariance so the Cholesky
+            # inside `multivariate_normal` is strictly positive-definite. This
+            # guards against the rare case where `gamma_OO` is singular (a
+            # team's posterior variance was zeroed) or has tiny negative
+            # eigenvalues from GPU float32 rounding, which would make the
+            # multivariate-normal sampler return NaN. Zero-variance directions
+            # stay essentially at the mean.
+            Sigma_OO = _ensure_symmetric(
+                Sigma_OO + _scale_aware_jitter(Sigma_OO) * jnp.eye(4)
+            )
             x_O_flat = jax.random.multivariate_normal(subkey, mu_O.reshape(-1), Sigma_OO)  # (4,)
             x_O = x_O_flat.reshape(2, 2)  # (2, 2)
 

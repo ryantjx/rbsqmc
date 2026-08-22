@@ -612,6 +612,40 @@ GAMMA_CHOL_FLOOR = 1e-4
 MAX_B_LOG_RATIO = 5.0
 B_CHOL_FLOOR = 1e-4
 
+# Smallest eigenvalue floor for reconstructed / jittered covariance matrices.
+#
+# float32 epsilon is ~1e-7. If a matrix's smallest eigenvalue is near that
+# (e.g. ~1e-8, which is what `_psd_from_cholesky`'s 1e-4 *diagonal* floor on L
+# leaves after `L L^T` squares it), then `jnp.linalg.cholesky` sees a matrix
+# that is effectively singular in float32 and returns NaN. GPU XLA computes in
+# float32 by default, so it is far more likely to hit this than a CPU run with
+# higher intermediate precision. Flooring eigenvalues at 1e-4 keeps the
+# condition number <= ~1e4, which Cholesky factors robustly.
+_EIGEN_FLOOR = 1e-4
+
+
+def _scale_aware_jitter(A: jnp.ndarray) -> jnp.ndarray:
+    """A scale-aware diagonal jitter for a (near-)PSD matrix ``A``.
+
+    ``jitter = _EIGEN_FLOOR * max(1, max|diag(A)|)``. Adding ``jitter * I`` to a
+    (near-)PSD matrix makes its smallest eigenvalue >= jitter, guaranteeing a
+    condition number that ``jnp.linalg.cholesky`` / ``jnp.linalg.pinv`` can
+    factor robustly in float32. The floor is built with differentiable ops only
+    (no eigendecomposition), so it is safe to use *inside* the differentiable
+    filter path (the gradient is finite).
+
+    The jitter is **scale-aware** rather than a fixed ``1e-6``: at large team
+    counts, covariances reconstructed from ``_psd_from_cholesky`` can have
+    eigenvalues as small as ``1e-4**2 = 1e-8``, and a ``1e-6`` jitter is too
+    small to keep them positive-definite in GPU float32 (finite on CPU, NaN on
+    GPU). Because it scales with the matrix's own magnitude, it does not
+    meaningfully perturb genuinely-zero directions (the added value is tiny
+    relative to the matrix scale).
+    """
+    scale = jnp.maximum(1.0, jnp.max(jnp.abs(jnp.diag(A))))
+    return _EIGEN_FLOOR * scale
+
+
 def inverse_softplus(x):
     x = jnp.maximum(x, 1e-8)
     return x + jnp.log(-jnp.expm1(-x))
@@ -630,6 +664,11 @@ def _psd_from_cholesky(L, n):
 def _cholesky_from_psd(A, n):
     """Encode Gamma_0 into free Cholesky parameters."""
     A = 0.5 * (A + A.T)
+    # Scale-aware jitter before the Cholesky: during training on GPU float32,
+    # the decoded `gamma_0` can acquire a tiny negative eigenvalue (~-2e-8),
+    # which makes `jnp.linalg.cholesky` return NaN. Jittering to a strictly-PD
+    # matrix keeps the encode differentiable and finite (see `_scale_aware_jitter`).
+    A = A + _scale_aware_jitter(A) * jnp.eye(n)
     L = jnp.linalg.cholesky(A)
 
     diagonal = jnp.diag(L)
@@ -648,6 +687,8 @@ def _cholesky_from_psd(A, n):
 def _cholesky_from_psd_B(A, n):
     """Encode an SPD attribute covariance into free Cholesky parameters."""
     A = 0.5 * (A + A.T)
+    # Scale-aware jitter for float32 GPU stability (see `_cholesky_from_psd`).
+    A = A + _scale_aware_jitter(A) * jnp.eye(n)
     L = jnp.linalg.cholesky(A)
 
     diagonal = jnp.diag(L)

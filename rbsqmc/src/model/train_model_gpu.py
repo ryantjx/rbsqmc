@@ -191,6 +191,9 @@ def run_optimize(cfg: dict, output_dir: str):
         grad_norm_history=grad_norm_history,
         save_path=os.path.join(output_dir, "gradient_norm_curve.png"),
     )
+    # Save the run config again immediately after the run completes (mirrors
+    # train_model.py, which persists run_config.json for the completed run).
+    _write_run_config(cfg, output_dir)
     return best_params
 
 
