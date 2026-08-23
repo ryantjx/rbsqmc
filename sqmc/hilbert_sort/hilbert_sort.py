@@ -1,215 +1,313 @@
-"""
-Compute Hilbert indices and sort vectors according to their Hilbert index.
+"""JAX Hilbert indices and sorting for finite point arrays.
+
+The implementation uses a packed 62-bit Hilbert index. JAX selects an
+available accelerator by default, so CUDA/ROCm GPUs are used when installed
+and CPU is used otherwise. Double precision is enabled to make coordinate
+quantization consistent with the 62-bit integer representation.
 """
 
+from __future__ import annotations
+
+import math
 from functools import partial
 
 import jax
+
+# This must be enabled before creating arrays whose 64-bit types matter.
+jax.config.update("jax_enable_x64", True)
+
 import jax.numpy as jnp
-import numpy as np
-import math
 
-MAX_BITS = 30 # 30 bits for 32-bit compatibility on Metal (macOS GPU).
 
-def hilbert_sort(x: jnp.ndarray) -> jnp.ndarray:
-    """
-    Sort vectors according to their Hilbert curve index.
-    
-    Args:
-        x: Array of shape (N,) or (N, d) containing N vectors in R^d
-        
-    Returns:
-        Array of indices that would sort x by Hilbert curve order
-    """
-    # Handle 1D case
-    if x.ndim == 1:
-        return jnp.argsort(x, axis=0)
-    
-    d = x.shape[1]
-    
-    # Handle single dimension
-    if d == 1:
-        return jnp.argsort(x[:, 0], axis=0)
-    
-    # Standardize and map to [0, 1]
-    scaled_x = (x - jnp.mean(x, axis=0, keepdims=True)) / jnp.std(x, axis=0, keepdims=True)
-    xs = invlogit(scaled_x)
-    
-    # Scale to integers (use MAX_BITS for 32-bit compatibility on Metal)
-    maxint = math.floor(2 ** (MAX_BITS / d))
-    xint = jnp.floor(xs * maxint).astype(int)
-    
-    # Compute Hilbert index for each point
-    Hilbert_to_int_spec = lambda z: Hilbert_to_int(z, maxint)
-    hilbert_array = jax.vmap(Hilbert_to_int_spec)(xint)
-    
-    # Return sorting indices
-    return jnp.argsort(hilbert_array)
+MAX_BITS = 62
+_INDEX_DTYPE = jnp.uint64
+_FLOAT_DTYPE = jnp.float64
+
 
 @jax.jit
-def invlogit(x):
-    return 1. / (1. + jnp.exp(-x)) # maps (\infty, \infty) to (0, 1)
+def invlogit(x: jax.Array) -> jax.Array:
+    """Numerically stable logistic map from the real line to [0, 1]."""
+    return jax.nn.sigmoid(x)
+
 
 @jax.jit
-def gray_encode(bn : jnp.ndarray) -> jnp.ndarray:
-    return jnp.bitwise_xor(bn, bn // 2)
+def gray_encode(binary: jax.Array) -> jax.Array:
+    """Encode unsigned binary integers as Gray code."""
+    binary = binary.astype(_INDEX_DTYPE)
+    return binary ^ (binary >> _INDEX_DTYPE(1))
 
-@partial(jax.jit, static_argnums=(1,))
-def gray_decode(n: jnp.ndarray, max_bits : int = MAX_BITS) -> jnp.ndarray:
-    """Gray decode using parallel prefix algorithm."""
-    # Use global MAX_BITS to determine number of steps
-    num_steps = int(np.ceil(np.log2(max_bits)))
-    shifts = 2 ** jnp.arange(num_steps)  # [1, 2, 4, ...]
-    def body(carry, shift):
-        return carry ^ (carry >> shift), None
-    result, _ = jax.lax.scan(body, n, shifts)
-    return result
-
-# @jax.jit
-# def gray_decode_scan(n):
-#     shifts = jnp.array([1, 2, 4, 8, 16, 32])  # Fixed array
-#     def body(carry, shift):
-#         carry = carry ^ (carry >> shift)
-#         return carry, None
-#     result, _ = jax.lax.scan(body, n, shifts)
-#     return result
-
-# fast implementation but up to 32 bits only.
-# def gray_decode(n: int) -> int:
-#     n = n ^ (n >> 1)
-#     n = n ^ (n >> 2)
-#     n = n ^ (n >> 4)
-#     n = n ^ (n >> 8)
-#     n = n ^ (n >> 16)
-#     n = n ^ (n >> 32)  # Add for 64-bit support
-#     return n
-
-@partial(jax.jit, static_argnums=(1,))
-def transpose_bits(srcs: jnp.ndarray, nDests: int) -> jnp.ndarray:
-    """
-    Transpose bits of srcs to dests. 
-    e.g. 
-    - srcs = jnp.ndarray([3, 5]), nDests = 3
-    - [3, 5] in binary is [011, 101]
-    - [011, 101] transposed is [01, 11, 10] which is [1, 2, 3] in decimal
-
-    nDests static argument specify bits at destination.
-
-    Args:
-        srcs (jnp.ndarray): Source array of shape (N, d)
-        nDests (int): Number of destination bits
-
-    Returns:
-        jnp.ndarray: Transposed array of shape (N, nDests)
-    """
-    def inner_body(dest, inner_srcs):
-        dest = dest * 2 + inner_srcs % 2
-        return dest, inner_srcs // 2
-
-    def outer_body(outer_srcs, _):
-        dest, outer_srcs = jax.lax.scan(inner_body, 0, outer_srcs)
-        return outer_srcs, dest
-
-    _, dests = jax.lax.scan(outer_body, srcs, jnp.arange(nDests), reverse=True)
-
-    return dests
-
-@partial(jax.jit, static_argnums=(1,))
-def pack_index(chunks: jnp.ndarray, nD: int) -> jnp.ndarray:
-    p = 2 ** nD
-    def body(x, y):
-        return p * x + y, None
-    return jax.lax.scan(body, chunks[0], chunks[1:])[0]
-
-@partial(jax.jit, static_argnums=(1,))
-def unpack_coords(coords: jnp.ndarray, max_int: int) -> jnp.ndarray:
-    nChunks = int(np.ceil(np.log2(max_int)))
-    if nChunks < 1:
-        nChunks = 1
-    return transpose_bits(coords, nChunks)
 
 @jax.jit
-def gray_encode_travel(start: int, end: int, mask: int, i: int) -> int:
+def gray_decode(gray: jax.Array) -> jax.Array:
+    """Decode up to 64-bit Gray code with an unrolled parallel prefix."""
+    value = gray.astype(_INDEX_DTYPE)
+    value ^= value >> _INDEX_DTYPE(1)
+    value ^= value >> _INDEX_DTYPE(2)
+    value ^= value >> _INDEX_DTYPE(4)
+    value ^= value >> _INDEX_DTYPE(8)
+    value ^= value >> _INDEX_DTYPE(16)
+    value ^= value >> _INDEX_DTYPE(32)
+    return value
+
+
+@partial(jax.jit, static_argnames=("number_of_chunks",))
+def transpose_bits(
+    sources: jax.Array,
+    number_of_chunks: int,
+) -> jax.Array:
+    """Transpose coordinate bits into Hilbert traversal chunks.
+
+    ``sources`` contains one unsigned integer per dimension. The result has
+    ``number_of_chunks`` entries, each containing one bit from every source.
+    Coordinate zero supplies the most-significant bit of each result chunk.
+    """
+    dimension = sources.shape[0]
+    source_shifts = jnp.arange(
+        number_of_chunks - 1,
+        -1,
+        -1,
+        dtype=_INDEX_DTYPE,
+    )
+    source_bits = (
+        sources.astype(_INDEX_DTYPE)[None, :]
+        >> source_shifts[:, None]
+    ) & _INDEX_DTYPE(1)
+
+    destination_shifts = jnp.arange(
+        dimension - 1,
+        -1,
+        -1,
+        dtype=_INDEX_DTYPE,
+    )
+    destination_weights = _INDEX_DTYPE(1) << destination_shifts
+
+    return jnp.sum(
+        source_bits * destination_weights[None, :],
+        axis=-1,
+        dtype=_INDEX_DTYPE,
+    )
+
+
+@partial(jax.jit, static_argnames=("dimension",))
+def pack_index(chunks: jax.Array, dimension: int) -> jax.Array:
+    """Pack base-``2**dimension`` Hilbert chunks into one uint64 index."""
+    number_of_chunks = chunks.shape[0]
+    chunk_shifts = dimension * jnp.arange(
+        number_of_chunks - 1,
+        -1,
+        -1,
+        dtype=_INDEX_DTYPE,
+    )
+    weights = _INDEX_DTYPE(1) << chunk_shifts
+    return jnp.sum(chunks.astype(_INDEX_DTYPE) * weights, dtype=_INDEX_DTYPE)
+
+
+@partial(jax.jit, static_argnames=("max_int",))
+def unpack_coords(coords: jax.Array, max_int: int) -> jax.Array:
+    """Unpack coordinates into one traversal chunk per coordinate bit."""
+    number_of_chunks = max(1, int(math.ceil(math.log2(max_int))))
+    return transpose_bits(coords, number_of_chunks)
+
+
+@jax.jit
+def gray_encode_travel(
+    start: jax.Array,
+    end: jax.Array,
+    mask: jax.Array,
+    step: jax.Array,
+) -> jax.Array:
+    """Encode a Gray-code step after rotating it from ``start`` to ``end``."""
     travel_bit = start ^ end
-    modulus = mask + 1
-    g = gray_encode(i) * (travel_bit * 2)
-    return ((g | (g // modulus)) & mask) ^ start
+    width = jax.lax.population_count(mask)
+    rotation = (
+        jax.lax.population_count(travel_bit - _INDEX_DTYPE(1))
+        + _INDEX_DTYPE(1)
+    ) % width
+    encoded = gray_encode(step)
+    rotated = (
+        (encoded << rotation)
+        | (encoded >> (width - rotation))
+    ) & mask
+    return rotated ^ start
+
 
 @jax.jit
-def gray_decode_travel(start: int, end: int, mask: int, g: int) -> int:
+def gray_decode_travel(
+    start: jax.Array,
+    end: jax.Array,
+    mask: jax.Array,
+    encoded: jax.Array,
+) -> jax.Array:
+    """Invert :func:`gray_encode_travel`."""
     travel_bit = start ^ end
-    modulus = mask + 1
-    rg = (g ^ start) * (modulus // (travel_bit * 2))
-    return gray_decode((rg | (rg // modulus)) & mask)
+    width = jax.lax.population_count(mask)
+    rotation = (
+        jax.lax.population_count(travel_bit - _INDEX_DTYPE(1))
+        + _INDEX_DTYPE(1)
+    ) % width
+    unshifted = encoded ^ start
+    rotated = (
+        (unshifted >> rotation)
+        | (unshifted << (width - rotation))
+    ) & mask
+    return gray_decode(rotated)
+
 
 @jax.jit
-def child_start_end(parent_start: int, parent_end: int, mask: int, i: int) -> tuple[int, int]:
-    start_i = jnp.maximum(0, (i - 1) & ~1)  # Next lower even, or 0
-    end_i = jnp.minimum(mask, (i + 1) | 1)  # Next higher odd, or mask
-    child_start = gray_encode_travel(parent_start, parent_end, mask, start_i)
-    child_end = gray_encode_travel(parent_start, parent_end, mask, end_i)
+def child_start_end(
+    parent_start: jax.Array,
+    parent_end: jax.Array,
+    mask: jax.Array,
+    step: jax.Array,
+) -> tuple[jax.Array, jax.Array]:
+    """Return the oriented start and end corners for a Hilbert child."""
+    # An explicit branch avoids unsigned underflow when step is zero.
+    start_step = jnp.where(
+        step == _INDEX_DTYPE(0),
+        _INDEX_DTYPE(0),
+        (step - _INDEX_DTYPE(1)) & ~_INDEX_DTYPE(1),
+    )
+    end_step = jnp.minimum(
+        mask,
+        (step + _INDEX_DTYPE(1)) | _INDEX_DTYPE(1),
+    )
+    child_start = gray_encode_travel(
+        parent_start,
+        parent_end,
+        mask,
+        start_step,
+    )
+    child_end = gray_encode_travel(
+        parent_start,
+        parent_end,
+        mask,
+        end_step,
+    )
     return child_start, child_end
 
-@jax.jit
-def initial_start_end(nChunks: int, nD: int) -> tuple[int, int]:
-    """
-    Initialize start and end for Hilbert traversal.
-    Orients the largest cube so its start is at origin and
-    first step is along x-axis.
-    """
-    return 0, 2 ** ((-nChunks - 1) % nD)
 
-@partial(jax.jit, static_argnums=(1,))
-def Hilbert_to_int(coords: jnp.ndarray, max_int: int) -> jnp.ndarray:
-    """
-    Convert d-dimensional coordinates to 1D Hilbert index.
-    """
-    nD = coords.shape[0]
-    coord_chunks = unpack_coords(coords, max_int)
-    nChunks = coord_chunks.shape[0]
-    mask = 2 ** nD - 1
+@partial(
+    jax.jit,
+    static_argnames=("number_of_chunks", "dimension"),
+)
+def initial_start_end(
+    number_of_chunks: int,
+    dimension: int,
+) -> tuple[jax.Array, jax.Array]:
+    """Orient the largest cube from the origin along the first axis."""
+    start = _INDEX_DTYPE(0)
+    end = _INDEX_DTYPE(1) << _INDEX_DTYPE(
+        (-number_of_chunks - 1) % dimension
+    )
+    return start, end
 
-    def body(carry, coord_chunks_j):
+
+@partial(jax.jit, static_argnames=("max_int",))
+def Hilbert_to_int(coords: jax.Array, max_int: int) -> jax.Array:
+    """Convert one vector of integer coordinates to a packed Hilbert index."""
+    dimension = coords.shape[0]
+    coordinate_chunks = unpack_coords(coords, max_int)
+    number_of_chunks = coordinate_chunks.shape[0]
+    mask = (_INDEX_DTYPE(1) << _INDEX_DTYPE(dimension)) - _INDEX_DTYPE(1)
+
+    def visit_child(carry, coordinate_chunk):
         start, end = carry
-        i = gray_decode_travel(start, end, mask, coord_chunks_j)
-        start, end = child_start_end(start, end, mask, i)
-        return (start, end), i
+        step = gray_decode_travel(start, end, mask, coordinate_chunk)
+        child_orientation = child_start_end(start, end, mask, step)
+        return child_orientation, step
 
-    _, index_chunks = jax.lax.scan(body, initial_start_end(nChunks, nD), coord_chunks)
-    return pack_index(index_chunks, nD)
-
-
-def main():
-    """Test the hilbert_sort function."""
-    print("Testing hilbert_sort...")
-    
-    # Test 1: 1D case
-    print("\nTest 1: 1D case (N=10)")
-    x_1d = jnp.array([3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0, 5.0, 3.0])
-    result = hilbert_sort(x_1d)
-    print(f"  Input: {x_1d}")
-    print(f"  Sorted indices: {result}")
-    print(f"  Sorted values: {x_1d[result]}")
-    
-    # Test 2: 2D case
-    print("\nTest 2: 2D case (N=5, d=2)")
-    x_2d = jnp.array([[0.1, 0.2], [0.9, 0.8], [0.3, 0.4], [0.7, 0.6], [0.5, 0.5]])
-    result = hilbert_sort(x_2d)
-    print(f"  Input shape: {x_2d.shape}")
-    print(f"  Sorted indices: {result}")
-    print(f"  Sorted points:\n{x_2d[result]}")
-    
-    # Test 3: 3D case
-    print("\nTest 3: 3D case (N=5, d=3)")
-    x_3d = jnp.array([[0.1, 0.2, 0.3], [0.9, 0.8, 0.7], [0.4, 0.5, 0.6], 
-                      [0.2, 0.1, 0.3], [0.7, 0.6, 0.5]])
-    result = hilbert_sort(x_3d)
-    print(f"  Input shape: {x_3d.shape}")
-    print(f"  Sorted indices: {result}")
-    print(f"  Sorted points:\n{x_3d[result]}")
-    
-    print("\n✓ All tests passed!")
+    initial_orientation = initial_start_end(number_of_chunks, dimension)
+    _, index_chunks = jax.lax.scan(
+        visit_child,
+        initial_orientation,
+        coordinate_chunks,
+    )
+    return pack_index(index_chunks, dimension)
 
 
-if __name__ == "__main__":
-    main()
+def _validate_shape(x: jax.Array) -> None:
+    """Perform validation that depends only on static array metadata."""
+    if x.ndim not in (1, 2):
+        raise ValueError("x must have shape (n,) or (n, d).")
+    if x.ndim == 2 and x.shape[1] == 0:
+        raise ValueError("x must contain at least one dimension.")
+    if x.ndim == 2 and x.shape[1] > MAX_BITS:
+        raise ValueError(
+            f"At most {MAX_BITS} dimensions can be packed into a "
+            f"{MAX_BITS}-bit Hilbert index; received {x.shape[1]}."
+        )
+
+
+@jax.jit
+def hilbert_sort(x: jax.Array) -> jax.Array:
+    """Return indices that sort finite vectors by their Hilbert index.
+
+    Multidimensional coordinates are standardized per column and mapped with
+    a logistic transform before quantization. Constant columns map to the
+    centre of their coordinate interval. The transform is intentionally
+    batch-dependent, matching the particle-sorting behavior of the archived
+    implementation.
+
+    Parameters
+    ----------
+    x:
+        An array with shape ``(n,)`` or ``(n, d)``. Packed Hilbert sorting
+        supports ``2 <= d <= 62``. One-dimensional inputs use ordinary sort.
+
+    Returns
+    -------
+    jax.Array
+        A permutation of ``arange(n)``.
+    """
+    _validate_shape(x)
+
+    if x.ndim == 1:
+        return jnp.argsort(x, axis=0, stable=True)
+    if x.shape[1] == 1:
+        return jnp.argsort(x[:, 0], axis=0, stable=True)
+    if x.shape[0] == 0:
+        return jnp.empty((0,), dtype=jnp.int64)
+
+    dimension = x.shape[1]
+    bits_per_dimension = MAX_BITS // dimension
+    grid_size = 1 << bits_per_dimension
+
+    work = x.astype(_FLOAT_DTYPE)
+    means = jnp.mean(work, axis=0, keepdims=True)
+    standard_deviations = jnp.std(work, axis=0, keepdims=True)
+    safe_standard_deviations = jnp.where(
+        standard_deviations > _FLOAT_DTYPE(0),
+        standard_deviations,
+        jnp.ones_like(standard_deviations),
+    )
+    standardized = (work - means) / safe_standard_deviations
+    unit_coordinates = invlogit(standardized)
+
+    integer_coordinates = jnp.clip(
+        jnp.floor(unit_coordinates * _FLOAT_DTYPE(grid_size)),
+        _FLOAT_DTYPE(0),
+        _FLOAT_DTYPE(grid_size - 1),
+    ).astype(_INDEX_DTYPE)
+
+    hilbert_indices = jax.vmap(
+        lambda coords: Hilbert_to_int(coords, grid_size)
+    )(integer_coordinates)
+
+    return jnp.argsort(hilbert_indices, stable=True)
+
+
+__all__ = [
+    "MAX_BITS",
+    "Hilbert_to_int",
+    "child_start_end",
+    "gray_decode",
+    "gray_decode_travel",
+    "gray_encode",
+    "gray_encode_travel",
+    "hilbert_sort",
+    "initial_start_end",
+    "invlogit",
+    "pack_index",
+    "transpose_bits",
+    "unpack_coords",
+]

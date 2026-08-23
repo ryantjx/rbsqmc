@@ -19,6 +19,8 @@ https://en.wikipedia.org/wiki/Low-discrepancy_sequence
 
 ### Halton
 
+
+
 A randomized Halton algorithm in R - https://arxiv.org/abs/1706.02808
 
 tensorflow implementation - https://www.tensorflow.org/probability/api_docs/python/tfp/substrates/jax/mcmc/sample_halton_sequence
