@@ -1,0 +1,23 @@
+{
+  "gpu_type": "L4",
+  "colab_timeout": 1800,
+  "session": "sqmc_benchmarks_gpu",
+  "repo_url": "https://github.com/ryantjx/rbsqmc.git",
+  "repo_branch": "main",
+  "remote_output_dir": "sqmc/scripts/outputs/gpu",
+  "hilbert_sort": {
+    "dimensions": [2, 3, 5, 10],
+    "n_values": [100, 300, 1000, 3000, 10000, 30000, 100000],
+    "repeats": 7,
+    "warmups": 1,
+    "seed": 0
+  },
+  "qmc": {
+    "dimensions": [2, 5, 10, 20],
+    "n_values": [128, 512, 2048, 8192, 32768, 131072],
+    "repeats": 7,
+    "warmups": 1,
+    "seed": 0,
+    "scramble": false
+  }
+}
