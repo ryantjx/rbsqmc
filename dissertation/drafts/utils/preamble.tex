@@ -1,0 +1,39 @@
+% Page layout, typography, figures, tables, citations, and PDF metadata.
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=30mm,headheight=15pt]{geometry}
+\usepackage{microtype}
+\usepackage{setspace}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\usepackage[dvipsnames]{xcolor}
+\usepackage{enumitem}
+\usepackage[round,authoryear]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\onehalfspacing
+\raggedbottom
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+\setlist{nosep}
+\graphicspath{{figures/}{../figures/}}
+
+\hypersetup{
+  pdftitle={\DissertationTitle},
+  pdfauthor={\StudentName},
+  pdfsubject={\Subject},
+  bookmarksnumbered=true
+}
+
+\numberwithin{equation}{chapter}
+\captionsetup{font=small,labelfont=bf}
