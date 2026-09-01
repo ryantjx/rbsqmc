@@ -162,6 +162,7 @@ def logmarginal_maximize(
     learning_rate: float = 1e-3,
     n_reps: int = 4,
     gamma_0_prior_params: dict | None = None,
+    patience: int | None = None,
 ):
     """Maximize the log marginal likelihood ``log Z`` with Adam (optax).
 
@@ -178,20 +179,25 @@ def logmarginal_maximize(
     data that never influences the gradient updates.
 
     Args:
-        test_model_inputs: held-out ``FootballResults`` (test split).
+        test_model_inputs: held-out ``FootballResults`` (test split), used as
+            the **validation** signal for model selection / early stopping.
         gamma_0_prior_params: optional dict with keys ``scale`` (jax.Array),
             ``dof`` (float), and ``strength`` (float). If given, an
             inverse-Wishart prior regularizer is added to the loss, pulling
             ``gamma_0`` toward ``scale``. If None, the original unregularized
             loss is used.
+        patience: optional int. If given, stop training once the held-out test
+            logZ has not improved for ``patience`` consecutive epochs. The
+            returned checkpoint is the one with the highest held-out test logZ.
 
     Returns:
         (best_params, history, test_history, grad_norm_history) where
-        ``best_params`` is the decoded ``EMParams`` achieving the lowest
-        training loss, ``history`` is the (regularized) negative training loss
-        per epoch, ``test_history`` is the forward-filter test logZ per epoch,
-        and ``grad_norm_history`` is the global gradient norm per epoch
-        (convergence / instability diagnostic).
+        ``best_params`` is the decoded ``EMParams`` of the checkpoint with the
+        highest held-out **test** logZ (treated as validation; avoids returning
+        the overfit final params that maximize training loss), ``history`` is
+        the (regularized) negative training loss per epoch, ``test_history`` is
+        the forward-filter test logZ per epoch, and ``grad_norm_history`` is the
+        global gradient norm per epoch (convergence / instability diagnostic).
     """
     fixed_mean_0 = params.mean_0
     raw_params = encode_EM_params(params)
@@ -215,7 +221,10 @@ def logmarginal_maximize(
     test_logz_history = []
     grad_norm_history = []
     test_logz = float("nan")  # last held-out test logZ
-    best_logz = -jnp.inf
+    best_logz = -jnp.inf       # best train logZ (display only)
+    best_test_logz = -jnp.inf  # best held-out test logZ (model selection)
+    best_test_epoch = -1
+    no_improve_count = 0       # consecutive epochs without test improvement
     best_params = params
     epoch_times = []  # seconds per epoch, for ETA estimation
     total_start = _time.perf_counter()
@@ -274,8 +283,7 @@ def logmarginal_maximize(
             )
 
         if logz > best_logz:
-            best_logz = logz
-            best_params = decode_EM_params(raw_params, fixed_mean_0=fixed_mean_0)
+            best_logz = logz  # display-only: best train logZ
 
         # Update parameters with Adam
         updates, opt_state = optimizer.update(grads, opt_state)
@@ -305,6 +313,39 @@ def logmarginal_maximize(
             test_logz = test_logz_history[-1] if test_logz_history else float("nan")
         test_logz_history.append(test_logz)
 
+        # --- model-selection checkpoint on the held-out test logZ ---
+        # best_params is the checkpoint with the highest held-out test logZ,
+        # i.e. test is treated as validation for early stopping. This avoids
+        # returning the final, overfit parameters that maximize train logZ.
+        if math.isfinite(test_logz) and test_logz > best_test_logz:
+            best_test_logz = test_logz
+            best_test_epoch = epoch
+            best_params = current_params
+            no_improve_count = 0
+        else:
+            no_improve_count += 1
+
+        # Early stopping: stop once test logZ has not improved for `patience`
+        # consecutive epochs (only when patience is set).
+        if patience is not None and no_improve_count >= patience:
+            epoch_times.append(_time.perf_counter() - epoch_start)
+            total_sec = _time.perf_counter() - total_start
+            print(
+                f"[epoch {epoch:4d}] early stopping: test logZ not improved for "
+                f"{patience} epochs (best test {best_test_logz:.4f} @ epoch "
+                f"{best_test_epoch})",
+                flush=True,
+            )
+            print(f"[optimization] early-stopped at epoch {epoch} after "
+                  f"{total_sec:.1f}s; best test checkpoint at epoch "
+                  f"{best_test_epoch}", flush=True)
+            return (
+                best_params,
+                jnp.asarray(logz_history),
+                jnp.asarray(test_logz_history),
+                jnp.asarray(grad_norm_history),
+            )
+
         epoch_secs = _time.perf_counter() - epoch_start
         epoch_times.append(epoch_secs)
 
@@ -312,9 +353,11 @@ def logmarginal_maximize(
             elapsed = _time.perf_counter() - total_start
             avg_sec = sum(epoch_times) / len(epoch_times)
             remaining = avg_sec * (n_epochs - (epoch + 1))
-            test_str = f"  test logZ = {test_logz:.4f}" if test_logz_history else ""
+            test_str = (f"  test logZ = {test_logz:.4f}  "
+                        f"(best test {best_test_logz:.4f} @ ep {best_test_epoch})"
+                        if test_logz_history else "")
             print(
-                f"[epoch {epoch:4d}] logZ = {logz:.4f}  (best {best_logz:.4f})"
+                f"[epoch {epoch:4d}] logZ = {logz:.4f}  (best train {best_logz:.4f})"
                 f"{test_str}"
                 f"  [{epoch_secs:6.1f}s this epoch, {elapsed:6.1f}s elapsed, "
                 f"ETA {remaining:6.1f}s]",
@@ -323,7 +366,8 @@ def logmarginal_maximize(
 
     total_sec = _time.perf_counter() - total_start
     print(f"[optimization] finished {n_epochs} epochs in {total_sec:.1f}s "
-          f"(avg {total_sec / max(n_epochs, 1):.1f}s/epoch)", flush=True)
+          f"(avg {total_sec / max(n_epochs, 1):.1f}s/epoch); best test logZ "
+          f"{best_test_logz:.4f} @ epoch {best_test_epoch}", flush=True)
     return (
         best_params,
         jnp.asarray(logz_history),

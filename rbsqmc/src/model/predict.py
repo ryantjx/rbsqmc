@@ -13,9 +13,101 @@ import jax.numpy as jnp
 from jax.scipy.special import logsumexp
 
 from rbsqmc.src.data.bivariate_poisson import loglik_grid
-from rbsqmc.src.data.data import concat_football_results
+from rbsqmc.src.data.data import concat_football_results, unpack_football_results
 from rbsqmc.src.model.optimization import run_filter_unbiased
 from rbsqmc.src.utils.type import EMParams, Matches, RBPFState, FootballResults
+
+
+def evaluate_match_predictions(predictions: list[dict]) -> dict:
+    """Evaluate score and three-outcome forecasts with known results.
+
+    The multiclass Brier score is the unscaled sum over home/draw/away,
+    ``sum_c (p_c - o_c)**2``. It ranges from 0 (perfect) to 2 (maximally
+    wrong). A uniform three-outcome forecast has score ``2/3`` for every
+    match and is included as a fixed reference.
+
+    The input records are enriched in place with per-match evaluation fields.
+    Matches whose actual score is negative are retained but not scored.
+    """
+    brier_scores = []
+    log_likelihoods = []
+    exact_correct = []
+    outcome_correct = []
+
+    for prediction in predictions:
+        actual_home = int(prediction["actual_home_score"])
+        actual_away = int(prediction["actual_away_score"])
+        scored = actual_home >= 0 and actual_away >= 0
+        if not scored:
+            prediction.update({
+                "actual_outcome": None,
+                "predicted_outcome": None,
+                "brier_score": None,
+                "exact_score_correct": None,
+                "outcome_correct": None,
+            })
+            continue
+
+        actual_outcome = (
+            "home" if actual_home > actual_away
+            else "draw" if actual_home == actual_away
+            else "away"
+        )
+        probabilities = {
+            "home": float(prediction["prob_home_win"]),
+            "draw": float(prediction["prob_draw"]),
+            "away": float(prediction["prob_away_win"]),
+        }
+        predicted_outcome = max(probabilities, key=probabilities.get)
+        brier = sum(
+            (probability - float(outcome == actual_outcome)) ** 2
+            for outcome, probability in probabilities.items()
+        )
+        exact = (
+            int(prediction["predicted_home_score"]) == actual_home
+            and int(prediction["predicted_away_score"]) == actual_away
+        )
+        outcome_hit = predicted_outcome == actual_outcome
+
+        prediction.update({
+            "actual_outcome": actual_outcome,
+            "predicted_outcome": predicted_outcome,
+            "brier_score": float(brier),
+            "exact_score_correct": bool(exact),
+            "outcome_correct": bool(outcome_hit),
+        })
+        brier_scores.append(float(brier))
+        log_likelihoods.append(float(prediction["log_likelihood"]))
+        exact_correct.append(float(exact))
+        outcome_correct.append(float(outcome_hit))
+
+    n_scored = len(brier_scores)
+    uniform_brier = 2.0 / 3.0
+    mean_brier = float(sum(brier_scores) / n_scored) if n_scored else None
+    return {
+        "n_predictions": len(predictions),
+        "n_scored": n_scored,
+        "brier_score_definition": "sum_over_home_draw_away",
+        "mean_brier_score": mean_brier,
+        "uniform_reference_brier_score": uniform_brier,
+        "brier_skill_score_vs_uniform": (
+            float(1.0 - mean_brier / uniform_brier)
+            if mean_brier is not None
+            else None
+        ),
+        "total_log_likelihood": (
+            float(sum(log_likelihoods)) if n_scored else None
+        ),
+        "mean_log_likelihood": (
+            float(sum(log_likelihoods) / n_scored) if n_scored else None
+        ),
+        "exact_score_accuracy": (
+            float(sum(exact_correct) / n_scored) if n_scored else None
+        ),
+        "outcome_accuracy": (
+            float(sum(outcome_correct) / n_scored) if n_scored else None
+        ),
+    }
 
 @jax.jit(static_argnames=("max_goals",))
 def predict_match_score(
@@ -48,8 +140,27 @@ def predict_match_score(
 # ---------------------------------------------------------------------------
 # Sequential predict -> update -> compare driver
 # ---------------------------------------------------------------------------
-@partial(jax.jit, static_argnames=("n_particles", "max_goals"))
 def run_sequential_predict(
+    key: jax.Array,
+    observed_inputs: FootballResults,
+    prediction_inputs: FootballResults,
+    params: EMParams,
+    n_particles: int,
+    max_goals: int,
+):
+    """Unpack to match-level steps, then run compiled SMC prediction."""
+    return _run_sequential_predict_jitted(
+        key=key,
+        observed_inputs=unpack_football_results(observed_inputs),
+        prediction_inputs=unpack_football_results(prediction_inputs),
+        params=params,
+        n_particles=n_particles,
+        max_goals=max_goals,
+    )
+
+
+@partial(jax.jit, static_argnames=("n_particles", "max_goals"))
+def _run_sequential_predict_jitted(
     key: jax.Array,
     observed_inputs: FootballResults,
     prediction_inputs: FootballResults,
@@ -59,8 +170,8 @@ def run_sequential_predict(
 ):
     """One-step-ahead prediction over the prediction window.
 
-    Returns per-day predicted grids and the predictive log-prob of the actual
-    score, for every prediction day.
+    Returns per-match predicted grids and predictive log-probabilities of the
+    actual scores.
     """
     # ---- 1. Filter over the FULL concatenated sequence --------------------
     # concat_football_results fixes the timestamp_prev boundary and pads M.
@@ -72,10 +183,11 @@ def run_sequential_predict(
         n_particles=n_particles,
         max_goals=max_goals,
     )
-    # filtered_states.{particles.x, log_weights} have leading dim T_full + 1
-    # (index 0 is the initial state). Day t (0-based, in full_inputs coords)
-    # has its POSTERIOR at filtered_states index t+1, and the state used to
-    # PREDICT day t is the day-(t-1) posterior at filtered_states index t.
+    # filtered_states has leading dimension T_full + 1 (index 0 is initial).
+    # At index t+1, particle positions have already been resampled and
+    # propagated for match t, but only their weights use match t's score.
+    # Therefore those positions with uniform pre-likelihood weights form the
+    # one-step predictive particle approximation for match t.
 
     G = max_goals + 1
     # In full-sequence coords, prediction day p (0-based) is full day
@@ -85,9 +197,10 @@ def run_sequential_predict(
 
     def scan_body(_, pred_day):
         t = pred_start + pred_day            # full-sequence day index
-        # predictive state = posterior BEFORE day t's matches are absorbed
-        x_prev = filtered_states.particles.x[t]      # (N, teams, 2)
-        lw_prev = filtered_states.log_weights[t]     # (N,)
+        x_predictive = filtered_states.particles.x[t + 1]  # (N, teams, 2)
+        log_weights_predictive = jnp.zeros_like(
+            filtered_states.log_weights[t + 1]
+        )
 
         home_id = prediction_inputs.matches.home_id[pred_day]   # (M,)
         away_id = prediction_inputs.matches.away_id[pred_day]
@@ -96,12 +209,23 @@ def run_sequential_predict(
         ya = prediction_inputs.matches.away_score[pred_day]
 
         def one_match(h, a, v, sh, sa):
-            grid = predict_match_score(x_prev, lw_prev, h, a,
+            grid = predict_match_score(x_predictive, log_weights_predictive, h, a,
                                        params.alpha, params.beta, max_goals)
             grid = jnp.where(v, grid, jnp.zeros((G, G)))
             # predictive log-prob of the ACTUAL score (compare pred vs actual)
+            score_is_known = (
+                v
+                & (sh >= 0)
+                & (sa >= 0)
+                & (sh <= max_goals)
+                & (sa <= max_goals)
+            )
+            safe_home_score = jnp.clip(sh, 0, max_goals)
+            safe_away_score = jnp.clip(sa, 0, max_goals)
             logp_actual = jnp.where(
-                v, jnp.log(grid[sh, sa] + 1e-12), 0.0
+                score_is_known,
+                jnp.log(grid[safe_home_score, safe_away_score] + 1e-12),
+                0.0,
             )
             return grid, logp_actual
 

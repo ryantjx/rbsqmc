@@ -5,15 +5,10 @@ import cuthbert
 import cuthbertlib
 from functools import partial
 
-from rbsqmc.src.data.bivariate_poisson import loglik
-from rbsqmc.src.data.data import get_results, WORLDCUP_2026_TEAMS
-from rbsqmc.src.utils.helpers import (
-    default_init_params,
-    generate_rbpf_trajectory,
-    _ensure_symmetric,
-    _scale_aware_jitter,
-)
-from rbsqmc.src.utils.type import RBPFState, RBPFFootballResults, EMParams, FootballResults
+from archive.rbpf.src.data.bivariate_poisson import loglik
+from archive.rbpf.src.data.data import get_results, WORLDCUP_2026_TEAMS
+from archive.rbpf.src.utils.helpers import default_init_params, generate_rbpf_trajectory
+from archive.rbpf.src.utils.type import RBPFState, RBPFFootballResults, EMParams, FootballResults
 
 # Default to CPU locally, but allow the GPU pipeline to force a device via
 # the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).
@@ -22,6 +17,10 @@ jax.config.update(
 )
 
 MAX_GOALS = 8
+
+def _ensure_symmetric(matrix: jnp.ndarray) -> jnp.ndarray:
+    """Ensure that a matrix is symmetric."""
+    return 0.5 * (matrix + matrix.T)
 
 @partial(jax.jit, static_argnames=("num_teams",))
 def compute_gamma_trajectory(
@@ -55,14 +54,6 @@ def compute_gamma_trajectory(
 
                 gamma_OO = gamma_current[jnp.ix_(obs_indices, obs_indices)]
                 gamma_RO = gamma_current[:, obs_indices]
-                # Scale-aware jitter so the 2x2 pinv is strictly positive-
-                # definite. Without it, GPU float32 rounding can leave gamma_OO
-                # with a tiny negative eigenvalue, making pinv / the Cholesky in
-                # the downstream sampler return NaN. The jitter is small relative
-                # to the matrix scale, so it does not perturb the Kalman gain.
-                gamma_OO = _ensure_symmetric(
-                    gamma_OO + _scale_aware_jitter(gamma_OO) * jnp.eye(2)
-                )
                 K = gamma_RO @ jnp.linalg.pinv(gamma_OO)
 
                 # Kalman update: sequentially update gamma_current for each match
@@ -72,6 +63,11 @@ def compute_gamma_trajectory(
                 obs_mask = jnp.zeros(num_teams, dtype=bool).at[obs_indices].set(True)
                 keep_mask = jnp.outer(~obs_mask, ~obs_mask)
                 gamma_updated = gamma_updated * keep_mask
+                # No jitter needed here: the unobserved block is PSD (min eig
+                # ~0.15) and the observed block is exactly 0. The full matrix
+                # is structurally PSD. Tiny negative eigenvalues (~-5e-10) on
+                # the zero eigenvalues are float32 noise that is handled by
+                # the stable Cholesky in the downstream sampler.
                 return (gamma_updated, (gamma_OO, K))
 
             # Padded (invalid) matches pass through unchanged.
@@ -156,16 +152,6 @@ def propagate_sample(
             Sigma_OO = jnp.kron(gamma_OO, B)  # (4, 4)
 
             key, subkey = jax.random.split(key)
-            # Scale-aware jitter on the 4x4 sampling covariance so the Cholesky
-            # inside `multivariate_normal` is strictly positive-definite. This
-            # guards against the rare case where `gamma_OO` is singular (a
-            # team's posterior variance was zeroed) or has tiny negative
-            # eigenvalues from GPU float32 rounding, which would make the
-            # multivariate-normal sampler return NaN. Zero-variance directions
-            # stay essentially at the mean.
-            Sigma_OO = _ensure_symmetric(
-                Sigma_OO + _scale_aware_jitter(Sigma_OO) * jnp.eye(4)
-            )
             x_O_flat = jax.random.multivariate_normal(subkey, mu_O.reshape(-1), Sigma_OO)  # (4,)
             x_O = x_O_flat.reshape(2, 2)  # (2, 2)
 
@@ -218,33 +204,8 @@ def _log_potential(
     )
     return jnp.sum(logliks) 
 
-def run_filter(
-    key: jax.Array,
-    model_inputs: FootballResults,
-    params: EMParams,
-    n_particles: int,
-    max_goals: int,
-) -> tuple[jax.Array, RBPFFootballResults]:
-    """Unpack matches on the host, then run the compiled match-level filter.
-
-    ``unpack_football_results`` uses NumPy to select the valid entries of the
-    padded ``(date, match)`` arrays.  That dynamic shape operation cannot run
-    while JAX is tracing, so it must remain outside the jitted implementation.
-    """
-    from rbsqmc.src.data.data import unpack_football_results
-
-    model_inputs = unpack_football_results(model_inputs)
-    return _run_filter_jitted(
-        key=key,
-        model_inputs=model_inputs,
-        params=params,
-        n_particles=n_particles,
-        max_goals=max_goals,
-    )
-
-
 @partial(jax.jit, static_argnames=("n_particles", "max_goals"))
-def _run_filter_jitted(
+def run_filter(
     key: jax.Array,
     model_inputs: FootballResults,
     params: EMParams,
@@ -325,24 +286,6 @@ def main():
     key = jax.random.PRNGKey(42)
     params = default_init_params(num_teams, team_id_to_name=team_id_to_name)
 
-    # model_inputs = unpack_football_results(model_inputs)
-
-    # gamma, gamma_pred, gamma_observed, kalman_gain = compute_gamma_trajectory(
-    #     model_inputs=model_inputs,
-    #     gamma_0=params.gamma_0,
-    #     kappa=params.kappa,
-    #     num_teams=params.mean_0.shape[0],
-    # )
-    # model_inputs_rbpf = generate_rbpf_trajectory(
-    #     model_inputs=model_inputs,
-    #     gamma=gamma,
-    #     gamma_pred=gamma_pred,
-    #     gamma_observed=gamma_observed,
-    #     kalman_gain=kalman_gain
-    # )
-    # from rbsqmc.src.data.data import rbpf_inputs_to_dataframe
-    # rbsqmc_df = rbpf_inputs_to_dataframe(model_inputs_rbpf, team_id_to_name=team_id_to_name)
-    # rbsqmc_df.to_csv("./rbsqmc/rbpf_inputs.csv", index=False)
     key, filter_key = jax.random.split(key)
 
     print("Running filter (OU)...")
@@ -369,13 +312,13 @@ def main():
     # print("Final filtered state shape:", filtered_states.particles.x.shape)
     # print("Final log-normalizing constant:", filtered_states.log_normalizing_constant[-1])
 
-    from rbsqmc.src.utils.graphic import plot_all
+    from archive.rbpf.src.utils.graphic import plot_all
     plot_all(
         filtered_states=filtered_states,
         augmented_results=model_inputs_rbpf,
         team_id_to_name=team_id_to_name,
         top_n=5,
-        save_path="./rbsqmc/outputs/untrained",
+        save_path="./rbpf/outputs/untrained",
         timestamps=data["date"].to_numpy(),
     )
 

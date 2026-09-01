@@ -1,0 +1,95 @@
+\chapter{Introduction}
+
+\chapter{High-Performance Sequential quasi-Monte Carlo (SQMC)}
+
+\section{Algorithmic Background: SMC, QMC, and SQMC}
+
+\subsection{Sequential Monte Carlo (SMC)}x
+
+Sequential Monte Carlo (SMC, also known as particle filtering) is a class of algorithms for computing recursively Monte Carlo approximations of a sequence of distributions $\pi_t (d \mathbf{x}_t)$, $t \in 0:T, 0:T = \{0, \ldots T\}$. The initial motivation of SMC
+
+
+auxiliary particle filter of Pitt and Shephard, (1999), as explained in Johansen and Doucet, (2008), or the SMC algorithms for non-sequential problems mentioned in the introduction.
+
+\subsection{Quasi-Monte Carlo (QMC)}
+
+\subsection{Sequential quasi-Monte Carlo (SQMC)}
+
+
+Sequential quasi-Monte Carlo (SQMC) combines the two previous ideas, SMC and QMC. It is an extension of the array-RQMC algorithm of L'Ecuyer et al. (2006).
+
+Its only requirement is to write the simulation of particle $\mathbf{x}_t^n$ given $x_{t-1}^n$ as a deterministic function of $\mathbf{x}_{t-1}^n$ and a fixed number of uniform variates.
+
+\subsection{Properties of SQMC}
+%   - Complexity O(N log N) (from sort operations)
+%   - Consistency (Theorem 5)
+%   - RQMC error: same rate as SMC, smaller constant (Theorems 6-7)
+%   - He-Owen conjecture: MSE O(N^{-1-2/d}) (open problem)
+
+% Larger complexity of O(N log N) from the hilbert sorting step.
+
+% Chopin and Gerber(2015) established consistency and RQMC error results are asymptotically better than ordinary Monte Carlo under certain conditions.
+
+% RQMC error
+
+% He and Owen (2014) showed that MSE is $O(N^{-1 - 2/d})$ for Lipshitz continuous integrands of dimension $\geq 3$, and a conjecture is SQMC MSE might converge at the same rate of $O(N^{-1 - 2/d})$.
+
+\subsection{Why SQMC improves on SMC}
+%   - SMC error rate C_t N^{-1/2}
+%   - Time-uniform bounds (Del Moral 2004, Whiteley 2013)
+%   - Safety: SQMC has time-uniform a.s. guarantee; SMC does not (Gerber 2025)
+
+
+
+The error rate of SMC at iteration $t$ is $C_t N^{-1/2}$, where $C_t$ is some function of $t$. Many works focus on the first factor $C_t$, either by establishing that error rates bounded in uniform are bounded uniformly in time $C_t \leq C_t$ (Del Moral, 2004, Whiteley, 2013), or to reduce $C_t$ through more efficient algorithmic designs, such as better proposal kernels or resampling schemes (Del Moral, Doucet and Jasra (2012)). However, recent literature suggests that the time-uniform almost-sure guarantee cannot exist for SMC (the SMC fails infinitely often), but finite-horizon probabilitistic guarantees do exist. SQMC improves the second factor in the error rate $N^{-1/2}$. QMC benefits translate to SQMC, providing an error rate lesser than the Monte Carlo error rate of $N^{-1/2}$. Furthermore, SQMC retains the time-uniform almost-sure guarantee as compared to SMC, making it attractive for long-horizon filtering.
+
+
+
+\section{Why SQMC Maps Naturally onto Accelerators}
+
+% SQMC benefits from GPU acceleration - low-discrepancy point generation and Hilbert-curve ordering can be accelerated via GPU parallelization. Combining these steps allow us to achieve speed performance over SMC with CPU.
+
+\section{A JAX Implementation of SQMC}
+
+% Current draft is written in `ryantjx/rbsqmc' and will be integrated into `state-space-models/cuthbert' under the issue [Implement Sequential Quasi Monte Carlo #255](https://github.com/state-space-models/cuthbert/issues/255)
+
+\section{Performance Evaluation}
+
+% 1. Throughput comparison between SMC and SQMC on GPU. 
+% - x-axis - log N
+% - y-axis - log time (seconds)
+
+% 2. Speedup ratio
+% - x-axis - log N
+% - y-axis - speedup ratio (time SMC / time SQMC)
+
+% 3. per-step breakdown 
+% - x-axis SQMC step
+% - y-axis - time per step (or % of total time)
+
+% 4. time to target error
+% - x-axis - run time (log)
+% - y-axis - filtering RMSE (log)
+
+% Sequential quasi-Monte Carlo (SQMC), introduced by \citet{chopingerber2015sqmc}, is a quasi-Monte Carlo (QMC) analogue of sequential Monte Carlo (SMC) that replaces the stochastic proposal in particle filtering with deterministic propagation through low-discrepancy point sets, achieving an error rate smaller
+% than the Monte Carlo rate $O_P(N^{-1/2})$. The method was subsequently extended to continuous-time state-space models and high-dimensional settings, with an emphasis on dimension reduction, by \citet{chopingerber2017sqmcintroduction}, and is treated in depth in the textbook of \citet{chopinpapaspiliopoulos020introtosmc}.
+
+
+% \section{Quasi Monte-Carlo}
+% Scrambling operation can be improved on GPU.
+
+% \section{Sequential Monte-Carlo}
+% \label{sec:smc}
+
+% \section{Sequential Quasi Monte-Carlo}
+% \label{sec:sqmc}
+
+Implementing Hilbert Sort on GPU.
+
+% The Hilbert curve is a space-filling curve that maps a multi-dimensional space onto a one-dimensional ordering while preserving spatial locality: points that are close in the state space tend to be close in the Hilbert order. This makes it a natural primitive for the resampling step of SQMC, where the particles must be sorted before applying the inverse-CDF transform to the quasi-random uniforms \citep{chopingerber2015sqmc}. The same idea has been exploited extensively in computer graphics, where \citet{kellerwachterbinder2022hilbertcurve} enumerate a low-discrepancy sequence along a Hilbert curve superimposed on the pixel raster of an image, achieving noise characteristics that are desirable for the human visual system at very low sampling rates. Their algorithms are deterministic, require neither randomization nor costly optimization nor lookup tables, and are demonstrated in a professional, massively parallel light transport rendering system. Because the Hilbert ordering is computed from bit-level operations on the particle coordinates, it is highly amenable to parallel implementation on the GPU, which is the approach taken in this work.
+
+% Sequential Quasi-Monte Carlo (SQMC), introduced by \citet{chopingerber2015sqmc}, is a QMC analogue of SMC. Whereas SMC draws the proposed particles from a stochastic proposal, SQMC propagates each particle through a deterministic function of the previous particle and a vector of quasi-random uniforms, $x_t = \Gamma_t(x_{t-1}, u_t)$ with $u_t \sim \mathcal{U}[0,1]^d$, so that the low discrepancy of the quasi-random sequence is carried into the particle cloud. This requires the resampling step to be performed before propagation (as an intermediate step), and the ancestors are selected by Hilbert sorting the particles and applying an inverse-CDF transform to the first coordinate of the quasi-random points. The complexity of SQMC is $O(N \log N)$ per iteration, and its error rate is smaller than the Monte Carlo rate $O_P(N^{-1/2})$ \citep{chopingerber2015sqmc}. The method is amenable to the same extensions as standard SMC, including forward and backward smoothing, unbiased likelihood evaluation, and use within particle Markov chain Monte Carlo \citep{chopingerber2015sqmc}. A key practical concern is dimension reduction, discussed in detail by \citet{chopingerber2017sqmcintroduction}, and the method is presented in textbook form by \citet{chopinpapaspiliopoulos020introtosmc}.
+
+\section{Performance comparison between SMC and SQMC}
+\label{sec:performance-comparison-smc-sqmc}
+

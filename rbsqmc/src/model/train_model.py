@@ -21,16 +21,17 @@ def main():
     output_dir = f"rbsqmc/outputs/train_model/{date_text}/"
 
     cfg = {
-        "training_start_date": "1950-01-01",
+        "training_start_date": "1980-01-01",
         "test_start_date": "2024-01-01",
         "prediction_start_date": "2026-06-11",
-        "n_particles": 250,          # N
+        "n_particles": 500,          # N
         "max_goals": 8,               # MAX_GOALS
         "seed": 0,                    # PRNG seed
         # optimization
         "n_epochs": 100,
         "learning_rate": 0.05,
-        "n_reps": 25,
+        "n_reps": 30,
+        "patience": 15,
         # "gamma_0_prior_params" : {
         #     "scale" : 1.0,
         #     "dof" : 5.0,
@@ -81,9 +82,8 @@ def main():
         n_epochs=cfg["n_epochs"],
         learning_rate=cfg["learning_rate"],
         n_reps=cfg["n_reps"],
-        # gamma_0_prior=gamma_0_prior,
-        # gamma_prior_dof=cfg.get("gamma_prior_dof", 5.0),
-        # gamma_prior_strength=cfg.get("gamma_prior_strength", 1.0),
+        gamma_0_prior_params=cfg.get("gamma_0_prior_params"),
+        patience=cfg.get("patience"),
     )
     train_logz = [float(v) for v in train_logz_history]
     test_logz = [float(v) for v in test_logz_history]
@@ -164,6 +164,19 @@ def main():
         predictions,
         save_dir=pred_dir,
         max_goals=cfg["max_goals"],
+    )
+
+    ############### Observe team states over time (post-prediction) ###############
+    # Plots selected teams' filtered attack/defense/total strengths across the
+    # full train+test+prediction sequence, with vertical lines at each match in
+    # the prediction window. Defaults to Spain/England/France/Argentina; override
+    # with cfg["observe_teams"] = [...]. Writes into pred_dir.
+    from rbsqmc.src.model.observe import run_observe
+
+    run_observe(
+        cfg=cfg,
+        params=best_params,
+        output_dir=pred_dir,
     )
 
 

@@ -248,6 +248,85 @@ def concat_football_results(*splits: FootballResults) -> FootballResults:
     )
 
 
+def unpack_football_results(
+    model_inputs: FootballResults,
+) -> FootballResults:
+    valid_t, valid_m = np.nonzero(np.asarray(model_inputs.match_mask))
+    if valid_t.size == 0:
+        raise ValueError("FootballResults contains no valid matches.")
+
+    timestamp = model_inputs.timestamp[valid_t]
+    timestamp_prev = jnp.concatenate(
+        [
+            jnp.asarray([model_inputs.timestamp_prev[0]]),
+            timestamp[:-1],
+        ]
+    )
+
+    return FootballResults(
+        date=model_inputs.date[valid_t],
+        timestamp=timestamp,
+        timestamp_prev=timestamp_prev,
+        matches=Matches(
+            home_id=model_inputs.matches.home_id[valid_t, valid_m, None],
+            away_id=model_inputs.matches.away_id[valid_t, valid_m, None],
+            home_score=model_inputs.matches.home_score[valid_t, valid_m, None],
+            away_score=model_inputs.matches.away_score[valid_t, valid_m, None],
+        ),
+        match_mask=jnp.ones((len(valid_t), 1), dtype=bool),
+    )
+
+def rbpf_inputs_to_dataframe(model_inputs, team_id_to_name=None):
+    to_numpy = lambda x: np.asarray(jax.device_get(x))
+
+    # date = pd.to_datetime(
+    #     to_numpy(model_inputs.date),
+    #     unit="D",
+    #     origin="unix",
+    # )
+    
+    timestamp = to_numpy(model_inputs.timestamp)
+    timestamp_prev = to_numpy(model_inputs.timestamp_prev)
+
+    home_id = to_numpy(model_inputs.matches.home_id)[:, 0]
+    away_id = to_numpy(model_inputs.matches.away_id)[:, 0]
+    home_score = to_numpy(model_inputs.matches.home_score)[:, 0]
+    away_score = to_numpy(model_inputs.matches.away_score)[:, 0]
+
+    gamma = to_numpy(model_inputs.gamma)
+    gamma_pred = to_numpy(model_inputs.gamma_pred)
+    gamma_observed = to_numpy(model_inputs.gamma_observed)[:, 0]
+    kalman_gain = to_numpy(model_inputs.kalman_gain)[:, 0]
+
+    df = pd.DataFrame({
+        # "date": date,
+        "timestamp": timestamp,
+        "timestamp_prev": timestamp_prev,
+        "dt": timestamp - timestamp_prev,
+        "home_id": home_id,
+        "away_id": away_id,
+        "home_score": home_score,
+        "away_score": away_score,
+
+        # The 2x2 covariance immediately before this match.
+        "home_variance_before": gamma_observed[:, 0, 0],
+        "away_variance_before": gamma_observed[:, 1, 1],
+        "home_away_covariance_before": gamma_observed[:, 0, 1],
+
+        # Compact full-matrix diagnostics.
+        "gamma_pred_trace": np.trace(gamma_pred, axis1=1, axis2=2),
+        "gamma_after_trace": np.trace(gamma, axis1=1, axis2=2),
+        "kalman_gain_norm": np.linalg.norm(
+            kalman_gain, axis=(1, 2)
+        ),
+    })
+
+    if team_id_to_name is not None:
+        df["home_team"] = df["home_id"].map(team_id_to_name)
+        df["away_team"] = df["away_id"].map(team_id_to_name)
+
+    return df
+
 def get_results(
     start_date: str = "1872-11-30",  # date of first game
     end_date: str | None = None,

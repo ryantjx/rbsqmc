@@ -14,9 +14,9 @@
   "gpu_type": "A100",
   "colab_timeout": 14400,
   "repo_url": "https://github.com/ryantjx/rbsqmc.git",
-  // "gamma_0_prior_params": {
-  //   "scale": 1.0,
-  //   "dof": 5.0,
-  //   "strength": 1.0
-  // }
+  "gamma_0_prior_params": {
+    "scale": 1.0,
+    "dof": 5.0,
+    "strength": 1.0
+  }
 }
