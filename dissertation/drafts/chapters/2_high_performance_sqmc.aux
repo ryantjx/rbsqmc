@@ -1,0 +1,112 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\citation{kalmandbucy1961filtering,rauchtungstriebel1965}
+\@writefile{toc}{\contentsline {chapter}{\numberline {2}High-Performance Sequential quasi-Monte Carlo (SQMC)}{3}{chapter.2}\protected@file@percent }
+\@writefile{lof}{\addvspace {10\p@ }}
+\@writefile{lot}{\addvspace {10\p@ }}
+\@writefile{toc}{\contentsline {section}{\numberline {2.1}Background: SMC, QMC, and SQMC}{3}{section.2.1}\protected@file@percent }
+\newlabel{sec:background}{{2.1}{3}{Background: SMC, QMC, and SQMC}{section.2.1}{}}
+\citation{gordonsalmondsmith1993}
+\citation{pittshephard1999}
+\citation{johansendoucet2008}
+\citation{gordonsalmondsmith1993}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces Particle filter}}{4}{algorithm.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{alg:pf}{{1}{4}{Particle filter}{algorithm.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1.1}Sequential Monte Carlo (SMC)}{4}{subsection.2.1.1}\protected@file@percent }
+\newlabel{sec:smc}{{2.1.1}{4}{Sequential Monte Carlo (SMC)}{subsection.2.1.1}{}}
+\citation{delmoralguionnet1999clt,chopin2004clt,kunsch2005recursive}
+\citation{devroye1986nonuniform}
+\citation{niederreiter1992qmc}
+\citation{niederreiter1992qmc}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {2}{\ignorespaces Multinomial resampling}}{5}{algorithm.2}\protected@file@percent }
+\newlabel{alg:multinomial}{{2}{5}{Multinomial resampling}{algorithm.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1.2}Quasi-Monte Carlo (QMC)}{5}{subsection.2.1.2}\protected@file@percent }
+\newlabel{sec:qmc}{{2.1.2}{5}{Quasi-Monte Carlo (QMC)}{subsection.2.1.2}{}}
+\citation{owen1997scrambling}
+\citation{owen1997scrambling,owen1998scrambling}
+\citation{halton1960quasirandom}
+\citation{owen1997scrambling}
+\citation{sobol1967distribution}
+\@writefile{toc}{\contentsline {subsubsection}{Randomized Quasi-Monte Carlo (RQMC)}{6}{section*.7}\protected@file@percent }
+\newlabel{sec:rqmc}{{2.1.2}{6}{Randomized Quasi-Monte Carlo (RQMC)}{section*.7}{}}
+\@writefile{toc}{\contentsline {subsubsection}{QMC Sequences}{6}{section*.8}\protected@file@percent }
+\newlabel{sec:qmc-sequences}{{2.1.2}{6}{QMC Sequences}{section*.8}{}}
+\citation{joekuo2008sobol}
+\citation{matousek1998l2discrepancy}
+\citation{owen1997scrambling}
+\citation{owen2020droppingfirstsobol}
+\citation{lecuyerlectuffin2006arrayrqmc}
+\citation{chopingerber2015sqmc}
+\citation{chopingerber2017sqmcintroduction}
+\citation{chopinpapaspiliopoulos020introtosmc}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1.3}Sequential quasi-Monte Carlo (SQMC)}{7}{subsection.2.1.3}\protected@file@percent }
+\newlabel{sec:sqmc}{{2.1.3}{7}{Sequential quasi-Monte Carlo (SQMC)}{subsection.2.1.3}{}}
+\citation{chopingerber2015sqmc}
+\citation{delmoral2004feynman,whiteley2013stability}
+\citation{delmoraldoucetjasra2012smcsamplers}
+\citation{chopingerber2015sqmc}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {3}{\ignorespaces SQMC}}{8}{algorithm.3}\protected@file@percent }
+\newlabel{alg:sqmc}{{3}{8}{SQMC}{algorithm.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1.4}Key Properties of SQMC}{8}{subsection.2.1.4}\protected@file@percent }
+\newlabel{sec:sqmc-properties}{{2.1.4}{8}{Key Properties of SQMC}{subsection.2.1.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{Complexity.}{8}{section*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Consistency.}{8}{section*.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{RQMC error.}{8}{section*.11}\protected@file@percent }
+\citation{gerber2026}
+\citation{kellerwachterbinder2023qmcgraphics}
+\citation{kellerwachterbinder2023qmcgraphics}
+\citation{kellerwachterbinder2023qmcgraphics}
+\citation{chopingerber2015sqmc}
+\citation{kellerwachterbinder2022hilbertcurve}
+\citation{kellerwachterbinder2022hilbertcurve}
+\@writefile{toc}{\contentsline {paragraph}{Time-uniform error bounds.}{9}{section*.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2.2}Why SQMC maps naturally onto accelerators}{9}{section.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{QMC point generation is compute-bound, not latency-bound.}{9}{section*.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Hilbert index computation and the residual sort cost.}{9}{section*.15}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2.1}{\ignorespaces QMC point-generation operations in the SQMC implementation. The table lists the operation, the function in the codebase that implements it, and the reason it maps well onto accelerator hardware.}}{10}{table.caption.14}\protected@file@percent }
+\newlabel{tab:qmc-accelerator}{{2.1}{10}{QMC point-generation operations in the SQMC implementation. The table lists the operation, the function in the codebase that implements it, and the reason it maps well onto accelerator hardware}{table.caption.14}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2.2}{\ignorespaces Hilbert-sort operations in the SQMC implementation. The table lists the operation, the function in the codebase that implements it, and the reason it maps well onto accelerator hardware.}}{10}{table.caption.16}\protected@file@percent }
+\newlabel{tab:hilbert-accelerator}{{2.2}{10}{Hilbert-sort operations in the SQMC implementation. The table lists the operation, the function in the codebase that implements it, and the reason it maps well onto accelerator hardware}{table.caption.16}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2.3}Empirical evaluation --- SQMC vs SMC}{11}{section.2.3}\protected@file@percent }
+\@setckpt{chapters/2_high_performance_sqmc}{
+\setcounter{page}{12}
+\setcounter{equation}{8}
+\setcounter{enumi}{0}
+\setcounter{enumii}{0}
+\setcounter{enumiii}{0}
+\setcounter{enumiv}{0}
+\setcounter{footnote}{0}
+\setcounter{mpfootnote}{0}
+\setcounter{part}{0}
+\setcounter{chapter}{2}
+\setcounter{section}{3}
+\setcounter{subsection}{0}
+\setcounter{subsubsection}{0}
+\setcounter{paragraph}{0}
+\setcounter{subparagraph}{0}
+\setcounter{figure}{0}
+\setcounter{table}{2}
+\setcounter{parentequation}{0}
+\setcounter{theorem}{0}
+\setcounter{caption@flags}{2}
+\setcounter{continuedfloat}{0}
+\setcounter{subfigure}{0}
+\setcounter{subtable}{0}
+\setcounter{float@type}{16}
+\setcounter{algorithm}{3}
+\setcounter{ALG@line}{10}
+\setcounter{ALG@rem}{0}
+\setcounter{ALG@nested}{0}
+\setcounter{ALG@Lnr}{2}
+\setcounter{ALG@blocknr}{10}
+\setcounter{ALG@storecount}{0}
+\setcounter{ALG@tmpcounter}{0}
+\setcounter{lstnumber}{1}
+\setcounter{NAT@ctr}{0}
+\setcounter{section@level}{1}
+\setcounter{Item}{0}
+\setcounter{Hfootnote}{0}
+\setcounter{bookmark@seq@number}{12}
+\setcounter{lstlisting}{0}
+}

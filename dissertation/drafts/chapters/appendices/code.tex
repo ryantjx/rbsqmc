@@ -1,0 +1,25 @@
+\chapter{Implementation Code}
+\label{app:code}
+
+This appendix reproduces the core implementation files used in this dissertation. The full source is available in the repository \texttt{ryantjx/sqmc-cuthbert} (currently a draft) and will be integrated into \texttt{state-space-models/cuthbert} under the issue \href{https://github.com/state-space-models/cuthbert/issues/255}{Implement Sequential Quasi Monte Carlo \#255}. Figure~\ref{fig:issue-255} shows the tracking issue.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{https-github.com-state-space-models-cuthbert-issues-255.png}
+\caption{The tracking issue for the SQMC implementation in the \texttt{state-space-models/cuthbert} repository.}
+\label{fig:issue-255}
+\end{figure}
+
+\section{Quasi-Monte Carlo point generation (\texttt{qmc.py})}
+\label{app:qmc-code}
+
+The following is the core of the QMC module, which implements the Halton and Sobol' sequences described in Section~\ref{sec:qmc-sequences}. The full file is in \texttt{sqmc/qmc/qmc.py}.
+
+% \lstinputlisting[language=Python, caption={The QMC module implementing the Halton and Sobol' sequences.}, label={lst:qmc}]{../../sqmc/qmc/qmc.py}
+
+\section{Hilbert sorting (\texttt{hilbert\_sort.py})}
+\label{app:hilbert-code}
+
+The following is the Hilbert-sort module, which computes the packed Hilbert index of each particle and sorts them, as described in Section~\ref{sec:sqmc}. The full file is in \texttt{sqmc/hilbert\_sort/hilbert\_sort.py}.
+
+% \lstinputlisting[language=Python, caption={The Hilbert-sort module computing packed Hilbert indices and sorting particles.}, label={lst:hilbert}]{../../sqmc/hilbert_sort/hilbert_sort.py}

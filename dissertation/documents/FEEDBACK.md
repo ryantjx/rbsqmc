@@ -2,6 +2,78 @@
 
 This document is a continuous, reverse-chronological record of feedback on the dissertation. New feedback should be added immediately below this description so that the most recent review remains at the top. Each entry records the review timestamp, the material reviewed, the overall assessment, detailed findings, and any parts that were confirmed as correct.
 
+## 2026-09-01 — Supervisor notes review (`ryan_notes.txt`)
+
+Source: [`ryan_notes.txt`](./ryan_notes.txt). The supervisor had read Sections 2.1, 2.2, and 2.5, plus earlier RB-SMC discussion. This entry records the action items and the current todo list. Content-level changes are tracked here and applied in the source only where agreed; grammatical fixes have been applied directly.
+
+### Write
+
+% The football problem is a pairwise comparison problem with a high-dimensional latent state. The general state-space model notation and the filtering and smoothing objectives were introduced in Section~\ref{sec:background}; here we specialise the relevant structure to football. Let $x_t^k$ denote the latent state of team $k$ at matchtime $t$, and let $\mathcal{O}_t = \{i_t,j_t\}$ denote the two teams involved in match $t$. The observation likelihood therefore has the local form $G_t(y_t \mid x_t^{\mathcal{O}_t})$.
+
+% The factorial hidden Markov model (FHMM) was introduced by Ghahramani and Jordan \citep{ghahramanijordan1995factorialhmm,ghahramanijordan1997factorialhmm}. A factorial state-space model (fSSM) is the corresponding general-state-space construction. Its initial distribution and transition law factorise across latent components, while an observation may depend jointly on several components. In the football setting, this structure would give
+
+% \begin{equation}
+% p(x_{0:T}^{1:K}, y_{1:T}) = \left[ \prod_{k=1}^K p(x_0^k) \prod_{t=1}^T p(x_t^k \mid x_{t-1}^k) \right] \prod_{t=1}^T G_t(y_t \mid x_t^{\mathcal{O}_t}).
+% \end{equation}
+
+% The factorisation expresses \emph{a-priori} independence of the team processes: the initial states are independent and each team evolves independently of the others. It does not imply posterior independence. Once a match result is observed, the likelihood couples the latent states of the two participating teams. Results from later matches can transmit this dependence through the network of opponents, even though each individual likelihood contribution involves only two teams.
+
+% Duffield, Power and Rimella \citep{duffieldpowerrimella2024factorialssm} apply the factorial construction to online skill rating and sports. Their main computational approximation is to project the filtering distribution back into a factorial form after every pairwise update. They maintain a separate marginal filtering distribution for each team, propagate the marginals of $i_t$ and $j_t$ to the next matchtime, and assimilate the result in the joint distribution of the playing pair. The two marginal distributions are then extracted from this joint update and stored independently for subsequent matches. In this final marginalisation, or ``unpairing'', step, the posterior dependence between the two teams is discarded. The approximation is therefore not the pairwise assimilation itself; it is the repeated projection of the coupled posterior back to a product of team-level marginals.
+
+% This approximation is computationally attractive because it avoids representing the full joint distribution over all teams. It is nevertheless restrictive for international football. Shared players, clubs, leagues, tournaments and common external conditions provide plausible sources of dependence between national teams that are not represented by an a-priori independent team prior. More generally, even when the prior team processes are independent, match outcomes create posterior dependence that a factorial filter removes after each update. The resulting team marginals may still be useful for prediction, but they do not retain the joint uncertainty induced by the observed competition history.
+
+% The model developed in this chapter relaxes the factorial assumption by allowing dependence between teams through the initial covariance $\Sigma_0 = \Gamma_0 \otimes B$. When $\Gamma_0$ is non-diagonal, the model is not an fSSM under the definition above; it is a correlated Gaussian state-space model with a sparse pairwise likelihood. Rao--Blackwellisation preserves this cross-team dependence in the Gaussian component and samples only the four coordinates of the playing pair. RB-SQMC then applies low-discrepancy sampling to these four coordinates while retaining the complete component means and covariance needed by later matches. It consequently avoids Duffield et al.'s repeated factorial projection while remaining feasible for the $2K$-dimensional state. Here, ``exact'' means that the correlated model is not replaced by a factorial-independence approximation; for finite particle numbers, RB-SMC and RB-SQMC remain Monte Carlo approximations with sampling error.
+
+% This distinction motivates the comparison between the factorial approximation and the correlated RB-SQMC procedure in the remainder of the chapter.
+
+### Todo list
+
+- [X] **Chase the factorial-SSM citation.** The text attributes the factorial state-space model (fSSM) to Duffield, Power and Rimella (2024). The supervisor notes they apply it to sports and are unlikely to have introduced it; Lorenzo Rimella has a separate JMLR paper on factorial state-space models that also cites the origin. Verify the true source and cite the original methodological reference. Do not fabricate a bib entry — confirm against the literature first.
+  - **Document changes:** State that Ghahramani and Jordan introduced the factorial hidden Markov model (FHMM) in the 1995 NIPS paper, expanded in their 1997 *Machine Learning* article. Describe the fSSM as the general-state-space extension of this construction, and Duffield *et al.* as an application and formalisation for online skill rating and sports.
+  - Add verified bibliography entries for Ghahramani and Jordan (1995, 1997). The 1997 journal article is the main methodological citation; cite the 1995 conference version when referring to the earliest publication.
+  - Distinguish the **factorial model structure** from the **factorial inference approximation**: the prior and transition laws factorise across latent components, but a joint observation can induce posterior dependence between them.
+- [X] **Revamp the Duffield/independence narrative (Chapter 3 `Background`).** The point of Duffield *et al.* is less the particular SSM form than the recursive projection back to independence. Explain (i) their inference procedure, (ii) what it implies for teams, and (iii) why the independence approximation is unsatisfactory for football. Position this work as making do with their approximation while retaining exactness via RB + SQMC. **The purpose of this work is to make do with the approximation and see how results differ; however because of the high dimensionality of the system we put a RB + SQMC procedure in place, allowing to handle the system as if it was of low dimension while retaining exactness, contrarily to them.**
+  - **Document changes:** Explain Duffield *et al.*'s recursion explicitly: maintain independent player marginals; propagate the two players in the next match; assimilate the result in their joint distribution; then marginalise or “unpair” the result to restore independent player marginals. The discarded cross-player covariance is the approximation.
+  - Explain the consequence for football: every match creates posterior dependence between the participating teams, and repeated matches transmit information through the competition graph. A factorial filter retains each team's marginal update but discards this joint dependence after each match.
+  - Explain why this is a modelling limitation for national-team football. Shared players, clubs, leagues, tournaments, and common external conditions provide plausible sources of dependence between teams that cannot be represented by an a-priori independent team prior.
+  - State explicitly that the proposed model with non-diagonal $\Gamma_0$ is not factorial under this definition. It is a correlated Gaussian state-space model with a sparse pairwise likelihood, or a relaxation of the factorial model.
+  - Position RB-SQMC as the comparison method: it preserves the correlated Gaussian dependence through the Rao--Blackwell covariance update and samples only the four coordinates of the playing pair. It therefore avoids Duffield *et al.*'s repeated projection back to independent teams while remaining computationally feasible in the high-dimensional system.
+  - Use “exact” carefully: RB-SQMC targets the non-factorial model without a factorial-independence approximation; finite particle SMC/SQMC still has Monte Carlo error and is not finite-$N$ exact.
+- **Draft replacement text for Chapter 3 `Background`:**
+  ```latex
+  In a general state-space model, the joint distribution of latent states and observations can be factorized as
+  \begin{equation}
+  p(x_{0:T},y_{1:T}) = p(x_0)\prod_{t=1}^T p(x_t\mid x_{t-1})p(y_t\mid x_t).
+  \end{equation}
+  The general state-space model and the filtering and smoothing objectives were introduced in Section~\ref{sec:background}; here we specialise the discussion to football. Let $x_t^k$ denote the latent state of team $k$ at matchtime $t$, and let $\mathcal{O}_t=\{i_t,j_t\}$ denote the teams involved in match $t$. The likelihood therefore has the local form $G_t(y_t\mid x_t^{\mathcal{O}_t})$.
+
+  The factorial hidden Markov model was introduced by Ghahramani and Jordan, and the factorial state-space model is its general-state-space extension. Its initial distribution and transition law factorize across latent components, while an observation may depend jointly on a local subset of components. In the football setting, this structure gives
+  \begin{equation}
+  p(x_{0:T}^{1:K},y_{1:T}) = \left[\prod_{k=1}^K p(x_0^k)\prod_{t=1}^T p(x_t^k\mid x_{t-1}^k)\right]\prod_{t=1}^T G_t(y_t\mid x_t^{\mathcal{O}_t}).
+  \end{equation}
+
+  This factorization expresses \emph{a-priori} independence of the team processes: initial team states are independent and each team evolves independently of the others. It does not imply posterior independence. Once a match result is observed, its likelihood couples the latent states of the two participating teams. Results from later matches can transmit this dependence through the network of opponents, even though each individual likelihood contribution involves only two teams.
+
+  Duffield, Power and Rimella apply this factorial construction to online skill rating and sports. Their key computational approximation is the repeated projection of the filtering distribution back into factorial form after each pairwise update. They maintain a separate marginal filtering distribution for each team, propagate the marginals of $i_t$ and $j_t$ to the next matchtime, and assimilate the result in the joint distribution of the playing pair. They then extract the two marginal distributions from this joint update and store them independently for subsequent matches. This final marginalisation, or ``unpairing'', discards the posterior dependence between the two teams. Thus, the approximation is not the pairwise assimilation itself; it is the repeated projection of the coupled posterior back to a product of team-level marginals.
+
+  This approximation is computationally attractive because it avoids representing the full joint distribution over all teams. It is nevertheless restrictive for international football. Shared players, clubs, leagues, tournaments and common external conditions provide plausible sources of dependence between national teams that are not represented by an a-priori independent team prior. More generally, even when the prior team processes are independent, match outcomes create posterior dependence that a factorial filter removes after each update. The resulting team marginals may remain useful for prediction, but they do not retain the joint uncertainty induced by the observed competition history.
+
+  The model developed in this chapter relaxes the factorial assumption by allowing dependence between teams through the initial covariance $\Sigma_0=\Gamma_0\otimes B$. When $\Gamma_0$ is non-diagonal, the model is not an fSSM under the definition above; it is a correlated Gaussian state-space model with a sparse pairwise likelihood. Rao--Blackwellisation preserves this cross-team dependence in the Gaussian component and samples only the four coordinates of the playing pair. RB-SQMC therefore avoids Duffield et al.'s repeated factorial projection while remaining feasible for the $2K$-dimensional state. Here, ``exact'' means that the correlated model is not replaced by a factorial-independence approximation; for finite particle numbers, RB-SMC and RB-SQMC remain Monte Carlo approximations with sampling error.
+  ```
+- [X] **Specialise the football `Background` (Chapter 3).** The general state-space model is already introduced in Chapter 2 (`sec:background`); remove its re-introduction in the football chapter and specialise to football directly. *Merge of QMC and SQMC sections (`sec:qmc`/`sec:sqmc`) is out of scope per author decision.*
+- [X] **A-priori independence wording (Chapter 3).** "latent states of index $k$ are independent" should read "a priori independent, but matches induce dependence". *Done 2026-09-01.*
+- [X] **Purge negative characterisations and hallucinated terminology (Chapter 3).** (i) "it controls dependence but is not itself the score correlation" — replaced with a positive statement of what $\beta$ is. (ii) "rather than an exact application of their transition-sufficiency result" — the term "transition-sufficiency" does not appear in Chopin and Gerber (2017); the passage was rewritten without it, the projected ordering is labelled a dimension-reduction heuristic, and the locality assumption is stated positively. *Done 2026-09-01.*
+- [ ] **Smoothing benefits of SQMC (Discussion).** SQMC's statistical benefit is concentrated in the filtering pass because the effective dimension is small under RB; the smoothing pass is full-dimensional and loses the QMC advantage. Consider fewer filtering particles in SQMC (e.g. SMC 10,000/100 vs SQMC 100/100). Add to the Discussion.
+
+### Structural notes from the supervisor
+
+- **Merge SQMC and QMC** into one section to avoid repetition (deferred per author decision).
+- The football chapter re-introduces the general SSM although it is already covered; specialise instead.
+
+### Confirmed as correct / positive
+
+- The supervisor confirmed the earlier RB-SMC discussion; no corrections raised for that material in this pass.
+
 ## 2026-08-27 21:53:50 BST — Equation and derivation review of Chapter 2
 
 Reviewed [`2_football_model_with_sqmc.tex`](../drafts/chapters/2_football_model_with_sqmc.tex) for mathematical accuracy only. No changes were made to the chapter during the review.

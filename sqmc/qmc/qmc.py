@@ -397,7 +397,10 @@ class Sobol(QMC):
         if n <= 0:
             raise ValueError("Number of samples n must be positive.")
 
-        first_index = self._num_generated
+        # Start at index 1 to drop the first Sobol' point, which is the origin.
+        # The origin is a poor sample in practice, so it is conventionally
+        # omitted (Owen, 2020).
+        first_index = self._num_generated + 1
         stop_index = first_index + n
 
         if stop_index > MAX_POINTS:

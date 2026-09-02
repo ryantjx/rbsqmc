@@ -1,0 +1,8 @@
+\chapter{Discussion}
+
+\section{Limitations}
+
+\section{Extensions}
+\subsection{Parameter Estimation}
+
+The smoothing distribution is tractable via the forward filtering backward simulation (FFBSi) algorithm. However, in practice, the expectation--maximisation (EM) algorithm \citep{nealhinton1998emview,chopinpapaspiliopoulos020introtosmc} collapses the transition covariance towards zero, making the log-likelihood unbounded and the estimate degenerate due to the lack of noise in the backward smoothing procedure. Because the forward covariance degenerates, the backward-sampled trajectories carry little diversity, so the Monte Carlo E-step is dominated by a few trajectories and yields a poor estimate of the smoothing distribution. Parameter estimation via the marginal log-likelihood objective described in Section~\ref{sec:parameter-estimation} instead provided a more stable and robust estimate of the parameters. As a remedy, we place an Inverse-Wishart prior on $B$ \citep{barnardmccullochmeng2000covariance,gelman2014bayesian}, which is a natural choice as it is conjugate to the multivariate normal likelihood \citep{leonardhsu1992covariance}, to regularise the covariance matrix and prevent it from collapsing towards zero during estimation. However, this did not resolve the issue either. Further experiments with sufficient computational resources are needed to explore the parameter-estimation problem in more detail.
