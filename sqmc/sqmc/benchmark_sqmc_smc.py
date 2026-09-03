@@ -128,6 +128,80 @@ def run_smc(observations, n_particles, key):
 
 
 # ---------------------------------------------------------------------------
+# Jitted trajectory runners
+#
+# The per-step Python loop above forces a host<->device sync at every time
+# step, which dominates wall-clock time on a GPU. These variants compile the
+# whole trajectory into a single jax.lax.scan so the filter runs on-device
+# without per-step round-trips. The filter is built once (Python-level) and
+# the scan is jitted over (init_state, observations).
+# ---------------------------------------------------------------------------
+def run_sqmc_jit(observations, n_particles, key):
+    qmc = Sobol(d=2)
+    filter_ = build_sqmc_filter(
+        init_transform=init_transform,
+        propagate_transform=propagate_transform,
+        log_potential=log_potential,
+        n_filter_particles=n_particles,
+        qmc=qmc,
+    )
+    init_state = filter_.init_prepare({"y": observations[0]}, key=key)
+    init_mean = jnp.mean(init_state.particles)
+
+    @jax.jit
+    def scan_trajectory(init_state, obs):
+        def step(carry, y):
+            state = carry
+            state2 = filter_.filter_prepare({"y": y}, key=key)
+            new_state = filter_.filter_combine(state, state2)
+            # filter_combine returns log_weights of shape (N, 1); reshape to
+            # (N,) so the scan carry input/output types match.
+            new_state = new_state._replace(
+                log_weights=new_state.log_weights.reshape(-1)
+            )
+            return new_state, jnp.mean(new_state.particles)
+
+        final_state, means = jax.lax.scan(step, init_state, obs)
+        return final_state, means
+
+    final_state, means = scan_trajectory(init_state, observations[1:])
+    means = jnp.concatenate([jnp.array([init_mean]), means])
+    return final_state, means
+
+
+def run_smc_jit(observations, n_particles, key):
+    resampling_fn = systematic.resampling
+    filter_ = build_smc_filter(
+        init_sample=init_sample,
+        propagate_sample=propagate_sample,
+        log_potential=log_potential,
+        n_filter_particles=n_particles,
+        resampling_fn=resampling_fn,
+    )
+    init_state = filter_.init_prepare({"y": observations[0]}, key=key)
+    init_mean = jnp.mean(init_state.particles)
+
+    @jax.jit
+    def scan_trajectory(init_state, obs):
+        def step(carry, y):
+            state = carry
+            state2 = filter_.filter_prepare({"y": y}, key=key)
+            new_state = filter_.filter_combine(state, state2)
+            # Normalize log_weights to (N,) for scan carry type consistency.
+            new_state = new_state._replace(
+                log_weights=new_state.log_weights.reshape(-1)
+            )
+            return new_state, jnp.mean(new_state.particles)
+
+        final_state, means = jax.lax.scan(step, init_state, obs)
+        return final_state, means
+
+    final_state, means = scan_trajectory(init_state, observations[1:])
+    means = jnp.concatenate([jnp.array([init_mean]), means])
+    return final_state, means
+
+
+# ---------------------------------------------------------------------------
 # Timing helpers
 # ---------------------------------------------------------------------------
 def time_filter(run_fn, observations, n_particles, key, n_reps=DEFAULT_N_REPS):
@@ -214,6 +288,12 @@ def parser() -> argparse.ArgumentParser:
         default="sqmc/sqmc/outputs",
         help="Directory in which to save the plot.",
     )
+    argument_parser.add_argument(
+        "--jit",
+        action="store_true",
+        help="Compile the whole trajectory into a single jax.lax.scan "
+        "instead of running a per-step Python loop.",
+    )
     return argument_parser
 
 
@@ -225,6 +305,11 @@ def main(argv: list[str] | None = None) -> int:
     breakdown_n = arguments.breakdown_n
     seed = arguments.seed
     output_dir = arguments.output_dir
+    use_jit = arguments.jit
+
+    run_sqmc_fn = run_sqmc_jit if use_jit else run_sqmc
+    run_smc_fn = run_smc_jit if use_jit else run_smc
+    mode_label = "jitted (scan)" if use_jit else "per-step loop"
 
     jax.config.update("jax_enable_x64", True)
 
@@ -239,10 +324,10 @@ def main(argv: list[str] | None = None) -> int:
     sqmc_states, smc_states = {}, {}
     sqmc_means_all, smc_means_all = {}, {}
 
-    print("Running throughput benchmark...")
+    print(f"Running throughput benchmark ({mode_label})...")
     for n in particle_counts:
-        t_q, t_q_std, s_q, m_q = time_filter(run_sqmc, y, n, random.PRNGKey(0), n_reps)
-        t_s, t_s_std, s_s, m_s = time_filter(run_smc, y, n, random.PRNGKey(0), n_reps)
+        t_q, t_q_std, s_q, m_q = time_filter(run_sqmc_fn, y, n, random.PRNGKey(0), n_reps)
+        t_s, t_s_std, s_s, m_s = time_filter(run_smc_fn, y, n, random.PRNGKey(0), n_reps)
         sqmc_times.append(t_q)
         smc_times.append(t_s)
         sqmc_times_std.append(t_q_std)
@@ -276,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
     # Print summary table
     # ------------------------------------------------------------------
     print("\n" + "=" * 72)
-    print(f"  SQMC vs SMC benchmark  (T={n_steps}, reps={n_reps})")
+    print(f"  SQMC vs SMC benchmark  (T={n_steps}, reps={n_reps}, {mode_label})")
     print("=" * 72)
     print(f"{'N':>6} {'SQMC time (s)':>14} {'SMC time (s)':>14} {'Speedup':>9} {'SQMC RMSE':>11} {'SMC RMSE':>11}")
     print("-" * 72)

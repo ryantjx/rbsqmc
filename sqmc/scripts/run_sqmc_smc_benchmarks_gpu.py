@@ -28,6 +28,8 @@ REQUIRED_PACKAGES = {
     "scipy": "scipy",
     "matplotlib": "matplotlib",
     "numba": "numba",
+    "cuthbert": "cuthbert",
+    "cuthbertlib": "cuthbertlib",
 }
 
 
@@ -38,7 +40,15 @@ def log(message: str) -> None:
 
 def run(command: list[str], *, cwd: Path | None = None) -> None:
     log("Running: " + " ".join(command))
-    subprocess.run(command, cwd=cwd, check=True)
+    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    if result.stdout:
+        print(result.stdout, end="", flush=True)
+    if result.stderr:
+        print(result.stderr, end="", flush=True)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, command, output=result.stdout, stderr=result.stderr
+        )
 
 
 def install_missing_packages() -> None:
@@ -108,6 +118,8 @@ def validate_config(config: dict) -> dict:
         raise ValueError("sqmc_smc.particle_counts must contain positive integers")
     if int(section["breakdown_n"]) <= 0:
         raise ValueError("sqmc_smc.breakdown_n must be positive")
+    if not isinstance(section.get("jit", False), bool):
+        raise ValueError("sqmc_smc.jit must be a boolean")
     return config
 
 
@@ -118,7 +130,7 @@ def load_config(path: Path) -> dict:
 
 def benchmark_command(config: dict, output_dir: Path) -> list[str]:
     section = config["sqmc_smc"]
-    return [
+    command = [
         sys.executable,
         "-m",
         "sqmc.sqmc.benchmark_sqmc_smc",
@@ -135,6 +147,9 @@ def benchmark_command(config: dict, output_dir: Path) -> list[str]:
         "--output-dir",
         str(output_dir),
     ]
+    if section.get("jit", False):
+        command.append("--jit")
+    return command
 
 
 def parser() -> argparse.ArgumentParser:
@@ -186,6 +201,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not output_dir.is_absolute():
         output_dir = repo_root / output_dir
+
+    # The compressed table is intentionally ignored by Git. Recreate it from
+    # the checked-in Joe--Kuo source before importing sqmc.qmc.qmc.
+    direction_numbers = repo_root / "sqmc/qmc/_sobol_direction_numbers.npz"
+    if not direction_numbers.exists():
+        run(
+            [
+                sys.executable,
+                "sqmc/qmc/_generate_sobol_data.py",
+                "--verify-scipy",
+            ],
+            cwd=repo_root,
+        )
 
     os.environ.setdefault("JAX_ENABLE_X64", "true")
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")

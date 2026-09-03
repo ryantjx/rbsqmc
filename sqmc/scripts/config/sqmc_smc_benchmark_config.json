@@ -10,6 +10,7 @@
     "n_reps": 5,
     "particle_counts": [64, 128, 256, 512, 1024, 2048, 4096],
     "breakdown_n": 1024,
-    "seed": 42
+    "seed": 42,
+    "jit": true
   }
 }
