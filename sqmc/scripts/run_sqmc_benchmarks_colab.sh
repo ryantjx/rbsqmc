@@ -92,6 +92,7 @@ main() {
     local required_outputs=(
         "sqmc_gpu_vs_cpu.png"
         "sqmc_gpu_vs_cpu.json"
+        "sqmc_gpu_vs_cpu_by_dimension.png"
         "run_config.json"
         "run_metadata.json"
     )

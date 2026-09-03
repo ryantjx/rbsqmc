@@ -118,6 +118,10 @@ def validate_config(config: dict) -> dict:
         int(n) <= 0 for n in section["particle_counts"]
     ):
         raise ValueError("sqmc.particle_counts must contain positive integers")
+    if not section.get("dimensions", [5]) or any(
+        int(d) <= 0 for d in section["dimensions"]
+    ):
+        raise ValueError("sqmc.dimensions must contain positive integers")
     if int(section["breakdown_n"]) <= 0:
         raise ValueError("sqmc.breakdown_n must be positive")
     if float(section.get("target_rmse", 0.5)) <= 0:
@@ -149,6 +153,8 @@ def benchmark_command(config: dict, output_dir: Path) -> list[str]:
         str(section.get("warmups", 0)),
         "--particle-counts",
         *(str(n) for n in section["particle_counts"]),
+        "--dimensions",
+        *(str(d) for d in section.get("dimensions", [5])),
         "--breakdown-n",
         str(section["breakdown_n"]),
         "--target-rmse",
@@ -248,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     required_outputs = (
         "sqmc_gpu_vs_cpu.png",
         "sqmc_gpu_vs_cpu.json",
+        "sqmc_gpu_vs_cpu_by_dimension.png",
         "run_config.json",
     )
     missing_outputs = [

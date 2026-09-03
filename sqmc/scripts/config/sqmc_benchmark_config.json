@@ -10,6 +10,7 @@
     "n_reps": 5,
     "warmups": 1,
     "particle_counts": [64, 128, 256, 512, 1024, 2048, 4096],
+    "dimensions": [2, 5, 10, 20, 50],
     "breakdown_n": 1024,
     "target_rmse": 0.5,
     "platforms": ["gpu", "cpu"],

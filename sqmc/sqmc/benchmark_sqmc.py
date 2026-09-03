@@ -59,7 +59,8 @@ DEFAULT_N_STEPS = 100
 DEFAULT_N_REPS = 5  # repetitions for timing / RMSE averaging
 DEFAULT_N_WARMUPS = 1  # warmup runs (first captures JAX compile time)
 DEFAULT_PARTICLE_COUNTS = [64, 128, 256, 512, 1024, 2048, 4096]
-DEFAULT_BASE_DIMENSION = 10  # state dimension for the sweeps
+DEFAULT_BASE_DIMENSION = 10  # state dimension for the detailed 4-panel figure
+DEFAULT_DIMENSIONS = [2, 5, 10, 20, 50]  # state dimensions for the scaling sweep
 DEFAULT_BREAKDOWN_N = 1024  # particle count for the per-step breakdown
 DEFAULT_TARGET_RMSE = 0.5
 DEFAULT_SEED = 42
@@ -340,48 +341,93 @@ def run_sweep(
     n_warmups,
     particle_counts,
     base_dimension,
+    dimensions,
     breakdown_n,
+    target_rmse,
     seed,
 ):
-    """Run the full SQMC sweep on the current JAX backend. Returns a dict."""
-    jax.config.update("jax_enable_x64", True)
-    key = random.PRNGKey(seed)
-    x_true, y = generate_observations(key, n_steps, base_dimension)
-    model = make_sqmc_model(base_dimension)
+    """Run the full SQMC sweep on the current JAX backend. Returns a dict.
 
-    sweep = {}
-    for n in particle_counts:
-        result = time_filter(
-            run_sqmc_jit, y, n, random.PRNGKey(0), base_dimension, model,
-            n_reps, n_warmups,
+    Produces (i) a per-N sweep at ``base_dimension`` (for the detailed 4-panel
+    figure) and (ii) per-dimension sweeps used for the time-to-target-error and
+    speedup-vs-dimension figure. The wall-clock reported for a dimension is the
+    median at the smallest particle count reaching RMSE <= ``target_rmse``.
+    """
+    jax.config.update("jax_enable_x64", True)
+
+    def sweep_dimension(dimension):
+        key = random.PRNGKey(seed)
+        x_true, y = generate_observations(key, n_steps, dimension)
+        model = make_sqmc_model(dimension)
+        sweep = {}
+        for n in particle_counts:
+            result = time_filter(
+                run_sqmc_jit, y, n, random.PRNGKey(0), dimension, model,
+                n_reps, n_warmups,
+            )
+            sweep[n] = {
+                "median": result["median"],
+                "mean": result["mean"],
+                "std": result["std"],
+                "q25": result["q25"],
+                "q75": result["q75"],
+                "compile_time": result["compile_time"],
+                "rmse": rmse(result["means"], x_true),
+            }
+            print(
+                f"  [{platform}] d={dimension:>3} N={n:>5}: "
+                f"med {result['median']:.4f}s (IQR {result['q25']:.4f}-"
+                f"{result['q75']:.4f}) compile {result['compile_time']:.4f}s "
+                f"RMSE {sweep[n]['rmse']:.4f}",
+                flush=True,
+            )
+        return sweep
+
+    base_sweep = sweep_dimension(base_dimension)
+
+    dim_data = {}
+    for d in dimensions:
+        dim_sweep = sweep_dimension(d)
+        reached_n = min(
+            (n for n, s in dim_sweep.items() if s["rmse"] <= target_rmse),
+            default=None,
         )
-        sweep[n] = {
-            "median": result["median"],
-            "mean": result["mean"],
-            "std": result["std"],
-            "q25": result["q25"],
-            "q75": result["q75"],
-            "compile_time": result["compile_time"],
-            "rmse": rmse(result["means"], x_true),
-        }
+        if reached_n is None:
+            dim_data[str(d)] = {
+                "sweep": {str(n): dim_sweep[n] for n in particle_counts},
+                "reached": False,
+                "n_star": None,
+                "time_to_target": None,
+            }
+        else:
+            dim_data[str(d)] = {
+                "sweep": {str(n): dim_sweep[n] for n in particle_counts},
+                "reached": True,
+                "n_star": reached_n,
+                "time_to_target": dim_sweep[reached_n]["median"],
+            }
+        ttt = (f"{dim_data[str(d)]['time_to_target']:.4f}"
+               if dim_data[str(d)]["reached"] else "-")
         print(
-            f"  [{platform}] N={n:>5}: med {result['median']:.4f}s "
-            f"(IQR {result['q25']:.4f}-{result['q75']:.4f}) "
-            f"compile {result['compile_time']:.4f}s RMSE {sweep[n]['rmse']:.4f}",
+            f"  [{platform}] d={d:>3} reached={dim_data[str(d)]['reached']} "
+            f"N*={dim_data[str(d)]['n_star'] or '-'} time_to_target={ttt}s",
             flush=True,
         )
 
     breakdown = time_breakdown(
         base_dimension, breakdown_n, random.PRNGKey(1), n_reps, n_warmups
     )
-    print(f"  [{platform}] breakdown @ N={breakdown_n}: {breakdown}", flush=True)
+    print(f"  [{platform}] breakdown @ d={base_dimension} N={breakdown_n}: "
+          f"{breakdown}", flush=True)
 
     return {
         "platform": platform,
         "n_steps": n_steps,
         "base_dimension": base_dimension,
         "breakdown_n": breakdown_n,
-        "sweep": {str(n): sweep[n] for n in particle_counts},
+        "target_rmse": target_rmse,
+        "sweep": {str(n): base_sweep[n] for n in particle_counts},
+        "dimensions": dim_data,
         "breakdown": breakdown,
         "devices": [str(d) for d in jax.devices()],
         "hardware": capture_hardware(),
@@ -482,6 +528,87 @@ def plot_gpu_vs_cpu(results, particle_counts, target_rmse, output_dir):
     return out_path
 
 
+def plot_gpu_vs_cpu_by_dimension(results, dimensions, output_dir):
+    """Time-to-target error and speedup across state dimensions, GPU vs CPU.
+
+    For each dimension the wall-clock at the smallest particle count reaching
+    RMSE <= target is the operating point, so the panels compare the two
+    backends at parity of error.
+    """
+    platforms = [p for p in ("gpu", "cpu") if p in results]
+    colours = {"gpu": "C0", "cpu": "C1"}
+    ds = [int(d) for d in dimensions]
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.6))
+    fig.suptitle("SQMC GPU vs CPU across state dimensions", fontsize=15)
+
+    # Panel 1: time-to-target error (wall-clock at RMSE <= target) vs dimension.
+    ax = axes[0]
+    for p in platforms:
+        dims_ok, times = [], []
+        for d in ds:
+            entry = results[p]["dimensions"][str(d)]
+            if entry["reached"]:
+                dims_ok.append(d)
+                times.append(entry["time_to_target"])
+        if dims_ok:
+            ax.plot(dims_ok, times, colours[p] + "o-", label=p.upper(),
+                    linewidth=1.5)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("State dimension $d$")
+    ax.set_ylabel("Wall-clock to RMSE $\\leq$ target (s)")
+    ax.set_title("Time to target error")
+    ax.legend()
+    ax.grid(True, alpha=0.3, which="both")
+
+    # Panel 2: speedup ratio time_CPU / time_GPU at the target particle count.
+    ax = axes[1]
+    if "gpu" in results and "cpu" in results:
+        dims_ok, speedup = [], []
+        for d in ds:
+            g = results["gpu"]["dimensions"][str(d)]
+            c = results["cpu"]["dimensions"][str(d)]
+            if g["reached"] and c["reached"]:
+                dims_ok.append(d)
+                speedup.append(c["time_to_target"] / g["time_to_target"])
+        if dims_ok:
+            ax.plot(dims_ok, speedup, "C2o-", linewidth=1.5)
+    ax.axhline(1.0, color="k", linestyle=":", linewidth=1)
+    ax.set_xscale("log")
+    ax.set_xlabel("State dimension $d$")
+    ax.set_ylabel("Speedup (time CPU / time GPU)")
+    ax.set_title("Speedup ratio at target error")
+    ax.grid(True, alpha=0.3, which="both")
+
+    # Panel 3: particles needed N* to reach target RMSE vs dimension.
+    ax = axes[2]
+    for p in platforms:
+        dims_ok, nstars = [], []
+        for d in ds:
+            entry = results[p]["dimensions"][str(d)]
+            if entry["reached"]:
+                dims_ok.append(d)
+                nstars.append(entry["n_star"])
+        if dims_ok:
+            ax.plot(dims_ok, nstars, colours[p] + "o-", label=p.upper(),
+                    linewidth=1.5)
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("State dimension $d$")
+    ax.set_ylabel("Particles to target error $N^*$")
+    ax.set_title("Particles to target error")
+    ax.legend()
+    ax.grid(True, alpha=0.3, which="both")
+
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    out_path = os.path.join(output_dir, "sqmc_gpu_vs_cpu_by_dimension.png")
+    os.makedirs(output_dir, exist_ok=True)
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    return out_path
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -493,6 +620,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--particle-counts", type=int, nargs="+",
                    default=DEFAULT_PARTICLE_COUNTS)
     p.add_argument("--base-dimension", type=int, default=DEFAULT_BASE_DIMENSION)
+    p.add_argument("--dimensions", type=int, nargs="+", default=DEFAULT_DIMENSIONS,
+                   help="State dimensions for the scaling sweep (time-to-target, speedup).")
     p.add_argument("--breakdown-n", type=int, default=DEFAULT_BREAKDOWN_N)
     p.add_argument("--target-rmse", type=float, default=DEFAULT_TARGET_RMSE)
     p.add_argument("--seed", type=int, default=DEFAULT_SEED)
@@ -513,7 +642,8 @@ def main(argv: list[str] | None = None) -> int:
         platform = args.platforms[0]
         result = run_sweep(
             platform, args.n_steps, args.n_reps, args.warmups,
-            args.particle_counts, args.base_dimension, args.breakdown_n, args.seed,
+            args.particle_counts, args.base_dimension, args.dimensions,
+            args.breakdown_n, args.target_rmse, args.seed,
         )
         payload = json.dumps(result)
         if args._results_json:
@@ -538,6 +668,7 @@ def main(argv: list[str] | None = None) -> int:
             "--warmups", str(args.warmups),
             "--particle-counts", *(str(n) for n in args.particle_counts),
             "--base-dimension", str(args.base_dimension),
+            "--dimensions", *(str(d) for d in args.dimensions),
             "--breakdown-n", str(args.breakdown_n),
             "--seed", str(args.seed),
             "--platforms", platform,
@@ -551,9 +682,13 @@ def main(argv: list[str] | None = None) -> int:
 
     out_path = plot_gpu_vs_cpu(results, args.particle_counts, args.target_rmse,
                                args.output_dir)
+    by_dim_path = plot_gpu_vs_cpu_by_dimension(
+        results, args.dimensions, args.output_dir
+    )
     merged = {
         "platforms": args.platforms,
         "target_rmse": args.target_rmse,
+        "dimensions": args.dimensions,
         "results": results,
     }
     json_path = os.path.join(args.output_dir, "sqmc_gpu_vs_cpu.json")
@@ -570,6 +705,7 @@ def main(argv: list[str] | None = None) -> int:
             "warmups": args.warmups,
             "particle_counts": args.particle_counts,
             "base_dimension": args.base_dimension,
+            "dimensions": args.dimensions,
             "breakdown_n": args.breakdown_n,
             "target_rmse": args.target_rmse,
             "seed": args.seed,
@@ -589,6 +725,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     print(f"\nFigure saved to {out_path}")
+    print(f"By-dimension figure saved to {by_dim_path}")
     print(f"Results saved to {json_path}")
     print(f"Run config saved to {run_config_path}")
     return 0
