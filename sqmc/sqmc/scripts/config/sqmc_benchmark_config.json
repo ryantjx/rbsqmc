@@ -1,0 +1,20 @@
+{
+  "gpu_type": "A100",
+  "colab_timeout": 1800,
+  "session": "sqmc_benchmarks_gpu",
+  "repo_url": "https://github.com/ryantjx/rbsqmc.git",
+  "repo_branch": "main",
+  "remote_output_dir": "sqmc/sqmc/scripts/outputs/sqmc_gpu",
+  "sqmc": {
+    "n_steps": 100,
+    "n_reps": 7,
+    "accuracy_reps": 8,
+    "warmups": 2,
+    "particle_counts": [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536],
+    "base_dimension": 10,
+    "platforms": ["gpu", "cpu"],
+    "seed": 42,
+    "precision": "float64",
+    "jit": true
+  }
+}

@@ -77,8 +77,8 @@ def build_filter(
     # The QMC point set has dimension du + 1 (resampling + state); init only
     # needs the first du coordinates.
     def init_sample(key, model_inputs):
-        u = qmc.sample(n_filter_particles)          # (N, du + 1)
-        u = u[:, : qmc.d - 1]                        # (N, du) for the initial state
+        u = qmc.sample(n_filter_particles)          # generating QMC sequence (N, du + 1) (can only sample d coordinates)
+        u = u[:, : qmc.d - 1]                        # slice (N, du) for the initial state
         return jax.vmap(init_transform, (0, None))(u, model_inputs)
 
     return Filter(
@@ -172,6 +172,7 @@ def filter_prepare(
     if key is None:
         raise ValueError("A JAX PRNG key must be provided.")
 
+    # we are using 
     # init_sample returns the full (N, du) batch; take the first row to infer
     # the single-particle shape, then broadcast to (N, du).
     batch = init_sample(key, model_inputs)
@@ -179,13 +180,20 @@ def filter_prepare(
         lambda x: jnp.empty((n_filter_particles,) + x.shape[1:], dtype=x.dtype),
         batch,
     )
+    log_weights = jnp.zeros(n_filter_particles)
+    
+    # log normalizing constant starts from the weights 
+    # identical to jnp.array = 0 because log_weights are all zeros, so logsumexp(log_weights) = log(N)
+    log_normalizing_constant = jax.nn.logsumexp(log_weights) - jnp.log(
+        n_filter_particles
+    )
     return ParticleFilterState(
         key=key,
         particles=particles,
-        log_weights=jnp.zeros(n_filter_particles),
+        log_weights=log_weights,
         ancestor_indices=jnp.arange(n_filter_particles),
         model_inputs=model_inputs,
-        log_normalizing_constant=jnp.array(0.0),
+        log_normalizing_constant=log_normalizing_constant,
     )
 
 def filter_combine(
@@ -240,24 +248,22 @@ def filter_combine(
         log_normalizing_constant,
     )
 
-def _configure_platform() -> str:
-    """Select the JAX backend: GPU when available, otherwise CPU.
-
-    Returns the name of the selected platform. This must be called before any
-    JAX computation so the backend is chosen up front.
-    """
-    try:
-        if jax.devices(backend="gpu"):
-            jax.config.update("jax_platform_name", "gpu")
-            return "gpu"
-    except Exception:
-        pass
-    jax.config.update("jax_platform_name", "cpu")
-    return "cpu"
-
-
 def main():
     """Build an SQMC filter and run it on a simple 1D random-walk model."""
+    def _configure_platform() -> str:
+        """Select the JAX backend: GPU when available, otherwise CPU.
+
+        Returns the name of the selected platform. This must be called before any
+        JAX computation so the backend is chosen up front.
+        """
+        try:
+            if jax.devices(backend="gpu"):
+                jax.config.update("jax_platform_name", "gpu")
+                return "gpu"
+        except Exception:
+            pass
+        jax.config.update("jax_platform_name", "cpu")
+        return "cpu"
 
     jax.config.update("jax_enable_x64", True)
     platform = _configure_platform()

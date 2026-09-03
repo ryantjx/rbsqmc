@@ -1,9 +1,9 @@
-"""Clone rbsqmc and run the SQMC vs SMC benchmark on a Colab GPU.
+"""Clone rbsqmc and run the four-method SQMC/SMC benchmark on Colab.
 
 The local orchestrator submits only this entry point and its compact JSON
 configuration. This script shallow-clones the public repository, installs
 missing non-JAX dependencies, verifies that JAX is using a GPU, runs the
-SQMC vs SMC benchmark, and records metadata.
+SMC/SQMC GPU-vs-CPU benchmark, and records metadata.
 """
 
 from __future__ import annotations
@@ -112,27 +112,23 @@ def validate_config(config: dict) -> dict:
         raise ValueError("sqmc.n_steps must be positive")
     if int(section["n_reps"]) <= 0:
         raise ValueError("sqmc.n_reps must be positive")
+    if int(section.get("accuracy_reps", 8)) <= 0:
+        raise ValueError("sqmc.accuracy_reps must be positive")
     if int(section.get("warmups", 0)) < 0:
         raise ValueError("sqmc.warmups must be non-negative")
     if not section["particle_counts"] or any(
         int(n) <= 0 for n in section["particle_counts"]
     ):
         raise ValueError("sqmc.particle_counts must contain positive integers")
-    if not section.get("dimensions", [5]) or any(
-        int(d) <= 0 for d in section["dimensions"]
-    ):
-        raise ValueError("sqmc.dimensions must contain positive integers")
-    if int(section["breakdown_n"]) <= 0:
-        raise ValueError("sqmc.breakdown_n must be positive")
-    if float(section.get("target_rmse", 0.5)) <= 0:
-        raise ValueError("sqmc.target_rmse must be positive")
-    if float(section.get("target_margin", 0.05)) < 0:
-        raise ValueError("sqmc.target_margin must be non-negative")
+    if int(section.get("base_dimension", 10)) <= 0:
+        raise ValueError("sqmc.base_dimension must be positive")
+    if section.get("precision", "float64") != "float64":
+        raise ValueError("sqmc.precision must be float64")
+    if section.get("jit", True) is not True:
+        raise ValueError("sqmc.jit must be true for this benchmark")
     platforms = section.get("platforms", ["gpu", "cpu"])
     if not platforms or any(p not in ("gpu", "cpu") for p in platforms):
         raise ValueError("sqmc.platforms must be a subset of ['gpu', 'cpu']")
-    if not isinstance(section.get("jit", True), bool):
-        raise ValueError("sqmc.jit must be a boolean")
     return config
 
 
@@ -146,23 +142,19 @@ def benchmark_command(config: dict, output_dir: Path) -> list[str]:
     return [
         sys.executable,
         "-m",
-        "sqmc.sqmc.benchmark_sqmc",
+        "sqmc.sqmc.benchmark_sqmc_smc",
         "--n-steps",
         str(section["n_steps"]),
         "--n-reps",
         str(section["n_reps"]),
+        "--accuracy-reps",
+        str(section.get("accuracy_reps", 8)),
         "--warmups",
         str(section.get("warmups", 0)),
         "--particle-counts",
         *(str(n) for n in section["particle_counts"]),
-        "--dimensions",
-        *(str(d) for d in section.get("dimensions", [5])),
-        "--breakdown-n",
-        str(section["breakdown_n"]),
-        "--target-rmse",
-        str(section.get("target_rmse", 0.5)),
-        "--target-margin",
-        str(section.get("target_margin", 0.05)),
+        "--base-dimension",
+        str(section.get("base_dimension", 10)),
         "--seed",
         str(section["seed"]),
         "--platforms",
@@ -174,12 +166,12 @@ def benchmark_command(config: dict, output_dir: Path) -> list[str]:
 
 def parser() -> argparse.ArgumentParser:
     argument_parser = argparse.ArgumentParser(
-        description="Run the SQMC vs SMC benchmark on a Colab GPU."
+        description="Run the four-method SQMC/SMC benchmark on a Colab GPU."
     )
     argument_parser.add_argument(
         "--config",
         default=DEFAULT_CONFIG_NAME,
-        help="Config filename under sqmc/scripts/config after cloning.",
+        help="Config filename under sqmc/sqmc/scripts/config after cloning.",
     )
     argument_parser.add_argument(
         "--config-json",
@@ -200,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         config_path = Path(arguments.config)
         if not config_path.is_absolute():
-            local_candidate = Path.cwd() / "sqmc/scripts/config" / config_path
+            local_candidate = Path(__file__).resolve().parent / "config" / config_path
             config_path = (
                 local_candidate
                 if local_candidate.exists()
@@ -256,9 +248,10 @@ def main(argv: list[str] | None = None) -> int:
     run(benchmark_command(config, output_dir), cwd=repo_root)
 
     required_outputs = (
-        "sqmc_gpu_vs_cpu.png",
-        "sqmc_gpu_vs_cpu.json",
-        "sqmc_gpu_vs_cpu_by_dimension.png",
+        "sqmc_smc_runtime.png",
+        "sqmc_smc_time_to_accuracy.png",
+        "sqmc_smc_results.json",
+        "claims_evaluation.json",
         "run_config.json",
     )
     missing_outputs = [

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Launch a Colab GPU, shallow-clone the public rbsqmc repository, run both
-# comparisons, download only the required GPU artifacts, and stop the session.
+# Launch a Colab GPU, shallow-clone the public rbsqmc repository, run the QMC
+# and Hilbert-sort benchmarks, download the required artifacts, and stop the session.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
+REPO_ROOT="$(cd "${HERE}/../../.." && pwd)"
 CONFIG="${HERE}/config/qmc_gpu_benchmark_config.json"
 REMOTE_RUNNER="${HERE}/run_qmc_benchmarks_gpu.py"
-LOCAL_OUTPUTS="${HERE}/outputs/gpu"
+LOCAL_OUTPUTS="${HERE}/outputs/qmc_gpu"
 SESSION_LAUNCHED=0
 
 log() {

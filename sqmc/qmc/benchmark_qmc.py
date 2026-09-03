@@ -44,6 +44,7 @@ from sqmc.qmc.qmc import Halton, Sobol, _MAXBITS, _sobol_sample_batched
 
 _DEFAULT_N_VALUES = (128, 512, 2_048, 8_192, 32_768, 131_072)
 _DEFAULT_OUTPUT_DIRECTORY = Path(__file__).resolve().parent / "outputs"
+_DEFAULT_SCRAMBLE = True
 
 
 @dataclass(frozen=True)
@@ -486,8 +487,9 @@ def _parse_arguments() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--scramble",
-        action="store_true",
-        help="Benchmark scrambled rather than deterministic sequences.",
+        action=argparse.BooleanOptionalAction,
+        default=_DEFAULT_SCRAMBLE,
+        help="Benchmark scrambled sequences (default: enabled).",
     )
     parser.add_argument(
         "--output-dir",

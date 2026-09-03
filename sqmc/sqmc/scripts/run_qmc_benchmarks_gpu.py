@@ -142,8 +142,10 @@ def benchmark_command(
         "--output-dir",
         str(output_dir),
     ]
-    if module == "sqmc.qmc.benchmark_qmc" and values.get("scramble", False):
-        command.append("--scramble")
+    if module == "sqmc.qmc.benchmark_qmc":
+        command.append(
+            "--scramble" if values.get("scramble", True) else "--no-scramble"
+        )
     return command
 
 
@@ -547,16 +549,26 @@ def create_qmc_algorithm_summary(
 
 def parser() -> argparse.ArgumentParser:
     argument_parser = argparse.ArgumentParser(
-        description="Run both SQMC comparison benchmarks on a Colab GPU."
+        description="Run SQMC comparison benchmarks on a Colab GPU."
     )
     argument_parser.add_argument(
         "--config",
         default=DEFAULT_CONFIG_NAME,
-        help="Config filename under sqmc/scripts/config after cloning.",
+        help="Config filename under sqmc/sqmc/scripts/config after cloning.",
     )
     argument_parser.add_argument(
         "--config-json",
         help="Compact config supplied by the local orchestrator.",
+    )
+    argument_parser.add_argument(
+        "--module",
+        choices=("qmc", "hilbert_sort"),
+        action="append",
+        default=[],
+        help=(
+            "Restrict the benchmark to one or more modules. May be given "
+            "repeatedly. When omitted, both qmc and hilbert_sort run."
+        ),
     )
     argument_parser.add_argument(
         "--dry-run",
@@ -566,6 +578,25 @@ def parser() -> argparse.ArgumentParser:
     return argument_parser
 
 
+def _selected_modules(arguments: argparse.Namespace) -> tuple[str, ...]:
+    """Return the modules to benchmark, honouring the ``--module`` filter."""
+    return tuple(dict.fromkeys(arguments.module)) if arguments.module else ("qmc", "hilbert_sort")
+
+
+MODULE_ARTIFACTS = {
+    "hilbert_sort": (
+        "hilbert_sort_benchmark_gpu.png",
+        "hilbert_sort_benchmark.csv",
+        "hilbert_sort_benchmark_by_algorithm_gpu.png",
+    ),
+    "qmc": (
+        "qmc_benchmark_gpu.png",
+        "qmc_benchmark.csv",
+        "qmc_benchmark_by_algorithm_gpu.png",
+    ),
+}
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     if arguments.config_json:
@@ -573,7 +604,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         config_path = Path(arguments.config)
         if not config_path.is_absolute():
-            local_candidate = Path.cwd() / "sqmc/scripts/config" / config_path
+            local_candidate = Path(__file__).resolve().parent / "config" / config_path
             config_path = (
                 local_candidate
                 if local_candidate.exists()
@@ -583,29 +614,28 @@ def main(argv: list[str] | None = None) -> int:
 
     output_dir = Path(config["remote_output_dir"])
 
+    modules = _selected_modules(arguments)
+
     if arguments.dry_run:
-        for dimension in config["hilbert_sort"]["dimensions"]:
-            print(
-                " ".join(
-                    benchmark_command(
-                        "sqmc.hilbert_sort.benchmark_hilbert_sort",
-                        config["hilbert_sort"],
-                        int(dimension),
-                        output_dir / "by_dimension/hilbert_sort" / f"d{dimension}",
+        for module in modules:
+            if module == "hilbert_sort":
+                command = "sqmc.hilbert_sort.benchmark_hilbert_sort"
+                section = config["hilbert_sort"]
+            else:
+                command = "sqmc.qmc.benchmark_qmc"
+                section = config["qmc"]
+            dimension_dir = f"by_dimension/{module}"
+            for dimension_value in section["dimensions"]:
+                print(
+                    " ".join(
+                        benchmark_command(
+                            command,
+                            section,
+                            int(dimension_value),
+                            output_dir / dimension_dir / f"d{dimension_value}",
+                        )
                     )
                 )
-            )
-        for dimension in config["qmc"]["dimensions"]:
-            print(
-                " ".join(
-                    benchmark_command(
-                        "sqmc.qmc.benchmark_qmc",
-                        config["qmc"],
-                        int(dimension),
-                        output_dir / "by_dimension/qmc" / f"d{dimension}",
-                    )
-                )
-            )
         return 0
 
     install_missing_packages()
@@ -648,53 +678,52 @@ def main(argv: list[str] | None = None) -> int:
     log(f"JAX devices: {jax.devices()}")
 
     hilbert_rows = {}
-    for dimension_value in config["hilbert_sort"]["dimensions"]:
-        dimension = int(dimension_value)
-        dimension_output = (
-            output_dir / "by_dimension/hilbert_sort" / f"d{dimension}"
-        )
-        run(
-            benchmark_command(
-                "sqmc.hilbert_sort.benchmark_hilbert_sort",
-                config["hilbert_sort"],
-                dimension,
-                dimension_output,
-            ),
-            cwd=repo_root,
-        )
-        hilbert_rows[dimension] = read_csv_rows(
-            dimension_output / "hilbert_sort_benchmark.csv"
-        )
+    if "hilbert_sort" in modules:
+        for dimension_value in config["hilbert_sort"]["dimensions"]:
+            dimension = int(dimension_value)
+            dimension_output = (
+                output_dir / "by_dimension/hilbert_sort" / f"d{dimension}"
+            )
+            run(
+                benchmark_command(
+                    "sqmc.hilbert_sort.benchmark_hilbert_sort",
+                    config["hilbert_sort"],
+                    dimension,
+                    dimension_output,
+                ),
+                cwd=repo_root,
+            )
+            hilbert_rows[dimension] = read_csv_rows(
+                dimension_output / "hilbert_sort_benchmark.csv"
+            )
 
     qmc_rows = {}
-    for dimension_value in config["qmc"]["dimensions"]:
-        dimension = int(dimension_value)
-        dimension_output = output_dir / "by_dimension/qmc" / f"d{dimension}"
-        run(
-            benchmark_command(
-                "sqmc.qmc.benchmark_qmc",
-                config["qmc"],
-                dimension,
-                dimension_output,
-            ),
-            cwd=repo_root,
-        )
-        qmc_rows[dimension] = read_csv_rows(
-            dimension_output / "qmc_benchmark.csv"
-        )
+    if "qmc" in modules:
+        for dimension_value in config["qmc"]["dimensions"]:
+            dimension = int(dimension_value)
+            dimension_output = output_dir / "by_dimension/qmc" / f"d{dimension}"
+            run(
+                benchmark_command(
+                    "sqmc.qmc.benchmark_qmc",
+                    config["qmc"],
+                    dimension,
+                    dimension_output,
+                ),
+                cwd=repo_root,
+            )
+            qmc_rows[dimension] = read_csv_rows(
+                dimension_output / "qmc_benchmark.csv"
+            )
 
-    create_hilbert_summary(hilbert_rows, output_dir)
-    create_qmc_summary(qmc_rows, output_dir)
-    create_hilbert_algorithm_summary(hilbert_rows, output_dir)
-    create_qmc_algorithm_summary(qmc_rows, output_dir)
+    if "hilbert_sort" in modules:
+        create_hilbert_summary(hilbert_rows, output_dir)
+        create_hilbert_algorithm_summary(hilbert_rows, output_dir)
+    if "qmc" in modules:
+        create_qmc_summary(qmc_rows, output_dir)
+        create_qmc_algorithm_summary(qmc_rows, output_dir)
 
-    required_outputs = (
-        "hilbert_sort_benchmark_gpu.png",
-        "hilbert_sort_benchmark.csv",
-        "qmc_benchmark_gpu.png",
-        "qmc_benchmark.csv",
-        "hilbert_sort_benchmark_by_algorithm_gpu.png",
-        "qmc_benchmark_by_algorithm_gpu.png",
+    required_outputs = list(
+        name for module in modules for name in MODULE_ARTIFACTS[module]
     )
     missing_outputs = [
         name for name in required_outputs if not (output_dir / name).is_file()
@@ -712,11 +741,12 @@ def main(argv: list[str] | None = None) -> int:
         "scipy": scipy.__version__,
         "matplotlib": matplotlib.__version__,
         "numba": numba.__version__,
+        "modules": list(modules),
         "config": config,
     }
     metadata_path = output_dir / "run_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    log(f"Both GPU benchmarks completed; outputs are in {output_dir}")
+    log(f"GPU benchmark(s) '{'/'.join(modules)}' completed; outputs are in {output_dir}")
     return 0
 
 

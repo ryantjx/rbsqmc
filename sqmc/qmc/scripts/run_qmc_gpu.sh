@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Launch a Colab GPU, shallow-clone the public rbsqmc repository, run the
-# SQMC GPU vs CPU benchmark, download only the required GPU artifacts, and
-# stop the session.
+# Launch a Colab GPU, shallow-clone the public rbsqmc repository, run only the
+# QMC (Halton/Sobol) benchmark, download the required artifacts, and stop the
+# session. Uses the shared QMC+hilbert runner with --module qmc.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
-CONFIG="${HERE}/config/sqmc_benchmark_config.json"
-REMOTE_RUNNER="${HERE}/run_sqmc_benchmarks_gpu.py"
-LOCAL_OUTPUTS="${HERE}/outputs/sqmc_gpu"
+REPO_ROOT="$(cd "${HERE}/../../.." && pwd)"
+CONFIG="${HERE}/config/qmc_gpu_benchmark_config.json"
+REMOTE_RUNNER="${REPO_ROOT}/sqmc/sqmc/scripts/run_qmc_benchmarks_gpu.py"
+LOCAL_OUTPUTS="${REPO_ROOT}/sqmc/qmc/outputs"
 SESSION_LAUNCHED=0
 
 log() {
@@ -73,7 +73,7 @@ main() {
     if [[ "${dry_run}" -eq 1 ]]; then
         log "GPU=${GPU_TYPE}, timeout=${COLAB_TIMEOUT}, session=${SESSION}"
         log "Remote source: $(read_config repo_url), branch=$(read_config repo_branch)"
-        python3 "${REMOTE_RUNNER}" --config-json "${CONFIG_JSON}" --dry-run
+        python3 "${REMOTE_RUNNER}" --config-json "${CONFIG_JSON}" --dry-run --module qmc
         return 0
     fi
 
@@ -83,17 +83,16 @@ main() {
 
     # Avoid accidentally attaching to stale state from an earlier failed run.
     colab stop --session "${SESSION}" >/dev/null 2>&1 || true
-    log "Cloning the public repository and running the SQMC GPU vs CPU benchmark on GPU=${GPU_TYPE}"
+    log "Cloning the public repository and running the QMC benchmark on GPU=${GPU_TYPE}"
     SESSION_LAUNCHED=1
     colab run --gpu "${GPU_TYPE}" --keep --timeout "${COLAB_TIMEOUT}" \
         --session "${SESSION}" "${REMOTE_RUNNER}" \
-        --config-json "${CONFIG_JSON}"
+        --config-json "${CONFIG_JSON}" --module qmc
 
     local required_outputs=(
-        "sqmc_gpu_vs_cpu.png"
-        "sqmc_gpu_vs_cpu.json"
-        "sqmc_gpu_vs_cpu_by_dimension.png"
-        "run_config.json"
+        "qmc_benchmark_gpu.png"
+        "qmc_benchmark.csv"
+        "qmc_benchmark_by_algorithm_gpu.png"
         "run_metadata.json"
     )
     local output
@@ -103,7 +102,7 @@ main() {
 
     stop_session
     trap - EXIT
-    log "SQMC GPU vs CPU benchmark artifacts downloaded to ${LOCAL_OUTPUTS}"
+    log "QMC GPU benchmark artifacts downloaded to ${LOCAL_OUTPUTS}"
 }
 
 main "$@"
