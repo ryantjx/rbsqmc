@@ -235,7 +235,18 @@ Exact implementations are documented in the repository \href{https://github.com/
 
 % Current draft is written in `https://github.com/ryantjx/sqmc-cuthbert' and will be integrated into `state-space-models/cuthbert' under the issue [Implement Sequential Quasi Monte Carlo #255](https://github.com/state-space-models/cuthbert/issues/255)
 
-\section{Empirical evaluation --- SQMC vs SMC}
+\section{Empirical evaluation --- GPU vs CPU}
+
+% mention that GPU jit compile is excluded
+% mention that float64 is slower on consumer GPUs()
+
+% PLOTS
+% per-time step breakdown - time per step for SQMC on GPU vs CPU with interquartile range
+
+% log-likelihood vs particle count - SQMC requires less particles to achieve the same log-likelihood as SMC.
+% particles to target error - SQMC requires less particles to achieve a lower RMSE than SMC (d = 5, target RMSE = X)
+% throughput to time - SQMC generally takes longer than SMC for same number of particles (should be a point plot with interquartile range)
+
 
 % 1. Throughput comparison between SMC and SQMC on GPU. 
 % - x-axis - log N

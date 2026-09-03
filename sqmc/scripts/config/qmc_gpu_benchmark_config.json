@@ -1,5 +1,5 @@
 {
-  "gpu_type": "L4",
+  "gpu_type": "A100",
   "colab_timeout": 1800,
   "session": "sqmc_benchmarks_gpu",
   "repo_url": "https://github.com/ryantjx/rbsqmc.git",

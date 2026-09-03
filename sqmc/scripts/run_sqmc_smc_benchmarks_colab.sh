@@ -90,7 +90,9 @@ main() {
         --config-json "${CONFIG_JSON}"
 
     local required_outputs=(
-        "sqmc_vs_smc_benchmark.png"
+        "sqmc_gpu_vs_cpu.png"
+        "sqmc_gpu_vs_cpu.json"
+        "run_config.json"
         "run_metadata.json"
     )
     local output

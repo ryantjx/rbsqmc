@@ -19,22 +19,22 @@
 \contentsline {section}{\numberline {2.2}Why SQMC maps naturally onto accelerators}{9}{section.2.2}%
 \contentsline {paragraph}{QMC point generation is compute-bound, not latency-bound.}{9}{section*.13}%
 \contentsline {paragraph}{Hilbert index computation and the residual sort cost.}{9}{section*.15}%
-\contentsline {section}{\numberline {2.3}Empirical evaluation --- SQMC vs SMC}{11}{section.2.3}%
-\contentsline {chapter}{\numberline {3}Rao-Blackwellised SQMC for Football Matches}{12}{chapter.3}%
-\contentsline {section}{\numberline {3.1}Background}{12}{section.3.1}%
-\contentsline {section}{\numberline {3.2}Model}{14}{section.3.2}%
-\contentsline {section}{\numberline {3.3}Rao-Blackwellised SMC (RB-SMC)}{15}{section.3.3}%
-\contentsline {section}{\numberline {3.4}RB-SMC Smoothing}{19}{section.3.4}%
-\contentsline {section}{\numberline {3.5}Rao-Blackwellised SQMC (RB-SQMC)}{21}{section.3.5}%
-\contentsline {section}{\numberline {3.6}Parameter Estimation}{23}{section.3.6}%
-\contentsline {section}{\numberline {3.7}Performance comparison}{24}{section.3.7}%
-\contentsline {chapter}{\numberline {4}Discussion}{25}{chapter.4}%
-\contentsline {section}{\numberline {4.1}Limitations}{25}{section.4.1}%
-\contentsline {section}{\numberline {4.2}Extensions}{25}{section.4.2}%
-\contentsline {subsection}{\numberline {4.2.1}Parameter Estimation}{25}{subsection.4.2.1}%
-\contentsline {chapter}{\numberline {A}Proofs}{26}{appendix.A}%
-\contentsline {section}{\numberline {A.1}Kronecker structure reduces the inference dimension}{26}{section.A.1}%
-\contentsline {section}{\numberline {A.2}The deterministic inverse-CDF transform in RB-SQMC}{27}{section.A.2}%
-\contentsline {chapter}{\numberline {B}Implementation Code}{29}{appendix.B}%
-\contentsline {section}{\numberline {B.1}Quasi-Monte Carlo point generation (\texttt {qmc.py})}{29}{section.B.1}%
-\contentsline {section}{\numberline {B.2}Hilbert sorting (\texttt {hilbert\_sort.py})}{29}{section.B.2}%
+\contentsline {section}{\numberline {2.3}Empirical evaluation --- GPU vs CPU}{10}{section.2.3}%
+\contentsline {chapter}{\numberline {3}Rao-Blackwellised SQMC for Football Matches}{11}{chapter.3}%
+\contentsline {section}{\numberline {3.1}Background}{11}{section.3.1}%
+\contentsline {section}{\numberline {3.2}Model}{13}{section.3.2}%
+\contentsline {section}{\numberline {3.3}Rao-Blackwellised SMC (RB-SMC)}{14}{section.3.3}%
+\contentsline {section}{\numberline {3.4}RB-SMC Smoothing}{18}{section.3.4}%
+\contentsline {section}{\numberline {3.5}Rao-Blackwellised SQMC (RB-SQMC)}{20}{section.3.5}%
+\contentsline {section}{\numberline {3.6}Parameter Estimation}{22}{section.3.6}%
+\contentsline {section}{\numberline {3.7}Performance comparison}{23}{section.3.7}%
+\contentsline {chapter}{\numberline {4}Discussion}{24}{chapter.4}%
+\contentsline {section}{\numberline {4.1}Limitations}{24}{section.4.1}%
+\contentsline {section}{\numberline {4.2}Extensions}{24}{section.4.2}%
+\contentsline {subsection}{\numberline {4.2.1}Parameter Estimation}{24}{subsection.4.2.1}%
+\contentsline {chapter}{\numberline {A}Proofs}{25}{appendix.A}%
+\contentsline {section}{\numberline {A.1}Kronecker structure reduces the inference dimension}{25}{section.A.1}%
+\contentsline {section}{\numberline {A.2}The deterministic inverse-CDF transform in RB-SQMC}{26}{section.A.2}%
+\contentsline {chapter}{\numberline {B}Implementation Code}{28}{appendix.B}%
+\contentsline {section}{\numberline {B.1}Quasi-Monte Carlo point generation (\texttt {qmc.py})}{28}{section.B.1}%
+\contentsline {section}{\numberline {B.2}Hilbert sorting (\texttt {hilbert\_sort.py})}{28}{section.B.2}%

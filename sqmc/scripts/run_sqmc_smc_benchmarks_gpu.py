@@ -112,13 +112,20 @@ def validate_config(config: dict) -> dict:
         raise ValueError("sqmc_smc.n_steps must be positive")
     if int(section["n_reps"]) <= 0:
         raise ValueError("sqmc_smc.n_reps must be positive")
+    if int(section.get("warmups", 0)) < 0:
+        raise ValueError("sqmc_smc.warmups must be non-negative")
     if not section["particle_counts"] or any(
         int(n) <= 0 for n in section["particle_counts"]
     ):
         raise ValueError("sqmc_smc.particle_counts must contain positive integers")
     if int(section["breakdown_n"]) <= 0:
         raise ValueError("sqmc_smc.breakdown_n must be positive")
-    if not isinstance(section.get("jit", False), bool):
+    if float(section.get("target_rmse", 0.5)) <= 0:
+        raise ValueError("sqmc_smc.target_rmse must be positive")
+    platforms = section.get("platforms", ["gpu", "cpu"])
+    if not platforms or any(p not in ("gpu", "cpu") for p in platforms):
+        raise ValueError("sqmc_smc.platforms must be a subset of ['gpu', 'cpu']")
+    if not isinstance(section.get("jit", True), bool):
         raise ValueError("sqmc_smc.jit must be a boolean")
     return config
 
@@ -130,26 +137,29 @@ def load_config(path: Path) -> dict:
 
 def benchmark_command(config: dict, output_dir: Path) -> list[str]:
     section = config["sqmc_smc"]
-    command = [
+    return [
         sys.executable,
         "-m",
-        "sqmc.sqmc.benchmark_sqmc_smc",
+        "sqmc.sqmc.benchmark_sqmc",
         "--n-steps",
         str(section["n_steps"]),
         "--n-reps",
         str(section["n_reps"]),
+        "--warmups",
+        str(section.get("warmups", 0)),
         "--particle-counts",
         *(str(n) for n in section["particle_counts"]),
         "--breakdown-n",
         str(section["breakdown_n"]),
+        "--target-rmse",
+        str(section.get("target_rmse", 0.5)),
         "--seed",
         str(section["seed"]),
+        "--platforms",
+        *section.get("platforms", ["gpu", "cpu"]),
         "--output-dir",
         str(output_dir),
     ]
-    if section.get("jit", False):
-        command.append("--jit")
-    return command
 
 
 def parser() -> argparse.ArgumentParser:
@@ -235,7 +245,11 @@ def main(argv: list[str] | None = None) -> int:
 
     run(benchmark_command(config, output_dir), cwd=repo_root)
 
-    required_outputs = ("sqmc_vs_smc_benchmark.png",)
+    required_outputs = (
+        "sqmc_gpu_vs_cpu.png",
+        "sqmc_gpu_vs_cpu.json",
+        "run_config.json",
+    )
     missing_outputs = [
         name for name in required_outputs if not (output_dir / name).is_file()
     ]
@@ -248,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
         "python": platform.python_version(),
         "jax": jax.__version__,
         "jax_devices": [str(device) for device in jax.devices()],
+        "gpu_name": str(jax.devices("gpu")[0]) if jax.devices("gpu") else None,
         "numpy": numpy.__version__,
         "scipy": scipy.__version__,
         "matplotlib": matplotlib.__version__,
@@ -256,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     metadata_path = output_dir / "run_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    log(f"SQMC vs SMC GPU benchmark completed; outputs are in {output_dir}")
+    log(f"SQMC GPU vs CPU benchmark completed; outputs are in {output_dir}")
     return 0
 
 
