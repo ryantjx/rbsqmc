@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Launch a Colab GPU, shallow-clone the public rbsqmc repository, run both
-# comparisons, download only the required GPU artifacts, and stop the session.
+# Launch a Colab GPU, shallow-clone the public rbsqmc repository, run the
+# SQMC vs SMC benchmark, download only the required GPU artifacts, and stop
+# the session.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
-CONFIG="${HERE}/config/gpu_benchmark_config.json"
-REMOTE_RUNNER="${HERE}/run_benchmarks_gpu.py"
+CONFIG="${HERE}/config/sqmc_smc_benchmark_config.json"
+REMOTE_RUNNER="${HERE}/run_sqmc_smc_benchmarks_gpu.py"
 LOCAL_OUTPUTS="${HERE}/outputs/gpu"
 SESSION_LAUNCHED=0
 
@@ -82,19 +83,14 @@ main() {
 
     # Avoid accidentally attaching to stale state from an earlier failed run.
     colab stop --session "${SESSION}" >/dev/null 2>&1 || true
-    log "Cloning the public repository and running comparisons on GPU=${GPU_TYPE}"
+    log "Cloning the public repository and running the SQMC vs SMC benchmark on GPU=${GPU_TYPE}"
     SESSION_LAUNCHED=1
     colab run --gpu "${GPU_TYPE}" --keep --timeout "${COLAB_TIMEOUT}" \
         --session "${SESSION}" "${REMOTE_RUNNER}" \
         --config-json "${CONFIG_JSON}"
 
     local required_outputs=(
-        "hilbert_sort_benchmark_gpu.png"
-        "hilbert_sort_benchmark.csv"
-        "qmc_benchmark_gpu.png"
-        "qmc_benchmark.csv"
-        "hilbert_sort_benchmark_by_algorithm_gpu.png"
-        "qmc_benchmark_by_algorithm_gpu.png"
+        "sqmc_vs_smc_benchmark.png"
         "run_metadata.json"
     )
     local output
@@ -104,7 +100,7 @@ main() {
 
     stop_session
     trap - EXIT
-    log "GPU benchmark artifacts downloaded to ${LOCAL_OUTPUTS}"
+    log "SQMC vs SMC GPU benchmark artifacts downloaded to ${LOCAL_OUTPUTS}"
 }
 
 main "$@"

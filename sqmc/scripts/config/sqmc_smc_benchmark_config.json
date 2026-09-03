@@ -1,0 +1,15 @@
+{
+  "gpu_type": "L4",
+  "colab_timeout": 1800,
+  "session": "sqmc_smc_benchmarks_gpu",
+  "repo_url": "https://github.com/ryantjx/rbsqmc.git",
+  "repo_branch": "main",
+  "remote_output_dir": "sqmc/scripts/outputs/gpu",
+  "sqmc_smc": {
+    "n_steps": 100,
+    "n_reps": 5,
+    "particle_counts": [64, 128, 256, 512, 1024, 2048, 4096],
+    "breakdown_n": 1024,
+    "seed": 42
+  }
+}
