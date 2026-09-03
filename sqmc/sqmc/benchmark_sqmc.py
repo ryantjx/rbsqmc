@@ -60,7 +60,7 @@ DEFAULT_N_REPS = 5  # repetitions for timing / RMSE averaging
 DEFAULT_N_WARMUPS = 1  # warmup runs (first captures JAX compile time)
 DEFAULT_PARTICLE_COUNTS = [64, 128, 256, 512, 1024, 2048, 4096]
 DEFAULT_BASE_DIMENSION = 10  # state dimension for the detailed 4-panel figure
-DEFAULT_DIMENSIONS = [2, 5, 10, 20, 50]  # state dimensions for the scaling sweep
+DEFAULT_DIMENSIONS = [2, 5, 10, 20, 50, 60]  # state dimensions for the scaling sweep
 DEFAULT_BREAKDOWN_N = 1024  # particle count for the per-step breakdown
 DEFAULT_TARGET_RMSE = 0.5
 DEFAULT_SEED = 42
@@ -156,10 +156,17 @@ def generate_observations(key, n_steps, dimension):
 # Jitted SQMC trajectory runner
 #
 # The whole trajectory is compiled into a single jax.lax.scan so the filter runs
-# on-device without per-step host<->device round-trips. This is the only runner
-# used for timing; a per-step Python loop would force a sync at every step.
+# on-device without per-step host<->device round-trips. The observations are
+# pre-transferred to the device once (outside any timed region), so the
+# host<->device transfer latency is excluded when the scan is timed.
 # ---------------------------------------------------------------------------
 def run_sqmc_jit(observations, n_particles, key, dimension, model):
+    """Build the jitted SQMC trajectory scan and pre-transfer observations.
+
+    Returns ``(scan_trajectory, init_state, obs_device, init_mean)``. The
+    observations are moved to the device once here, so timing the returned
+    ``scan_trajectory`` measures only the on-device filtering steps.
+    """
     init_transform, propagate_transform, log_potential = model
     qmc = Sobol(d=dimension + 1)
     filter_ = build_sqmc_filter(
@@ -188,9 +195,9 @@ def run_sqmc_jit(observations, n_particles, key, dimension, model):
         final_state, means = jax.lax.scan(step, init_state, obs)
         return final_state, means
 
-    final_state, means = scan_trajectory(init_state, observations[1:])
-    means = jnp.concatenate([jnp.array([init_mean]), means])
-    return final_state, means
+    # Move observations to the device once, outside the timed region.
+    obs_device = jax.device_put(observations[1:])
+    return scan_trajectory, init_state, obs_device, init_mean
 
 
 # ---------------------------------------------------------------------------
@@ -206,31 +213,36 @@ def time_filter(
     n_reps=DEFAULT_N_REPS,
     n_warmups=DEFAULT_N_WARMUPS,
 ):
-    """Time on-device execution only.
+    """Time only the SQMC filtering steps (the jitted scan).
 
-    Each timed call blocks on the result with ``jax.block_until_ready`` inside
-    the timed region, so the wall-clock stops only when the device has finished.
-    The first warmup call is reported separately as ``compile_time`` (XLA
-    compilation plus host->device transfer), a one-off cost excluded from the
-    steady-state statistics.
+    The observations are pre-transferred to the device by ``run_fn`` before any
+    timing, so the host<->device transfer latency is excluded. Each timed call
+    blocks on the result with ``jax.block_until_ready`` inside the timed region,
+    so the recorded time is the on-device filtering time only. The first warmup
+    call is reported separately as ``compile_time`` (XLA compilation), a one-off
+    cost excluded from the steady-state statistics.
 
     Returns a dict with median/mean/std/q25/q75/compile_time and the final
     ``(state, means)``.
     """
+    scan_trajectory, init_state, obs_device, init_mean = run_fn(
+        observations, n_particles, key, dimension, model
+    )
     compile_time = None
     state, means = None, None
     for w in range(n_warmups):
         t0 = time.perf_counter()
-        state, means = run_fn(observations, n_particles, key, dimension, model)
+        state, means = scan_trajectory(init_state, obs_device)
         jax.block_until_ready((state, means))
         if w == 0:
             compile_time = time.perf_counter() - t0
     times = []
     for _ in range(n_reps):
         t0 = time.perf_counter()
-        state, means = run_fn(observations, n_particles, key, dimension, model)
+        state, means = scan_trajectory(init_state, obs_device)
         jax.block_until_ready((state, means))
         times.append(time.perf_counter() - t0)
+    means = jnp.concatenate([jnp.array([init_mean]), means])
     return {
         "median": float(np.median(times)),
         "mean": float(np.mean(times)),
