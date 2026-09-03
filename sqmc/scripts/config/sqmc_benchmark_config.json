@@ -1,11 +1,11 @@
 {
   "gpu_type": "A100",
   "colab_timeout": 1800,
-  "session": "sqmc_smc_benchmarks_gpu",
+  "session": "sqmc_benchmarks_gpu",
   "repo_url": "https://github.com/ryantjx/rbsqmc.git",
   "repo_branch": "main",
   "remote_output_dir": "sqmc/scripts/outputs/sqmc_gpu",
-  "sqmc_smc": {
+  "sqmc": {
     "n_steps": 100,
     "n_reps": 5,
     "warmups": 1,

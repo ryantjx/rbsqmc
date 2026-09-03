@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Launch a Colab GPU, shallow-clone the public rbsqmc repository, run the
-# SQMC vs SMC benchmark, download only the required GPU artifacts, and stop
-# the session.
+# SQMC GPU vs CPU benchmark, download only the required GPU artifacts, and
+# stop the session.
 
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
-CONFIG="${HERE}/config/sqmc_smc_benchmark_config.json"
-REMOTE_RUNNER="${HERE}/run_sqmc_smc_benchmarks_gpu.py"
-LOCAL_OUTPUTS="${HERE}/outputs/gpu"
+CONFIG="${HERE}/config/sqmc_benchmark_config.json"
+REMOTE_RUNNER="${HERE}/run_sqmc_benchmarks_gpu.py"
+LOCAL_OUTPUTS="${HERE}/outputs/sqmc_gpu"
 SESSION_LAUNCHED=0
 
 log() {
@@ -83,7 +83,7 @@ main() {
 
     # Avoid accidentally attaching to stale state from an earlier failed run.
     colab stop --session "${SESSION}" >/dev/null 2>&1 || true
-    log "Cloning the public repository and running the SQMC vs SMC benchmark on GPU=${GPU_TYPE}"
+    log "Cloning the public repository and running the SQMC GPU vs CPU benchmark on GPU=${GPU_TYPE}"
     SESSION_LAUNCHED=1
     colab run --gpu "${GPU_TYPE}" --keep --timeout "${COLAB_TIMEOUT}" \
         --session "${SESSION}" "${REMOTE_RUNNER}" \
@@ -102,7 +102,7 @@ main() {
 
     stop_session
     trap - EXIT
-    log "SQMC vs SMC GPU benchmark artifacts downloaded to ${LOCAL_OUTPUTS}"
+    log "SQMC GPU vs CPU benchmark artifacts downloaded to ${LOCAL_OUTPUTS}"
 }
 
 main "$@"

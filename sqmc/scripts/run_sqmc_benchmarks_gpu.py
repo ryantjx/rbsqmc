@@ -22,7 +22,7 @@ from pathlib import Path
 
 REPO_DIR = Path("/content/rbsqmc")
 REPO_URL = "https://github.com/ryantjx/rbsqmc.git"
-DEFAULT_CONFIG_NAME = "sqmc_smc_benchmark_config.json"
+DEFAULT_CONFIG_NAME = "sqmc_benchmark_config.json"
 REQUIRED_PACKAGES = {
     "numpy": "numpy",
     "scipy": "scipy",
@@ -105,28 +105,28 @@ def clone_repository(repo_url: str, branch: str) -> Path:
 
 def validate_config(config: dict) -> dict:
     """Validate and normalize the benchmark configuration."""
-    section = config.get("sqmc_smc")
+    section = config.get("sqmc")
     if not section:
-        raise ValueError("missing config section: sqmc_smc")
+        raise ValueError("missing config section: sqmc")
     if int(section["n_steps"]) <= 0:
-        raise ValueError("sqmc_smc.n_steps must be positive")
+        raise ValueError("sqmc.n_steps must be positive")
     if int(section["n_reps"]) <= 0:
-        raise ValueError("sqmc_smc.n_reps must be positive")
+        raise ValueError("sqmc.n_reps must be positive")
     if int(section.get("warmups", 0)) < 0:
-        raise ValueError("sqmc_smc.warmups must be non-negative")
+        raise ValueError("sqmc.warmups must be non-negative")
     if not section["particle_counts"] or any(
         int(n) <= 0 for n in section["particle_counts"]
     ):
-        raise ValueError("sqmc_smc.particle_counts must contain positive integers")
+        raise ValueError("sqmc.particle_counts must contain positive integers")
     if int(section["breakdown_n"]) <= 0:
-        raise ValueError("sqmc_smc.breakdown_n must be positive")
+        raise ValueError("sqmc.breakdown_n must be positive")
     if float(section.get("target_rmse", 0.5)) <= 0:
-        raise ValueError("sqmc_smc.target_rmse must be positive")
+        raise ValueError("sqmc.target_rmse must be positive")
     platforms = section.get("platforms", ["gpu", "cpu"])
     if not platforms or any(p not in ("gpu", "cpu") for p in platforms):
-        raise ValueError("sqmc_smc.platforms must be a subset of ['gpu', 'cpu']")
+        raise ValueError("sqmc.platforms must be a subset of ['gpu', 'cpu']")
     if not isinstance(section.get("jit", True), bool):
-        raise ValueError("sqmc_smc.jit must be a boolean")
+        raise ValueError("sqmc.jit must be a boolean")
     return config
 
 
@@ -136,7 +136,7 @@ def load_config(path: Path) -> dict:
 
 
 def benchmark_command(config: dict, output_dir: Path) -> list[str]:
-    section = config["sqmc_smc"]
+    section = config["sqmc"]
     return [
         sys.executable,
         "-m",
