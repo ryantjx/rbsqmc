@@ -406,7 +406,11 @@ def plot_gpu_vs_cpu(results, particle_counts, target_rmse, output_dir):
         mean = np.array([sweep[str(n)]["mean"] for n in ns])
         q25 = np.array([sweep[str(n)]["q25"] for n in ns])
         q75 = np.array([sweep[str(n)]["q75"] for n in ns])
-        yerr = np.vstack([mean - q25, q75 - mean])
+        # Error-bar extents must be non-negative. With few repetitions the mean
+        # can fall outside the IQR, so clamp the extent at the data point rather
+        # than passing a negative value to matplotlib.
+        yerr = np.maximum(mean - q25, 0.0), np.maximum(q75 - mean, 0.0)
+        yerr = np.vstack(yerr)
         ax.errorbar(
             ns, mean, yerr=yerr, fmt=colours[p] + "o-",
             label=p.upper(), linewidth=1.5, capsize=3,
