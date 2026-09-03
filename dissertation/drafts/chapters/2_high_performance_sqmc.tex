@@ -188,7 +188,9 @@ Halton point generation & \texttt{Halton.sample} in \texttt{qmc.py} & Radical in
 \end{table}
 
 \paragraph{Hilbert index computation and the residual sort cost.}
-The resampling step of SQMC orders the particles along a Hilbert curve, which maps nearby states to nearby positions in the ordering and thereby preserves the low-discrepancy structure of the particle cloud \citep{chopingerber2015sqmc}. Computing the Hilbert index of a point is a purely local, index-based operation that requires no lookup tables \citep{kellerwachterbinder2022hilbertcurve}, and deterministic index computations of this kind "can be reliably parallelized and results are exactly reproducible" \citep{kellerwachterbinder2022hilbertcurve}. This makes the per-particle index computation cheap and embarrassingly parallel. The subsequent ordering of those indices, however, is a separate global sort of $\mathcal{O}(N \log N)$ operations and remains the main synchronisation point of the filter; the GPU accelerates the index computation and point generation but does not remove this global sort. Table~\ref{tab:hilbert-accelerator} summarises the Hilbert-sort operations and why they benefit from the GPU.
+The resampling step of SQMC orders the particles along a Hilbert curve, which maps nearby states to nearby positions in the ordering and thereby preserves the low-discrepancy structure of the particle cloud \citep{chopingerber2015sqmc}. Computing the Hilbert index of a point is a purely local, index-based operation that requires no lookup tables \citep{kellerwachterbinder2022hilbertcurve}, and deterministic index computations of this kind "can be reliably parallelized and results are exactly reproducible" \citep{kellerwachterbinder2022hilbertcurve}. This makes the per-particle index computation cheap and embarrassingly parallel.
+
+Our implementation follows the reference Hilbert-ordering routine of the \texttt{particles} library \citep{chopinpapaspiliopoulos020introtosmc}, computing the packed index from bit interleaving and Gray-code reflection, so that the ordering used here is consistent with the standard SQMC formulation. The subsequent ordering of those indices, however, is a separate global sort of $\mathcal{O}(N \log N)$ operations and remains the main synchronisation point of the filter; the GPU accelerates the index computation and point generation but does not remove this global sort. Table~\ref{tab:hilbert-accelerator} summarises the Hilbert-sort operations and why they benefit from the GPU.
 
 \begin{table}[t]
 \centering
@@ -235,45 +237,103 @@ Exact implementations are documented in the repository \href{https://github.com/
 
 % Current draft is written in `https://github.com/ryantjx/sqmc-cuthbert' and will be integrated into `state-space-models/cuthbert' under the issue [Implement Sequential Quasi Monte Carlo #255](https://github.com/state-space-models/cuthbert/issues/255)
 
-\section{Empirical evaluation --- GPU vs CPU}
+\section{Empirical evaluation---SQMC versus SMC on GPU}
 
-% mention that GPU jit compile is excluded
-% mention that float64 is slower on consumer GPUs()
+% The empirical question is whether the statistical efficiency of SQMC compensates
+% for its additional work on a GPU.  The comparison therefore includes only
+% SMC--GPU and SQMC--GPU.  GPU--CPU acceleration and the isolated Hilbert-sort and
+% QMC kernels are separate questions, evaluated by their dedicated
+% microbenchmarks rather than inferred from this experiment.
 
-% PLOTS
-% per-time step breakdown - time per step for SQMC on GPU vs CPU with interquartile range
+% \subsection{Experimental design}
 
-% log-likelihood vs particle count - SQMC requires less particles to achieve the same log-likelihood as SMC.
-% particles to target error - SQMC requires less particles to achieve a lower RMSE than SMC (d = 5, target RMSE = X)
-% throughput to time - SQMC generally takes longer than SMC for same number of particles (should be a point plot with interquartile range)
+% We use a $d$-dimensional linear Gaussian random walk,
+% \begin{align}
+%     X_0 &\sim \mathcal{N}(0,I_d), \\
+%     X_t \mid X_{t-1} &\sim \mathcal{N}(X_{t-1},0.5^2 I_d), \\
+%     Y_t \mid X_t &\sim \mathcal{N}(X_t,I_d).
+% \end{align}
+% Both filters receive the same observations and use the same likelihood.  SMC
+% uses systematic resampling and independent pseudo-random propagation keys;
+% SQMC uses a separate scramble per replicate and non-overlapping Sobol' blocks
+% across filtering times.  We consider
+% $d\in\{2,5,10,30,60\}$, $N\in\{64,256,1024,4096,16384,65536\}$ and a horizon
+% of 100 observations in double precision.  Each method is implemented as a
+% fully JIT-compiled \texttt{lax.scan}.  Steady-state runtime is measured after
+% compilation and two warm-up executions, using seven repetitions and explicit
+% device synchronisation.  Setup, compilation and first execution are recorded
+% separately as cold-start metadata.
 
-% SMC-CPU
-% SMC-GPU
-% SQMC-CPU
-% SQMC-GPU
+% Approximation error is evaluated against the exact Kalman filtering
+% distribution, not against the simulated latent state.  If its filtering mean
+% and scalar marginal variance are $\mu_t$ and $P_t$, respectively, we report
+% the normalised filtering-mean error
+% \begin{equation}
+%     \left[\frac{1}{Td}\sum_{t,j}
+%     \frac{(\widehat\mu_{tj}-\mu_{tj})^2}{P_t}\right]^{1/2}
+% \end{equation}
+% and the relative marginal-variance error
+% \begin{equation}
+%     \left[\frac{1}{Td}\sum_{t,j}
+%     \frac{(\widehat P_{tj}-P_t)^2}{P_t^2}\right]^{1/2}.
+% \end{equation}
+% This isolates numerical approximation error: error relative to one realised
+% state would include irreducible posterior uncertainty even for an exact
+% filter.  Eight paired replicates use identical data for SMC and SQMC but
+% independent SMC random keys and SQMC scrambles.  Replicate-level results are
+% retained, and means and 95\% confidence intervals are calculated from the
+% paired differences.
 
-% Experimental design
-% Describe:
-% - random-walk/Gaussian-observation model;
-% - state dimension \(d=10\);
-% - \(T=100\);
-% - fixed float64 precision;
-% - particle counts \(64,\ldots,65536\);
-% - scrambled Sobol blocks for SQMC;
-% - systematic resampling for SMC;
-% - separate CPU/GPU subprocesses;
-% - seven steady-state timing repetitions and eight accuracy repetitions;
-% - cold timing including setup, transfer, compilation, and first execution.
-% End-to-end runtime scaling
-% Use sqmc_smc_runtime.png.
-% Report:
-% - mean runtime with 95% confidence intervals;
-% - empirical log-log slopes from claims_evaluation.json;
-% - GPU/CPU speedups separately for SMC and SQMC;
-% - particle-count crossover points;
-% - SQMC/SMC runtime ratios on CPU and GPU.
-% This tests whether GPU acceleration benefits SMC and SQMC, and whether SQMC incurs a runtime overhead.
-% The chapter should not claim that the GPU is beneficial merely because isolated operations parallelize well. The claim must follow the end-to-end speedup intervals.
+% Diagnostic scans are compiled and run separately from the timed scans.  At
+% each filtering step they additionally record normalised effective sample size,
+% $\operatorname{ESS}_t/N$, and the fraction of distinct parents selected by
+% resampling.  This separation prevents bookkeeping for posterior variance, ESS
+% and ancestry from being charged to either algorithm's headline runtime.
+
+% \subsection{Same-particle runtime overhead}
+
+% The runtime comparison reports steady-state wall-clock time against $N$ in one
+% panel per dimension, with a mean and 95\% timing confidence interval for each
+% method.  Its purpose is deliberately narrow: it determines whether SQMC is
+% faster than SMC at the same particle count.  These timing intervals quantify
+% run-to-run performance variability and must not be interpreted as uncertainty
+% in either filtering estimator.  The generated figure is
+% \texttt{sqmc\_smc\_gpu\_runtime.png}.
+
+% \subsection{Low-particle posterior coverage and ancestry}
+
+% The diversity comparison uses three heat maps over $(d,N)$: the ratio of
+% SQMC to SMC marginal-variance error, the difference in normalised ESS, and the
+% difference in unique-ancestor fraction.  The latter two quantities are useful
+% diagnostics for weight and genealogical degeneracy, while variance error checks
+% whether an apparently diverse cloud actually approximates posterior spread.
+% Together they test the proposed advantage at small $N$, particularly for
+% $d=30$ and $d=60$.  The generated figure is
+% \texttt{sqmc\_smc\_gpu\_diversity.png}.
+
+% There is an important implementation qualification at these dimensions.  The
+% packed Hilbert key contains 62 bits in total, hence the implementation retains
+% only $\lfloor 62/d\rfloor$ coordinate bits: two bits per coordinate at $d=30$
+% and one bit at $d=60$.  Consequently, those experiments evaluate the current
+% packed-index implementation rather than an unrestricted high-dimensional SQMC
+% algorithm.  High nominal dimension may reduce, rather than improve, the SQMC
+% advantage.
+
+% \subsection{Does statistical efficiency offset SQMC's extra work?}
+
+% Runtime--error plots show both the normalised mean error and relative variance
+% error, faceted by dimension and annotated with $N$.  They permit a lower-$N$
+% SQMC configuration to be compared directly with a higher-$N$ SMC
+% configuration; the generated figure is
+% \texttt{sqmc\_smc\_gpu\_efficiency.png}.  The JSON analysis also records the
+% empirical Pareto frontiers and maps each SQMC point to the cheapest SMC point
+% whose mean and variance error point estimates are no larger.
+
+% No arbitrary equivalence margin is imposed.  A lower-particle SQMC efficiency advantage is labelled statistically supported only if SQMC uses fewer particles, its upper runtime bound is below the corresponding SMC lower bound,
+% and its confidence intervals are strictly better for both mean and variance
+% error.  Point-estimate matches that do not meet all three conditions are marked
+% exploratory or inconclusive.  The reported conclusion must follow the observed
+% results even when they weaken the proposed advantage.
 
 % Sequential quasi-Monte Carlo (SQMC), introduced by \citet{chopingerber2015sqmc}, is a quasi-Monte Carlo (QMC) analogue of sequential Monte Carlo (SMC) that replaces the stochastic proposal in particle filtering with deterministic propagation through low-discrepancy point sets, achieving an error rate smaller
 % than the Monte Carlo rate $O_P(N^{-1/2})$. The method was subsequently extended to continuous-time state-space models and high-dimensional settings, with an emphasis on dimension reduction, by \citet{chopingerber2017sqmcintroduction}, and is treated in depth in the textbook of \citet{chopinpapaspiliopoulos020introtosmc}.

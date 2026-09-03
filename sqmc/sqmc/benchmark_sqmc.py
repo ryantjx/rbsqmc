@@ -49,6 +49,7 @@ from sqmc.qmc.qmc import Sobol, _MAXBITS, _sobol_sample_batched
 # ---------------------------------------------------------------------------
 SIGMA_X = 0.5
 SIGMA_Y = 1.0
+SIGMA_0 = 1.0
 DEFAULT_N_STEPS = 100
 DEFAULT_N_REPS = 7  # repetitions for steady-state timing
 DEFAULT_N_WARMUPS = 1  # warmup runs (first captures JAX compile time)
@@ -168,13 +169,17 @@ def make_sqmc_model(dimension):
 
 def generate_observations(key, n_steps, dimension):
     """Generate true states (T, d) and noisy observations (T, d)."""
-    keys = random.split(key, n_steps)
+    initial_key, transition_key, observation_key = random.split(key, 3)
     x_true = jnp.zeros((n_steps, dimension))
-    x_prev = jnp.zeros(dimension)
-    for t in range(n_steps):
-        x_prev = x_prev + SIGMA_X * random.normal(keys[t], (dimension,))
+    x_prev = SIGMA_0 * random.normal(initial_key, (dimension,))
+    x_true = x_true.at[0].set(x_prev)
+    transition_keys = random.split(transition_key, max(n_steps - 1, 1))
+    for t in range(1, n_steps):
+        x_prev = x_prev + SIGMA_X * random.normal(
+            transition_keys[t - 1], (dimension,)
+        )
         x_true = x_true.at[t].set(x_prev)
-    obs_keys = random.split(random.fold_in(key, 999), n_steps)
+    obs_keys = random.split(observation_key, n_steps)
     noise = jax.vmap(lambda k: SIGMA_Y * random.normal(k, (dimension,)))(obs_keys)
     y = x_true + noise
     return x_true, y
@@ -188,8 +193,35 @@ def generate_observations(key, n_steps, dimension):
 # pre-transferred to the device once; this transfer is included in the cold
 # end-to-end measurement and excluded from steady-state scan timings.
 # ---------------------------------------------------------------------------
-def run_sqmc_jit(observations, n_particles, key, dimension, model):
-    """Build a jitted SQMC scan with a fresh Sobol block at every time step.
+def _weighted_diagnostics(particles, log_weights, n_particles):
+    """Return weighted mean, marginal variance, and normalized ESS."""
+    weights = jax.nn.softmax(log_weights.reshape(-1))
+    weight_shape = (n_particles,) + (1,) * (particles.ndim - 1)
+    expanded_weights = weights.reshape(weight_shape)
+    mean = jnp.sum(particles * expanded_weights, axis=0)
+    variance = jnp.sum((particles - mean) ** 2 * expanded_weights, axis=0)
+    normalized_ess = 1.0 / (n_particles * jnp.sum(weights**2))
+    return mean, variance, normalized_ess
+
+
+def _weighted_mean(particles, log_weights, n_particles):
+    """Return only the weighted mean for the performance-timed path."""
+    weights = jax.nn.softmax(log_weights.reshape(-1))
+    weight_shape = (n_particles,) + (1,) * (particles.ndim - 1)
+    return jnp.sum(particles * weights.reshape(weight_shape), axis=0)
+
+
+def _unique_ancestor_fraction(ancestor_indices, n_particles):
+    """Return the fraction of distinct parents selected during resampling."""
+    ordered = jnp.sort(ancestor_indices.reshape(-1))
+    unique_count = 1 + jnp.sum(ordered[1:] != ordered[:-1])
+    return unique_count / n_particles
+
+
+def _build_sqmc_jit(
+    observations, n_particles, key, dimension, model, collect_diagnostics
+):
+    """Build the timed or diagnostic SQMC trajectory.
 
     The QMC engine is initialized outside the timed scan, but point generation
     itself is expressed through the pure Sobol kernel. The scan receives time
@@ -222,15 +254,21 @@ def run_sqmc_jit(observations, n_particles, key, dimension, model):
     initial_lnc = jax.nn.logsumexp(initial_log_weights) - jnp.log(n_particles)
     init_state = (init_particles, initial_log_weights, initial_lnc)
 
-    def weighted_particle_mean(state):
-        # Filtering estimates are weighted expectations under the normalized
-        # particle weights, rather than unweighted particle averages.
+    def summarize_state(state, ancestor_indices=None):
         particles, log_weights, _ = state
-        weights = jax.nn.softmax(log_weights.reshape(-1))
-        weight_shape = (n_particles,) + (1,) * (particles.ndim - 1)
-        return jnp.sum(particles * weights.reshape(weight_shape), axis=0)
+        if not collect_diagnostics:
+            return _weighted_mean(particles, log_weights, n_particles)
+        mean, variance, normalized_ess = _weighted_diagnostics(
+            particles, log_weights, n_particles
+        )
+        ancestor_fraction = (
+            jnp.asarray(jnp.nan, dtype=particles.dtype)
+            if ancestor_indices is None
+            else _unique_ancestor_fraction(ancestor_indices, n_particles)
+        )
+        return mean, variance, normalized_ess, ancestor_fraction
 
-    init_mean = weighted_particle_mean(init_state)
+    init_summary = summarize_state(init_state)
 
     @jax.jit
     def scan_trajectory(init_state, scan_inputs):
@@ -262,14 +300,28 @@ def run_sqmc_jit(observations, n_particles, key, dimension, model):
                 - jnp.log(n_particles)
             )
             next_state = (next_particles, next_log_weights, next_lnc)
-            return next_state, weighted_particle_mean(next_state)
+            return next_state, summarize_state(next_state, ancestor_indices)
 
         return jax.lax.scan(step, init_state, scan_inputs)
 
     step_indices = jnp.arange(1, observations.shape[0], dtype=jnp.uint32)
     obs_device = jax.device_put(observations[1:])
     step_indices_device = jax.device_put(step_indices)
-    return scan_trajectory, init_state, (obs_device, step_indices_device), init_mean
+    return scan_trajectory, init_state, (obs_device, step_indices_device), init_summary
+
+
+def run_sqmc_jit(observations, n_particles, key, dimension, model):
+    """Build a timed SQMC scan that returns only filtering means."""
+    return _build_sqmc_jit(
+        observations, n_particles, key, dimension, model, False
+    )
+
+
+def run_sqmc_diagnostics_jit(observations, n_particles, key, dimension, model):
+    """Build an untimed SQMC scan that additionally returns diversity metrics."""
+    return _build_sqmc_jit(
+        observations, n_particles, key, dimension, model, True
+    )
 
 
 # ---------------------------------------------------------------------------

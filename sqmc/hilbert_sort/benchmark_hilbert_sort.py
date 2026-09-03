@@ -1,14 +1,14 @@
-"""Benchmark three Hilbert-sort implementations and create line charts.
+"""Benchmark the Hilbert-sort implementations and create line charts.
 
 The benchmark compares:
 
 * the optimized JAX implementation in ``sqmc.hilbert_sort.hilbert_sort``;
-* Adrien's archived JAX implementation; and
+* Adrien's archived JAX implementation (disabled; kept for reference); and
 * ``particles.hilbert.hilbert_sort`` (Numba on CPU).
 
 JAX compilation and host/device transfers are excluded from timed regions.
 The benchmark always creates a CPU chart. If JAX reports an available GPU, it
-also benchmarks the two JAX implementations there and creates a GPU chart; the
+also benchmarks the optimized implementation there and creates a GPU chart; the
 Particles CPU result is retained as a reference line in the GPU chart.
 """
 
@@ -43,7 +43,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sqmc.hilbert_sort.archive import hilbert_adrien
+from sqmc.hilbert_sort.archive import hilbert_adrien  # noqa: E501  # (Adrien JAX baseline commented out)
 from sqmc.hilbert_sort.hilbert_sort import hilbert_sort as optimized_hilbert_sort
 
 
@@ -193,7 +193,7 @@ def _benchmark_jax_backend(
 ) -> dict[str, dict[int, Timing]]:
     methods = {
         "Optimized JAX": optimized_hilbert_sort,
-        "Adrien JAX": hilbert_adrien.hilbert_sort,
+        # "Adrien JAX": hilbert_adrien.hilbert_sort,
     }
     results: dict[str, dict[int, Timing]] = {}
 
@@ -257,7 +257,7 @@ def _plot_rows(
     figure, axis = plt.subplots(figsize=(9.5, 6.0), constrained_layout=True)
     styles = {
         "Optimized JAX": ("o", "-"),
-        "Adrien JAX": ("s", "-"),
+        # "Adrien JAX": ("s", "-"),
         "Particles Numba (CPU)": ("^", "--"),
     }
 

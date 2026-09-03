@@ -1,9 +1,9 @@
-"""Clone rbsqmc and run the four-method SQMC/SMC benchmark on Colab.
+"""Clone rbsqmc and run the GPU statistical-efficiency benchmark on Colab.
 
 The local orchestrator submits only this entry point and its compact JSON
 configuration. This script shallow-clones the public repository, installs
 missing non-JAX dependencies, verifies that JAX is using a GPU, runs the
-SMC/SQMC GPU-vs-CPU benchmark, and records metadata.
+paired SMC-GPU/SQMC-GPU benchmark, and records metadata.
 """
 
 from __future__ import annotations
@@ -117,18 +117,21 @@ def validate_config(config: dict) -> dict:
     if int(section.get("warmups", 0)) < 0:
         raise ValueError("sqmc.warmups must be non-negative")
     if not section["particle_counts"] or any(
-        int(n) <= 0 for n in section["particle_counts"]
+        int(n) <= 1 for n in section["particle_counts"]
     ):
-        raise ValueError("sqmc.particle_counts must contain positive integers")
-    if int(section.get("base_dimension", 10)) <= 0:
-        raise ValueError("sqmc.base_dimension must be positive")
+        raise ValueError("sqmc.particle_counts must contain integers greater than one")
+    dimensions = [int(d) for d in section.get("dimensions", [])]
+    if not dimensions or any(d <= 0 or d > 62 for d in dimensions):
+        raise ValueError("sqmc.dimensions must contain integers in [1, 62]")
+    if len(set(dimensions)) != len(dimensions):
+        raise ValueError("sqmc.dimensions must not contain duplicates")
     if section.get("precision", "float64") != "float64":
         raise ValueError("sqmc.precision must be float64")
     if section.get("jit", True) is not True:
         raise ValueError("sqmc.jit must be true for this benchmark")
-    platforms = section.get("platforms", ["gpu", "cpu"])
-    if not platforms or any(p not in ("gpu", "cpu") for p in platforms):
-        raise ValueError("sqmc.platforms must be a subset of ['gpu', 'cpu']")
+    platforms = section.get("platforms", ["gpu"])
+    if platforms != ["gpu"]:
+        raise ValueError("sqmc.platforms must be exactly ['gpu']")
     return config
 
 
@@ -153,12 +156,12 @@ def benchmark_command(config: dict, output_dir: Path) -> list[str]:
         str(section.get("warmups", 0)),
         "--particle-counts",
         *(str(n) for n in section["particle_counts"]),
-        "--base-dimension",
-        str(section.get("base_dimension", 10)),
+        "--dimensions",
+        *(str(d) for d in section["dimensions"]),
         "--seed",
         str(section["seed"]),
         "--platforms",
-        *section.get("platforms", ["gpu", "cpu"]),
+        *section.get("platforms", ["gpu"]),
         "--output-dir",
         str(output_dir),
     ]
@@ -166,7 +169,7 @@ def benchmark_command(config: dict, output_dir: Path) -> list[str]:
 
 def parser() -> argparse.ArgumentParser:
     argument_parser = argparse.ArgumentParser(
-        description="Run the four-method SQMC/SMC benchmark on a Colab GPU."
+        description="Run the paired SMC/SQMC statistical-efficiency benchmark on GPU."
     )
     argument_parser.add_argument(
         "--config",
@@ -248,9 +251,10 @@ def main(argv: list[str] | None = None) -> int:
     run(benchmark_command(config, output_dir), cwd=repo_root)
 
     required_outputs = (
-        "sqmc_smc_runtime.png",
-        "sqmc_smc_time_to_accuracy.png",
-        "sqmc_smc_results.json",
+        "sqmc_smc_gpu_runtime.png",
+        "sqmc_smc_gpu_diversity.png",
+        "sqmc_smc_gpu_efficiency.png",
+        "sqmc_smc_gpu_results.json",
         "claims_evaluation.json",
         "run_config.json",
     )
@@ -275,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     metadata_path = output_dir / "run_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-    log(f"SQMC GPU vs CPU benchmark completed; outputs are in {output_dir}")
+    log(f"SMC/SQMC GPU benchmark completed; outputs are in {output_dir}")
     return 0
 
 

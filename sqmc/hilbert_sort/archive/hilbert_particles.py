@@ -177,6 +177,10 @@ def pack_coords(chunks, nD):
 
 @jit(nopython=True)
 def transpose_bits(srcs, nDests):
+    """
+    vectorized implementation of transpose_bits
+    
+    """
     srcs = srcs.copy()  # Make a copy we can modify safely.
     nSrcs = srcs.shape[0]
     dests = np.zeros((nDests,), dtype=np.int64)

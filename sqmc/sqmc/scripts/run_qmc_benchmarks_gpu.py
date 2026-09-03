@@ -279,7 +279,7 @@ def create_qmc_summary(
         squeeze=False,
         sharex=True,
     )
-    styles = {"SQMC JAX": ("o", "-"), "SciPy CPU": ("s", "--")}
+    styles = {"QMC JAX": ("o", "-"), "SciPy CPU": ("s", "--")}
     aggregate_rows = []
     for row_index, dimension in enumerate(dimensions):
         rows = dimension_rows[dimension]
@@ -434,7 +434,7 @@ def create_qmc_algorithm_summary(
     dimensions = list(dimension_rows)
     colors = plt.get_cmap("tab10").colors
     implementations = {
-        "SQMC JAX": ("-", "o"),
+        "QMC JAX": ("-", "o"),
         "SciPy CPU": ("--", "s"),
     }
     figure, axes = plt.subplots(
@@ -597,6 +597,95 @@ MODULE_ARTIFACTS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Hardware spec capture
+#
+# Recorded per run so the result is auditable and not confounded by a mismatch
+# in machine (e.g. different RAM or CPU model) rather than by the algorithm.
+# ---------------------------------------------------------------------------
+def _memory_bytes() -> int | None:
+    """Total physical RAM in bytes, via psutil or platform-specific fallback."""
+    try:
+        import psutil
+
+        return int(psutil.virtual_memory().total)
+    except Exception:
+        pass
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as source:
+            for line in source:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    try:
+        out = subprocess.check_output(["sysctl", "-n", "hw.memsize"]).decode().strip()
+        return int(out)
+    except Exception:
+        return None
+
+
+def _gpu_devices() -> list:
+    """List JAX GPU devices, tolerating builds without a GPU backend."""
+    try:
+        import jax
+
+        return [str(d) for d in jax.devices("gpu")]
+    except Exception:
+        return []
+
+
+def _cpu_model() -> str | None:
+    """Return the host CPU model when the platform exposes it."""
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as source:
+            for line in source:
+                if line.lower().startswith(("model name", "hardware")):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or None
+
+
+def _gpu_specs() -> list[dict]:
+    """Return actual NVIDIA model/memory/driver metadata when available."""
+    try:
+        output = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    devices = []
+    for line in output.splitlines():
+        fields = [field.strip() for field in line.split(",")]
+        if len(fields) == 3:
+            devices.append(
+                {"name": fields[0], "memory_mib": fields[1], "driver": fields[2]}
+            )
+    return devices
+
+
+def capture_hardware() -> dict:
+    """Return a dict describing the current host and its accelerators."""
+    return {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "cpu_model": _cpu_model(),
+        "cpu_count": os.cpu_count(),
+        "node": platform.node(),
+        "memory_bytes": _memory_bytes(),
+        "gpu_devices": _gpu_devices(),
+        "gpu_specs": _gpu_specs(),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     if arguments.config_json:
@@ -746,6 +835,17 @@ def main(argv: list[str] | None = None) -> int:
     }
     metadata_path = output_dir / "run_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    # A separate run-config record audits the benchmark parameters together
+    # with the captured hardware specs (RAM, CPU, GPU) for the run, so the
+    # results are reproducible and not confounded by a machine mismatch.
+    run_config = {
+        "config": config,
+        "modules": list(modules),
+        "hardware": capture_hardware(),
+    }
+    run_config_path = output_dir / "run_config.json"
+    run_config_path.write_text(json.dumps(run_config, indent=2), encoding="utf-8")
     log(f"GPU benchmark(s) '{'/'.join(modules)}' completed; outputs are in {output_dir}")
     return 0
 

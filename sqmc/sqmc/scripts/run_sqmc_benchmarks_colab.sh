@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Launch a Colab GPU, shallow-clone the public rbsqmc repository, run the
-# four-method SQMC/SMC GPU vs CPU benchmark, download only the required artifacts, and
+# paired SMC/SQMC GPU benchmark, download only the required artifacts, and
 # stop the session.
 
 set -euo pipefail
@@ -83,16 +83,17 @@ main() {
 
     # Avoid accidentally attaching to stale state from an earlier failed run.
     colab stop --session "${SESSION}" >/dev/null 2>&1 || true
-    log "Cloning the public repository and running the SQMC/SMC benchmark on GPU=${GPU_TYPE}"
+    log "Cloning the public repository and running the paired SMC/SQMC benchmark on GPU=${GPU_TYPE}"
     SESSION_LAUNCHED=1
     colab run --gpu "${GPU_TYPE}" --keep --timeout "${COLAB_TIMEOUT}" \
         --session "${SESSION}" "${REMOTE_RUNNER}" \
         --config-json "${CONFIG_JSON}"
 
     local required_outputs=(
-        "sqmc_smc_runtime.png"
-        "sqmc_smc_time_to_accuracy.png"
-        "sqmc_smc_results.json"
+        "sqmc_smc_gpu_runtime.png"
+        "sqmc_smc_gpu_diversity.png"
+        "sqmc_smc_gpu_efficiency.png"
+        "sqmc_smc_gpu_results.json"
         "claims_evaluation.json"
         "run_config.json"
         "run_metadata.json"
@@ -107,7 +108,7 @@ main() {
     log "SQMC/SMC benchmark artifacts downloaded to ${LOCAL_OUTPUTS}"
     if [[ -s "${LOCAL_OUTPUTS}/claims_evaluation.json" ]]; then
         log "Claims evaluation summary:"
-        python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); [print(f"  {k}: {v}") for k,v in sorted(d.get("statuses", {}).items())]' \
+        python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); [print(f"  d={k}: {v}") for k,v in sorted(d.get("matched_quality_status_by_dimension", {}).items(), key=lambda x:int(x[0]))]' \
             "${LOCAL_OUTPUTS}/claims_evaluation.json"
     fi
 }

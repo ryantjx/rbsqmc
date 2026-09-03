@@ -94,6 +94,7 @@ main() {
         "hilbert_sort_benchmark.csv"
         "hilbert_sort_benchmark_by_algorithm_gpu.png"
         "run_metadata.json"
+        "run_config.json"
     )
     local output
     for output in "${required_outputs[@]}"; do

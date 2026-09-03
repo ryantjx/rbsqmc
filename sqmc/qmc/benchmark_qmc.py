@@ -277,7 +277,7 @@ def _benchmark_sqmc_backend(
     results: dict[str, dict[int, Timing]] = {}
 
     for sequence, factory in factories.items():
-        print(f"\n{sequence}: SQMC JAX ({device.platform.upper()}: {device})")
+        print(f"\n{sequence}: QMC JAX ({device.platform.upper()}: {device})")
         timings = {}
         for n in n_values:
             timing = _time_sqmc_engine(factory, n, device, warmups, repeats)
@@ -302,7 +302,7 @@ def _rows_for_backend(
             BenchmarkRow(
                 backend=backend,
                 sequence=sequence,
-                implementation="SQMC JAX",
+                implementation="QMC JAX",
                 number_of_samples=n,
                 dimension=dimension,
                 scramble=scramble,
@@ -342,7 +342,7 @@ def _plot_rows(
         sharey=True,
     )
     styles = {
-        "SQMC JAX": ("o", "-"),
+        "QMC JAX": ("o", "-"),
         "SciPy CPU": ("s", "--"),
     }
 
@@ -457,7 +457,7 @@ def _write_csv(rows: Sequence[BenchmarkRow], output_path: Path) -> None:
 
 def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Benchmark SQMC JAX and SciPy Halton and Sobol sampling."
+        description="Benchmark QMC JAX and SciPy Halton and Sobol sampling."
     )
     parser.add_argument(
         "--dimension",
