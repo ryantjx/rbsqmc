@@ -344,14 +344,21 @@ def run_sweep(
     dimensions,
     breakdown_n,
     target_rmse,
+    target_margin,
     seed,
 ):
     """Run the full SQMC sweep on the current JAX backend. Returns a dict.
 
     Produces (i) a per-N sweep at ``base_dimension`` (for the detailed 4-panel
     figure) and (ii) per-dimension sweeps used for the time-to-target-error and
-    speedup-vs-dimension figure. The wall-clock reported for a dimension is the
-    median at the smallest particle count reaching RMSE <= ``target_rmse``.
+    speedup-vs-dimension figure.
+
+    The absolute ``target_rmse`` is used only for the base-dimension panel. For
+    the by-dimension figure the target is set per dimension to a small margin
+    above that dimension's achievable RMSE floor (``min_rmse * (1 + margin)``),
+    because the filtering-error floor grows with dimension and a single absolute
+    target is unreachable at high d. The wall-clock reported for a dimension is
+    the median at the smallest particle count reaching that per-dimension target.
     """
     jax.config.update("jax_enable_x64", True)
 
@@ -388,13 +395,16 @@ def run_sweep(
     dim_data = {}
     for d in dimensions:
         dim_sweep = sweep_dimension(d)
+        floor = min(s["rmse"] for s in dim_sweep.values())
+        dim_target = floor * (1.0 + target_margin)
         reached_n = min(
-            (n for n, s in dim_sweep.items() if s["rmse"] <= target_rmse),
+            (n for n, s in dim_sweep.items() if s["rmse"] <= dim_target),
             default=None,
         )
         if reached_n is None:
             dim_data[str(d)] = {
                 "sweep": {str(n): dim_sweep[n] for n in particle_counts},
+                "target": dim_target,
                 "reached": False,
                 "n_star": None,
                 "time_to_target": None,
@@ -402,6 +412,7 @@ def run_sweep(
         else:
             dim_data[str(d)] = {
                 "sweep": {str(n): dim_sweep[n] for n in particle_counts},
+                "target": dim_target,
                 "reached": True,
                 "n_star": reached_n,
                 "time_to_target": dim_sweep[reached_n]["median"],
@@ -542,7 +553,7 @@ def plot_gpu_vs_cpu_by_dimension(results, dimensions, output_dir):
     fig, axes = plt.subplots(1, 3, figsize=(16, 4.6))
     fig.suptitle("SQMC GPU vs CPU across state dimensions", fontsize=15)
 
-    # Panel 1: time-to-target error (wall-clock at RMSE <= target) vs dimension.
+    # Panel 1: time-to-target error (wall-clock at per-dimension target) vs d.
     ax = axes[0]
     for p in platforms:
         dims_ok, times = [], []
@@ -557,7 +568,7 @@ def plot_gpu_vs_cpu_by_dimension(results, dimensions, output_dir):
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("State dimension $d$")
-    ax.set_ylabel("Wall-clock to RMSE $\\leq$ target (s)")
+    ax.set_ylabel("Wall-clock to per-dim target (s)")
     ax.set_title("Time to target error")
     ax.legend()
     ax.grid(True, alpha=0.3, which="both")
@@ -624,6 +635,9 @@ def parser() -> argparse.ArgumentParser:
                    help="State dimensions for the scaling sweep (time-to-target, speedup).")
     p.add_argument("--breakdown-n", type=int, default=DEFAULT_BREAKDOWN_N)
     p.add_argument("--target-rmse", type=float, default=DEFAULT_TARGET_RMSE)
+    p.add_argument("--target-margin", type=float, default=0.05,
+                   help="Fraction above each dimension's RMSE floor used as the "
+                        "per-dimension target for the by-dimension figure.")
     p.add_argument("--seed", type=int, default=DEFAULT_SEED)
     p.add_argument("--platforms", type=str, nargs="+", default=["gpu", "cpu"],
                    choices=["gpu", "cpu"])
@@ -643,7 +657,7 @@ def main(argv: list[str] | None = None) -> int:
         result = run_sweep(
             platform, args.n_steps, args.n_reps, args.warmups,
             args.particle_counts, args.base_dimension, args.dimensions,
-            args.breakdown_n, args.target_rmse, args.seed,
+            args.breakdown_n, args.target_rmse, args.target_margin, args.seed,
         )
         payload = json.dumps(result)
         if args._results_json:
@@ -670,6 +684,8 @@ def main(argv: list[str] | None = None) -> int:
             "--base-dimension", str(args.base_dimension),
             "--dimensions", *(str(d) for d in args.dimensions),
             "--breakdown-n", str(args.breakdown_n),
+            "--target-rmse", str(args.target_rmse),
+            "--target-margin", str(args.target_margin),
             "--seed", str(args.seed),
             "--platforms", platform,
             "--_child", "--_results-json", results_json,

@@ -126,6 +126,8 @@ def validate_config(config: dict) -> dict:
         raise ValueError("sqmc.breakdown_n must be positive")
     if float(section.get("target_rmse", 0.5)) <= 0:
         raise ValueError("sqmc.target_rmse must be positive")
+    if float(section.get("target_margin", 0.05)) < 0:
+        raise ValueError("sqmc.target_margin must be non-negative")
     platforms = section.get("platforms", ["gpu", "cpu"])
     if not platforms or any(p not in ("gpu", "cpu") for p in platforms):
         raise ValueError("sqmc.platforms must be a subset of ['gpu', 'cpu']")
@@ -159,6 +161,8 @@ def benchmark_command(config: dict, output_dir: Path) -> list[str]:
         str(section["breakdown_n"]),
         "--target-rmse",
         str(section.get("target_rmse", 0.5)),
+        "--target-margin",
+        str(section.get("target_margin", 0.05)),
         "--seed",
         str(section["seed"]),
         "--platforms",
