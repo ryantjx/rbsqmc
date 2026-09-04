@@ -91,11 +91,10 @@ main() {
 
     local required_outputs=(
         "qmc_benchmark.csv"
+        "qmc_benchmark_cpu.png"
         "qmc_benchmark_gpu.png"
-        "qmc_benchmark_by_algorithm_gpu.png"
         "hilbert_sort_benchmark.csv"
         "hilbert_sort_benchmark_gpu.png"
-        "hilbert_sort_benchmark_by_algorithm_gpu.png"
         "sqmc_smc_gpu_runtime.png"
         "sqmc_smc_gpu_diversity.png"
         "sqmc_smc_gpu_efficiency.png"

@@ -41,16 +41,16 @@ DEFAULT_CONFIG_PATH = (
 )
 
 # Artifacts produced by each sub-benchmark that must exist after its run.
+# The by-algorithm charts are produced by the older orchestrator
+# (sqmc/sqmc/scripts/run_qmc_benchmarks_gpu.py), not by the benchmark modules.
 QMC_OUTPUTS = (
     "qmc_benchmark.csv",
     "qmc_benchmark_cpu.png",
     "qmc_benchmark_gpu.png",
-    "qmc_benchmark_by_algorithm_gpu.png",
 )
 HILBERT_OUTPUTS = (
     "hilbert_sort_benchmark.csv",
     "hilbert_sort_benchmark_gpu.png",
-    "hilbert_sort_benchmark_by_algorithm_gpu.png",
 )
 SQMC_SMC_OUTPUTS = (
     "sqmc_smc_gpu_runtime.png",
