@@ -34,6 +34,12 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPOSITORY_ROOT))
 
+os.environ.setdefault("MPLBACKEND", "Agg")
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 DEFAULT_OUTPUT_DIR = "sqmc/comparison/outputs"
 SQMC_GPU_OUTPUT_DIR = "sqmc/sqmc/scripts/outputs/sqmc_gpu"
 DEFAULT_CONFIG_PATH = (
@@ -54,8 +60,7 @@ HILBERT_OUTPUTS = (
 )
 SQMC_SMC_OUTPUTS = (
     "sqmc_smc_gpu_runtime.png",
-    "sqmc_smc_gpu_diversity.png",
-    "sqmc_smc_gpu_efficiency.png",
+    "sqmc_smc_gpu_rmse_over_time.png",
     "sqmc_smc_gpu_results.json",
     "run_config.json",
 )
@@ -127,67 +132,224 @@ def _gpu_available() -> bool:
 
 
 def run_qmc(config: dict, output_dir: Path) -> dict:
-    """Run the QMC benchmark (our JAX implementation vs SciPy, CPU and GPU)."""
+    """Run the QMC benchmark for each configured dimension.
+
+    The benchmark module handles one dimension per invocation, so the suite
+    runs it once per dimension and merges the CSV rows. The per-dimension
+    rows are what the speedup-by-dimension figure plots.
+    """
     section = config["qmc"]
-    command = [
-        sys.executable,
-        "-m",
-        "sqmc.qmc.benchmark_qmc",
-        "--dimension",
-        str(section["dimension"]),
-        "--n-values",
-        *(str(n) for n in section["n_values"]),
-        "--repeats",
-        str(section["repeats"]),
-        "--warmups",
-        str(section["warmups"]),
-        "--seed",
-        str(section["seed"]),
-        "--output-dir",
-        str(output_dir),
-    ]
-    _run(command)
+    dimensions = section.get("dimensions", [section["dimension"]])
+    commands = []
+    for dimension in dimensions:
+        command = [
+            sys.executable,
+            "-m",
+            "sqmc.qmc.benchmark_qmc",
+            "--dimension",
+            str(dimension),
+            "--n-values",
+            *(str(n) for n in section["n_values"]),
+            "--repeats",
+            str(section["repeats"]),
+            "--warmups",
+            str(section["warmups"]),
+            "--seed",
+            str(section["seed"]),
+            "--output-dir",
+            str(output_dir),
+        ]
+        _run(command)
+        commands.append(command)
+
+    # Merge the per-dimension CSVs (each run overwrites qmc_benchmark.csv).
+    _merge_qmc_csvs(output_dir, dimensions)
+
     # The GPU charts are only produced when a JAX GPU is available.
     required = (
-        QMC_OUTPUTS if _gpu_available() else ("qmc_benchmark.csv", "qmc_benchmark_cpu.png")
+        ("qmc_benchmark.csv", "qmc_benchmark_cpu.png", "qmc_benchmark_gpu.png")
+        if _gpu_available()
+        else ("qmc_benchmark.csv", "qmc_benchmark_cpu.png")
     )
     missing = _check_outputs(output_dir, required)
     if missing:
         raise RuntimeError(f"QMC benchmark did not create: {missing}")
-    return {"command": command, "outputs": list(required)}
+
+    # Speedup-by-dimension figure from the merged CSV.
+    _plot_qmc_speedup_by_dimension(output_dir, dimensions)
+    return {"command": commands[-1], "outputs": list(required)}
+
+
+def _merge_qmc_csvs(output_dir: Path, dimensions: list[int]) -> None:
+    """Merge the per-dimension QMC CSV rows into one CSV.
+
+    Each benchmark invocation overwrites ``qmc_benchmark.csv``, so the rows
+    for earlier dimensions are recovered from the per-dimension copies.
+    """
+    import pandas as pd
+
+    frames = []
+    for dimension in dimensions:
+        per_dim = output_dir / f"qmc_benchmark_d{dimension}.csv"
+        main_csv = output_dir / "qmc_benchmark.csv"
+        if per_dim.exists():
+            frames.append(pd.read_csv(per_dim))
+        elif main_csv.exists():
+            frame = pd.read_csv(main_csv)
+            rows = frame[frame["dimension"] == dimension]
+            if not rows.empty:
+                rows.to_csv(per_dim, index=False)
+                frames.append(rows)
+    if not frames:
+        return
+    merged = pd.concat(frames, ignore_index=True)
+    merged = merged.drop_duplicates(
+        subset=["backend", "sequence", "implementation", "dimension",
+                "scramble", "number_of_samples"],
+        keep="last",
+    )
+    merged.to_csv(output_dir / "qmc_benchmark.csv", index=False)
+
+
+def _plot_qmc_speedup_by_dimension(output_dir: Path,
+                                   dimensions: list[int]) -> None:
+    """Plot the GPU-vs-SciPy-CPU speedup of the JAX generators per dimension."""
+    import pandas as pd
+
+    csv_path = output_dir / "qmc_benchmark.csv"
+    if not csv_path.exists():
+        return
+    frame = pd.read_csv(csv_path)
+    frame = frame[frame["backend"] == "gpu"]
+    if frame.empty:
+        return  # No GPU rows (CPU-only run); nothing to plot.
+
+    sequences = sorted(frame["sequence"].unique())
+    figure, axes = plt.subplots(
+        1, len(sequences), figsize=(5 * len(sequences), 4), squeeze=False
+    )
+    for ax, sequence in zip(axes[0], sequences):
+        sub = frame[frame["sequence"] == sequence]
+        for dimension in dimensions:
+            dim_rows = sub[sub["dimension"] == dimension]
+            jax_rows = dim_rows[dim_rows["implementation"] == "QMC JAX"]
+            scipy_rows = dim_rows[dim_rows["implementation"] == "SciPy CPU"]
+            if jax_rows.empty or scipy_rows.empty:
+                continue
+            merged = jax_rows.merge(
+                scipy_rows, on="number_of_samples", suffixes=("_jax", "_scipy")
+            )
+            speedup = merged["median_seconds_scipy"] / merged["median_seconds_jax"]
+            ax.plot(merged["number_of_samples"], speedup, marker="o",
+                    label=f"$d={dimension}$")
+        ax.axhline(1.0, color="grey", linewidth=0.8, linestyle="--")
+        ax.set_xscale("log", base=2)
+        ax.set_yscale("log")
+        ax.set_xlabel("Samples $N$")
+        ax.set_title(sequence)
+        ax.legend(frameon=False, fontsize=8)
+    axes[0][0].set_ylabel("Speedup: SciPy CPU / JAX GPU")
+    figure.suptitle(
+        "QMC point generation on GPU: speedup over the SciPy CPU reference"
+    )
+    figure.tight_layout()
+    figure.savefig(output_dir / "qmc_speedup_by_dimension.png", dpi=200)
+    plt.close(figure)
 
 
 def run_hilbert(config: dict, output_dir: Path) -> dict:
-    """Run the Hilbert-sort benchmark (our JAX implementation vs particles)."""
+    """Run the Hilbert-sort benchmark for each configured dimension.
+
+    The benchmark module does not record the dimension in its CSV, so each
+    dimension is written to its own subdirectory and the merged CSV gains an
+    explicit dimension column.
+    """
+    import pandas as pd
+
     section = config["hilbert_sort"]
-    command = [
-        sys.executable,
-        "-m",
-        "sqmc.hilbert_sort.benchmark_hilbert_sort",
-        "--dimension",
-        str(section["dimension"]),
-        "--n-values",
-        *(str(n) for n in section["n_values"]),
-        "--repeats",
-        str(section["repeats"]),
-        "--warmups",
-        str(section["warmups"]),
-        "--seed",
-        str(section["seed"]),
-        "--output-dir",
-        str(output_dir),
-    ]
-    _run(command)
-    # The GPU charts are only produced when a JAX GPU is available.
+    dimensions = section.get("dimensions", [section["dimension"]])
+    commands = []
+    frames = []
+    for dimension in dimensions:
+        dim_dir = output_dir / f"hilbert_d{dimension}"
+        dim_dir.mkdir(parents=True, exist_ok=True)
+        command = [
+            sys.executable,
+            "-m",
+            "sqmc.hilbert_sort.benchmark_hilbert_sort",
+            "--dimension",
+            str(dimension),
+            "--n-values",
+            *(str(n) for n in section["n_values"]),
+            "--repeats",
+            str(section["repeats"]),
+            "--warmups",
+            str(section["warmups"]),
+            "--seed",
+            str(section["seed"]),
+            "--output-dir",
+            str(dim_dir),
+        ]
+        _run(command)
+        commands.append(command)
+        frame = pd.read_csv(dim_dir / "hilbert_sort_benchmark.csv")
+        frame.insert(1, "dimension", dimension)
+        frames.append(frame)
+
+    merged = pd.concat(frames, ignore_index=True)
+    merged.to_csv(output_dir / "hilbert_sort_benchmark.csv", index=False)
+
+    # The GPU chart is only produced when a JAX GPU is available.
     required = (
-        HILBERT_OUTPUTS
+        ("hilbert_sort_benchmark.csv", "hilbert_sort_benchmark_gpu.png")
         if _gpu_available()
         else ("hilbert_sort_benchmark.csv",)
     )
     missing = _check_outputs(output_dir, required)
     if missing:
         raise RuntimeError(f"Hilbert-sort benchmark did not create: {missing}")
-    return {"command": command, "outputs": list(required)}
+    _plot_hilbert_speedup_by_dimension(output_dir, dimensions)
+    return {"command": commands[-1], "outputs": list(required)}
+
+
+def _plot_hilbert_speedup_by_dimension(output_dir: Path,
+                                       dimensions: list[int]) -> None:
+    """Plot the GPU-vs-particles speedup of the Hilbert sort per dimension."""
+    import pandas as pd
+
+    csv_path = output_dir / "hilbert_sort_benchmark.csv"
+    if not csv_path.exists():
+        return
+    frame = pd.read_csv(csv_path)
+    gpu = frame[frame["backend"] == "gpu"]
+    if gpu.empty:
+        return
+
+    figure, ax = plt.subplots(figsize=(6, 4))
+    for dimension in dimensions:
+        dim_rows = gpu[gpu["dimension"] == dimension] if "dimension" in gpu else None
+        if dim_rows is None or dim_rows.empty:
+            continue
+        jax_rows = dim_rows[dim_rows["method"] == "Optimized JAX"]
+        particles_rows = dim_rows[dim_rows["method"] == "Particles Numba (CPU)"]
+        if jax_rows.empty or particles_rows.empty:
+            continue
+        merged = jax_rows.merge(
+            particles_rows, on="number_of_particles", suffixes=("_jax", "_parts")
+        )
+        speedup = merged["median_seconds_parts"] / merged["median_seconds_jax"]
+        ax.plot(merged["number_of_particles"], speedup, marker="o",
+                label=f"$d={dimension}$")
+    ax.axhline(1.0, color="grey", linewidth=0.8, linestyle="--")
+    ax.set_xscale("log", base=10)
+    ax.set_yscale("log")
+    ax.set_xlabel("Particles $N$")
+    ax.set_ylabel("Speedup: particles (CPU) / JAX (GPU)")
+    ax.set_title("Hilbert sort on GPU: speedup over the particles reference")
+    ax.legend(frameon=False)
+    figure.tight_layout()
+    figure.savefig(output_dir / "hilbert_speedup_by_dimension.png", dpi=200)
+    plt.close(figure)
 
 
 def run_sqmc_smc(config: dict, output_dir: Path) -> dict:
