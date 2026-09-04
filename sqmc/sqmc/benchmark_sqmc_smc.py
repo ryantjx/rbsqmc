@@ -46,12 +46,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sqmc.qmc.qmc import Sobol
-from sqmc.sqmc.smc import build_filter as build_smc_filter
-from sqmc.sqmc.sqmc import build_filter as build_sqmc_filter
+from sqmc.qmc.qmc import Sobol, _MAXBITS, _sobol_sample_batched
+from sqmc.hilbert_sort.hilbert_sort import hilbert_sort
+from sqmc.sqmc.sqmc import resample_from_uniform
 
 DEFAULT_OUTPUT_DIR = "sqmc/sqmc/scripts/outputs/sqmc_gpu"
-DEFAULT_PARTICLE_COUNTS = [64, 256, 1024, 4096, 16384, 65536]
+DEFAULT_PARTICLE_COUNTS = [128, 256, 512]
 DEFAULT_DIMENSIONS = [2, 5, 10, 30, 60]
 DEFAULT_N_STEPS = 100
 DEFAULT_N_REPS = 7
@@ -221,54 +221,186 @@ def generate_observations(key, dimension: int, n_steps: int) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Filter runners
+# Filter runners (jitted lax.scan trajectories)
 # ---------------------------------------------------------------------------
 
 
-def _run_sqmc_filter(init_transform, propagate_transform, log_potential, n, d,
-                     observations, seed):
-    """Run SQMC for one replicate; return per-step weighted means and log-lik."""
-    qmc = Sobol(d=d + 1, key=random.PRNGKey(seed))
-    filter_ = build_sqmc_filter(
-        init_transform=init_transform,
-        propagate_transform=propagate_transform,
-        log_potential=log_potential,
-        n_filter_particles=n,
-        qmc=qmc,
-    )
-    state = filter_.init_prepare({"y": observations[0]}, key=random.PRNGKey(seed))
-    w = jnp.exp(state.log_weights - jax.nn.logsumexp(state.log_weights))
-    means = [jnp.sum(w[:, None] * state.particles, axis=0)]
-    for t in range(1, len(observations)):
-        state = filter_.filter_combine(
-            state,
-            filter_.filter_prepare({"y": observations[t]}, key=random.PRNGKey(seed)),
+def _load_direction_integers(d: int) -> jax.Array:
+    """Load the first ``d`` rows of the Joe--Kuo direction integers.
+
+    The stored array has shape (21201, 30); the Sobol engine uses only the
+    first ``d`` rows, giving shape (d, num_bits).
+    """
+    path = Path(__file__).resolve().parents[1] / "qmc" / "_sobol_direction_numbers.npz"
+    if not path.exists():
+        import subprocess
+
+        subprocess.run(
+            [sys.executable, str(path.parent / "_generate_sobol_data.py"),
+             "--verify-scipy"],
+            check=True,
         )
-        w = jnp.exp(state.log_weights - jax.nn.logsumexp(state.log_weights))
-        means.append(jnp.sum(w[:, None] * state.particles, axis=0))
-    return np.asarray(means), float(state.log_normalizing_constant)
+    with np.load(path) as data:
+        return jnp.asarray(data["direction_integers"][:d])
 
 
-def _run_smc_filter(init_sample, propagate_sample, log_potential, n, observations,
-                    seed):
-    """Run SMC for one replicate; return per-step weighted means and log-lik."""
-    filter_ = build_smc_filter(
-        init_sample=init_sample,
-        propagate_sample=propagate_sample,
-        log_potential=log_potential,
-        n_filter_particles=n,
+def _make_digital_shift(d: int, seed: int) -> jax.Array:
+    """Random digital shift for the Sobol sequence, one packed uint32 per dim."""
+    shift_bits = random.randint(
+        random.PRNGKey(seed), shape=(d, _MAXBITS), minval=0, maxval=2,
+        dtype=jnp.uint32,
     )
-    state = filter_.init_prepare({"y": observations[0]}, key=random.PRNGKey(seed))
-    w = jnp.exp(state.log_weights - jax.nn.logsumexp(state.log_weights))
-    means = [jnp.sum(w[:, None] * state.particles, axis=0)]
-    for t in range(1, len(observations)):
-        state = filter_.filter_combine(
-            state,
-            filter_.filter_prepare({"y": observations[t]}, key=random.PRNGKey(seed)),
+    bit_weights = jnp.uint32(1) << jnp.arange(_MAXBITS - 1, -1, -1, dtype=jnp.uint32)
+    return jnp.sum(shift_bits * bit_weights[None, :], axis=-1, dtype=jnp.uint32)
+
+
+def _make_sqmc_runner(init_transform, propagate_transform, log_potential, n, d,
+                      n_steps, seed):
+    """Build a jitted SQMC trajectory runner.
+
+    The whole trajectory is compiled once with ``lax.scan``. The Sobol point
+    set for step ``t`` is generated as a pure function of ``t`` using
+    non-overlapping blocks of the sequence, so no stateful engine is needed
+    inside the scan.
+    """
+    direction_integers = _load_direction_integers(d + 1)
+    digital_shift = _make_digital_shift(d + 1, seed)
+    obs_jax = None  # observations are passed at call time
+
+    def _points_for_step(t):
+        """RQMC point set (n, d+1) for step t: block t of the Sobol sequence."""
+        first_index = 1 + t * n
+        return _sobol_sample_batched(
+            first_index=first_index,
+            n=n,
+            direction_integers=direction_integers,
+            digital_shift=digital_shift,
+            num_bits=_MAXBITS,
+            dtype=jnp.float64,
         )
-        w = jnp.exp(state.log_weights - jax.nn.logsumexp(state.log_weights))
-        means.append(jnp.sum(w[:, None] * state.particles, axis=0))
-    return np.asarray(means), float(state.log_normalizing_constant)
+
+    def _sqmc_step(carry, inputs):
+        particles, log_weights, log_z = carry
+        y, t = inputs
+        u = _points_for_step(t)
+
+        # Hilbert-sort previous particles -> Hilbert-ordered weights.
+        h_order = hilbert_sort(particles)
+        hilbert_log_weights = log_weights[h_order]
+
+        # Ancestor selection via inverse CDF on sorted first coordinates.
+        tau = jnp.argsort(u[:, 0])
+        idx, _ = resample_from_uniform(u[tau, 0], hilbert_log_weights)
+        ancestor_indices = h_order[idx]
+        ancestors = particles[ancestor_indices]
+
+        # Deterministic propagation with the remaining d coordinates.
+        v = u[tau, 1:]
+        next_particles = jax.vmap(propagate_transform, (0, 0, None))(
+            v, ancestors, None
+        )
+        log_potentials = jax.vmap(log_potential, (0, 0, None))(
+            ancestors, next_particles, {"y": y}
+        )
+        next_log_weights = log_potentials
+        log_z_incr = jax.nn.logsumexp(next_log_weights) - jnp.log(n)
+        next_log_z = log_z + log_z_incr
+
+        w = jnp.exp(next_log_weights - jax.nn.logsumexp(next_log_weights))
+        mean = jnp.sum(w[:, None] * next_particles, axis=0)
+        return (next_particles, next_log_weights, next_log_z), mean
+
+    def run(observations):
+        """Run the full trajectory; return (means (T,d), log_z)."""
+        obs = jnp.asarray(observations)
+        # Initial particles from the first block of the sequence.
+        u0 = _points_for_step(0)[:, :d]
+        particles = jax.vmap(init_transform, (0, None))(u0, None)
+
+        # Incorporate the first observation's potential.
+        log_potentials = jax.vmap(log_potential, (0, 0, None))(
+            particles, particles, {"y": obs[0]}
+        )
+        log_weights = log_potentials
+        log_z = jax.nn.logsumexp(log_weights) - jnp.log(n)
+
+        # Mean at step 0.
+        w0 = jnp.exp(log_weights - jax.nn.logsumexp(log_weights))
+        mean0 = jnp.sum(w0[:, None] * particles, axis=0)
+
+        # Scan over steps 1..T-1 with the observations as scan input.
+        final_carry, means_rest = jax.lax.scan(
+            _sqmc_step, (particles, log_weights, log_z),
+            (obs[1:], jnp.arange(1, n_steps)),
+        )
+        means = jnp.concatenate([mean0[None, :], means_rest], axis=0)
+        return np.asarray(means), float(final_carry[2])
+
+    return run
+
+
+def _make_smc_runner(init_sample, propagate_sample, log_potential, n, n_steps,
+                     seed):
+    """Build a jitted SMC trajectory runner.
+
+    The whole trajectory is compiled once with ``lax.scan``. Each step draws
+    fresh pseudo-random keys, so the filter is stochastic as intended.
+    """
+
+    def _smc_step(carry, y):
+        key, particles, log_weights, log_z = carry
+        resample_key, prop_key = random.split(key, 2)
+
+        # Systematic resampling from current weights.
+        us = (random.uniform(resample_key, ()) + jnp.arange(n)) / n
+        weights = jnp.exp(log_weights - jax.nn.logsumexp(log_weights))
+        cs = jnp.cumsum(weights)
+        idx = jnp.searchsorted(cs, us, method="sort")
+        idx = jnp.clip(idx, 0, n - 1)
+        ancestors = particles[idx]
+
+        # Stochastic propagation.
+        prop_keys = random.split(prop_key, n)
+        next_particles = jax.vmap(propagate_sample, (0, 0, None))(
+            prop_keys, ancestors, None
+        )
+        log_potentials = jax.vmap(log_potential, (0, 0, None))(
+            ancestors, next_particles, {"y": y}
+        )
+        next_log_weights = log_potentials
+        log_z_incr = jax.nn.logsumexp(next_log_weights) - jnp.log(n)
+        next_log_z = log_z + log_z_incr
+
+        w = jnp.exp(next_log_weights - jax.nn.logsumexp(next_log_weights))
+        mean = jnp.sum(w[:, None] * next_particles, axis=0)
+        return (prop_key, next_particles, next_log_weights, next_log_z), mean
+
+    def run(observations):
+        """Run the full trajectory; return (means (T,d), log_z)."""
+        obs = jnp.asarray(observations)
+        # Initial particles: iid from the prior.
+        init_keys = random.split(random.PRNGKey(seed), n)
+        particles = jax.vmap(init_sample, (0, None))(init_keys, None)
+
+        # Incorporate the first observation's potential.
+        log_potentials = jax.vmap(log_potential, (0, 0, None))(
+            particles, particles, {"y": obs[0]}
+        )
+        log_weights = log_potentials
+        log_z = jax.nn.logsumexp(log_weights) - jnp.log(n)
+
+        # Mean at step 0.
+        w0 = jnp.exp(log_weights - jax.nn.logsumexp(log_weights))
+        mean0 = jnp.sum(w0[:, None] * particles, axis=0)
+
+        final_carry, means_rest = jax.lax.scan(
+            _smc_step, (random.PRNGKey(seed), particles, log_weights, log_z),
+            obs[1:],
+        )
+        means = jnp.concatenate([mean0[None, :], means_rest], axis=0)
+        return np.asarray(means), float(final_carry[3])
+
+    return run
 
 
 def _ess_fraction(log_weights) -> float:
@@ -287,23 +419,23 @@ def _unique_ancestor_fraction(ancestor_indices) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _time_filter(runner, n, observations, warmups, repeats, seed) -> dict:
-    """Time steady-state execution of one filter replicate.
+def _time_filter(runner, observations, warmups, repeats) -> dict:
+    """Time steady-state execution of one jitted filter trajectory.
 
     Compilation and the first execution are excluded from the timed region;
     the first execution is recorded separately as cold-start metadata.
     """
     start = time.perf_counter()
-    runner(n, observations, seed)
+    runner(observations)
     first_seconds = time.perf_counter() - start
 
     for _ in range(warmups):
-        runner(n, observations, seed)
+        runner(observations)
 
     samples = []
     for _ in range(repeats):
         start = time.perf_counter()
-        runner(n, observations, seed)
+        runner(observations)
         samples.append(time.perf_counter() - start)
     values = np.asarray(samples, dtype=np.float64)
     return {
@@ -314,9 +446,9 @@ def _time_filter(runner, n, observations, warmups, repeats, seed) -> dict:
     }
 
 
-def _accuracy_metrics(runner, n, observations, kalman_truth, seed) -> dict:
+def _accuracy_metrics(runner, observations, kalman_truth) -> dict:
     """Compute accuracy metrics for one replicate against the Kalman truth."""
-    means, log_lik = runner(n, observations, seed)
+    means, log_lik = runner(observations)
     kalman_means, kalman_variances = kalman_truth
     mean_error = float(
         np.sqrt(np.mean((means - kalman_means) ** 2 / kalman_variances))
@@ -435,33 +567,33 @@ def main(argv=None) -> int:
             random.uniform(key, (dimension,)), state, model_inputs
         )
 
-        sqmc_runner = lambda n, obs, s: _run_sqmc_filter(
-            init_transform, propagate_transform, log_potential, n, dimension,
-            obs, s,
-        )
-        smc_runner = lambda n, obs, s: _run_smc_filter(
-            init_sample, propagate_sample, log_potential, n, obs, s,
-        )
-
         dim_results = {}
         for n in particle_counts:
             observations = generate_observations(random.PRNGKey(seed), dimension,
                                                   n_steps)
             kalman_truth = kalman(observations)
 
-            sqmc_timing = _time_filter(sqmc_runner, n, observations, warmups,
-                                       n_reps, seed)
-            smc_timing = _time_filter(smc_runner, n, observations, warmups,
-                                      n_reps, seed)
+            # One jitted runner per (method, dimension, N); compilation happens
+            # on the first call and is excluded from the timed region.
+            sqmc_runner = _make_sqmc_runner(
+                init_transform, propagate_transform, log_potential, n, dimension,
+                n_steps, seed,
+            )
+            smc_runner = _make_smc_runner(
+                init_sample, propagate_sample, log_potential, n, n_steps, seed,
+            )
+
+            sqmc_timing = _time_filter(sqmc_runner, observations, warmups,
+                                       n_reps)
+            smc_timing = _time_filter(smc_runner, observations, warmups,
+                                      n_reps)
 
             sqmc_errors = [
-                _accuracy_metrics(sqmc_runner, n, observations, kalman_truth,
-                                  seed + rep)
+                _accuracy_metrics(sqmc_runner, observations, kalman_truth)
                 for rep in range(accuracy_reps)
             ]
             smc_errors = [
-                _accuracy_metrics(smc_runner, n, observations, kalman_truth,
-                                  seed + rep)
+                _accuracy_metrics(smc_runner, observations, kalman_truth)
                 for rep in range(accuracy_reps)
             ]
 
