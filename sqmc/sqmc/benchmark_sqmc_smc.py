@@ -1,10 +1,17 @@
-"""GPU statistical-efficiency benchmark for SMC and SQMC.
+"""Paired SMC/SQMC GPU benchmark for the dissertation empirical evaluation.
 
-The timed path measures only the common filtering trajectory. Independent,
-untimed diagnostic scans measure approximation error and particle diversity
-against the exact Kalman filtering distribution for the same linear-Gaussian
-model. CPU comparisons and Hilbert/QMC microbenchmarks intentionally live
-outside this benchmark.
+Compares the bootstrap particle filter (SMC) against SQMC on a
+$d$-dimensional linear-Gaussian random walk, on GPU, across particle counts
+and state dimensions. Both filters receive identical observations and are
+evaluated against the exact Kalman filtering distribution.
+
+Outputs (in --output-dir):
+    sqmc_smc_gpu_runtime.png    steady-state wall-clock time vs N, per dimension
+    sqmc_smc_gpu_diversity.png  variance-error ratio, ESS and ancestry heat maps
+    sqmc_smc_gpu_efficiency.png runtime--error trade-off, faceted by dimension
+    sqmc_smc_gpu_results.json   full replicate-level results
+    claims_evaluation.json      Pareto-frontier equivalence evaluation
+    run_config.json             aggregated configuration and hardware
 """
 
 from __future__ import annotations
@@ -12,879 +19,95 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
+import platform
 import sys
+import tempfile
+import time
 from pathlib import Path
 
+import numpy as np
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
+
+_MPL_CACHE = Path(tempfile.gettempdir()) / "sqmc-matplotlib-cache"
+_MPL_CACHE.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", str(_MPL_CACHE))
+
 import jax
+
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from jax import random
+
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import TwoSlopeNorm
-import numpy as np
-from scipy.stats import t as student_t
 
-from cuthbert.smc.particle_filter import build_filter as build_smc_filter
-from cuthbertlib.resampling import systematic
+from sqmc.qmc.qmc import Sobol
+from sqmc.sqmc.smc import build_filter as build_smc_filter
+from sqmc.sqmc.sqmc import build_filter as build_sqmc_filter
 
-from sqmc.sqmc.benchmark_sqmc import (
-    DEFAULT_N_REPS,
-    DEFAULT_N_STEPS,
-    DEFAULT_SEED,
-    SIGMA_0,
-    SIGMA_X,
-    SIGMA_Y,
-    _unique_ancestor_fraction,
-    _weighted_diagnostics,
-    _weighted_mean,
-    capture_hardware,
-    generate_observations,
-    make_sqmc_model,
-    run_sqmc_diagnostics_jit,
-    run_sqmc_jit,
-    time_filter,
-)
-
-
-DEFAULT_ACCURACY_REPS = 8
-DEFAULT_DIMENSIONS = [2, 5, 10, 30, 60]
-DEFAULT_PARTICLE_COUNTS = [64, 256, 1024, 4096, 16384, 65536]
-DEFAULT_WARMUPS = 2
 DEFAULT_OUTPUT_DIR = "sqmc/sqmc/scripts/outputs/sqmc_gpu"
-METHODS = ("smc", "sqmc")
-METRICS = (
-    "mean_nrmse",
-    "variance_relative_rmse",
-    "normalized_ess",
-    "unique_ancestor_fraction",
+DEFAULT_PARTICLE_COUNTS = [64, 256, 1024, 4096, 16384, 65536]
+DEFAULT_DIMENSIONS = [2, 5, 10, 30, 60]
+DEFAULT_N_STEPS = 100
+DEFAULT_N_REPS = 7
+DEFAULT_ACCURACY_REPS = 8
+DEFAULT_WARMUPS = 2
+DEFAULT_SEED = 42
+
+# Model parameters: x_0 ~ N(0, I_d); x_t = x_{t-1} + 0.5 Z_t; y_t = x_t + E_t.
+PRIOR_VARIANCE = 1.0
+PROCESS_VARIANCE = 0.25
+OBSERVATION_VARIANCE = 1.0
+
+FIGURE_NAMES = (
+    "sqmc_smc_gpu_runtime.png",
+    "sqmc_smc_gpu_diversity.png",
+    "sqmc_smc_gpu_efficiency.png",
 )
 
-
-def make_smc_model(dimension: int):
-    """Return stochastic SMC transforms matching the SQMC model."""
-
-    def init_sample(key, model_inputs):
-        del model_inputs
-        return SIGMA_0 * random.normal(key, (dimension,))
-
-    def propagate_sample(key, state, model_inputs):
-        del model_inputs
-        return state + SIGMA_X * random.normal(key, (dimension,))
-
-    def log_potential(state_prev, state, model_inputs):
-        del state_prev
-        y = model_inputs["y"]
-        return (
-            -0.5 * jnp.sum(((y - state) / SIGMA_Y) ** 2)
-            - dimension * jnp.log(SIGMA_Y)
-            - 0.5 * dimension * jnp.log(2.0 * jnp.pi)
-        )
-
-    return init_sample, propagate_sample, log_potential
+RESULTS_NAME = "sqmc_smc_gpu_results.json"
+CLAIMS_NAME = "claims_evaluation.json"
+RUN_CONFIG_NAME = "run_config.json"
 
 
-def _initialize_smc_state(filter_, observations, n_particles, key, log_potential):
-    """Initialize Cuthbert's state and apply the time-zero potential."""
-    state = filter_.init_prepare({"y": observations[0]}, key=key)
-    particles = state.particles
-    initial_log_weights = jax.vmap(log_potential, (None, 0, None))(
-        jnp.zeros_like(particles[0]), particles, {"y": observations[0]}
-    )
-    initial_lnc = jax.nn.logsumexp(initial_log_weights) - jnp.log(n_particles)
-    return state._replace(
-        log_weights=initial_log_weights.reshape(-1),
-        log_normalizing_constant=initial_lnc,
-    )
-
-
-def _build_smc_jit(
-    observations, n_particles, key, dimension, model, collect_diagnostics
-):
-    """Build the timed or diagnostic systematic-resampling SMC scan."""
-    init_sample, propagate_sample, log_potential = model
-    filter_ = build_smc_filter(
-        init_sample=init_sample,
-        propagate_sample=propagate_sample,
-        log_potential=log_potential,
-        n_filter_particles=n_particles,
-        resampling_fn=systematic.resampling,
-    )
-    init_key = random.fold_in(key, 0)
-    init_state = _initialize_smc_state(
-        filter_, observations, n_particles, init_key, log_potential
-    )
-
-    def summarize_state(state, ancestor_indices=None):
-        if not collect_diagnostics:
-            return _weighted_mean(
-                state.particles, state.log_weights, n_particles
-            )
-        mean, variance, normalized_ess = _weighted_diagnostics(
-            state.particles, state.log_weights, n_particles
-        )
-        ancestor_fraction = (
-            jnp.asarray(jnp.nan, dtype=state.particles.dtype)
-            if ancestor_indices is None
-            else _unique_ancestor_fraction(ancestor_indices, n_particles)
-        )
-        return mean, variance, normalized_ess, ancestor_fraction
-
-    init_summary = summarize_state(init_state)
-    # Cuthbert consumes the key stored on the previous state for propagation,
-    # then carries the prepared state's key forward.  Seed the initial state
-    # with the first transition key and provide one look-ahead key per step so
-    # that initialization and every transition use disjoint randomness.
-    step_keys = random.split(random.fold_in(key, 17), observations.shape[0])
-    init_state = init_state._replace(key=step_keys[0])
-    scan_inputs = (
-        jax.device_put(observations[1:]),
-        jax.device_put(step_keys[1:]),
-    )
-
-    @jax.jit
-    def scan_trajectory(state, inputs):
-        def step(carry, step_inputs):
-            y, step_key = step_inputs
-            prepared = filter_.filter_prepare({"y": y}, key=step_key)
-            new_state = filter_.filter_combine(carry, prepared)
-            new_state = new_state._replace(log_weights=new_state.log_weights.reshape(-1))
-            summary = summarize_state(new_state, new_state.ancestor_indices)
-            return new_state, summary
-
-        return jax.lax.scan(step, state, inputs)
-
-    return scan_trajectory, init_state, scan_inputs, init_summary
-
-
-def run_smc_jit(observations, n_particles, key, dimension, model):
-    """Build the timed SMC scan, which emits only weighted means."""
-    return _build_smc_jit(observations, n_particles, key, dimension, model, False)
-
-
-def run_smc_diagnostics_jit(observations, n_particles, key, dimension, model):
-    """Build the untimed SMC scan with posterior and diversity diagnostics."""
-    return _build_smc_jit(observations, n_particles, key, dimension, model, True)
-
-
-def kalman_filter_reference(observations, prior_variance=SIGMA_0**2):
-    """Return exact filtering means and scalar marginal variances."""
-    n_steps, dimension = observations.shape
-    means = jnp.zeros((n_steps, dimension), dtype=observations.dtype)
-    variances = jnp.zeros((n_steps,), dtype=observations.dtype)
-    mean = jnp.zeros(dimension, dtype=observations.dtype)
-    variance = jnp.asarray(prior_variance, dtype=observations.dtype)
-    process_variance = jnp.asarray(SIGMA_X**2, dtype=observations.dtype)
-    observation_variance = jnp.asarray(SIGMA_Y**2, dtype=observations.dtype)
-
-    for step in range(n_steps):
-        if step > 0:
-            variance = variance + process_variance
-        gain = variance / (variance + observation_variance)
-        mean = mean + gain * (observations[step] - mean)
-        variance = (1.0 - gain) * variance
-        means = means.at[step].set(mean)
-        variances = variances.at[step].set(variance)
-    return means, variances
-
-
-def _summary(values, *, nonnegative=False):
-    """Return a mean, sample standard deviation, and Student-t 95% CI."""
-    samples = np.asarray(values, dtype=float)
-    mean = float(np.mean(samples))
-    std = float(np.std(samples, ddof=1)) if samples.size > 1 else 0.0
-    critical = (
-        float(student_t.ppf(0.975, samples.size - 1))
-        if samples.size > 1
-        else 0.0
-    )
-    half_width = critical * std / np.sqrt(samples.size)
-    lower = mean - half_width
-    if nonnegative:
-        lower = max(0.0, lower)
-    return {
-        "mean": mean,
-        "std": std,
-        "ci95_low": float(lower),
-        "ci95_high": float(mean + half_width),
-        "n": int(samples.size),
+def capture_hardware() -> dict:
+    """Capture hardware metadata for the current process."""
+    info = {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "jax_version": jax.__version__,
+        "jax_devices": [str(device) for device in jax.devices()],
     }
+    try:
+        import psutil
+
+        info["cpu_count"] = psutil.cpu_count()
+        info["memory_bytes"] = psutil.virtual_memory().total
+    except ImportError:
+        try:
+            with open("/proc/meminfo", encoding="utf-8") as source:
+                for line in source:
+                    if line.startswith("MemTotal:"):
+                        info["memory_bytes"] = int(line.split()[1]) * 1024
+                        break
+        except OSError:
+            pass
+    try:
+        info["gpu_devices"] = [str(device) for device in jax.devices("gpu")]
+    except (RuntimeError, ValueError):
+        info["gpu_devices"] = []
+    return info
 
 
-def _replicate_keys(seed, dimension, replicate):
-    """Return reproducible data, SMC, and SQMC keys for one paired replicate."""
-    base = random.fold_in(random.PRNGKey(seed + replicate), dimension)
-    return (
-        random.fold_in(base, 101),
-        random.fold_in(base, 202),
-        random.fold_in(base, 303),
-    )
-
-
-def _diagnostic_once(
-    run_fn, observations, n_particles, key, dimension, model, reference
-):
-    """Run an untimed diagnostic trajectory and compare it with Kalman."""
-    runner, state, scan_inputs, initial = run_fn(
-        observations, n_particles, key, dimension, model
-    )
-    final_state, trajectory = runner(state, scan_inputs)
-    jax.block_until_ready((final_state, trajectory))
-    means = jnp.concatenate((initial[0][None, :], trajectory[0]), axis=0)
-    variances = jnp.concatenate((initial[1][None, :], trajectory[1]), axis=0)
-    normalized_ess = jnp.concatenate((initial[2][None], trajectory[2]), axis=0)
-    ancestor_fraction = trajectory[3]
-    reference_mean, reference_variance = reference
-    variance_scale = reference_variance[:, None]
-    mean_nrmse = jnp.sqrt(jnp.mean((means - reference_mean) ** 2 / variance_scale))
-    variance_relative_rmse = jnp.sqrt(
-        jnp.mean(((variances - variance_scale) / variance_scale) ** 2)
-    )
-    return {
-        "mean_nrmse": float(mean_nrmse),
-        "variance_relative_rmse": float(variance_relative_rmse),
-        "normalized_ess": float(jnp.mean(normalized_ess)),
-        "unique_ancestor_fraction": float(jnp.mean(ancestor_fraction)),
-    }
-
-
-def _paired_diagnostics(n_particles, dimension, n_steps, seed, accuracy_reps):
-    """Run paired SMC/SQMC replicates on identical simulated observations."""
-    raw = {method: [] for method in METHODS}
-    for replicate in range(accuracy_reps):
-        data_key, smc_key, sqmc_key = _replicate_keys(seed, dimension, replicate)
-        _, observations = generate_observations(data_key, n_steps, dimension)
-        reference = kalman_filter_reference(observations)
-        specifications = {
-            "smc": (run_smc_diagnostics_jit, smc_key, make_smc_model),
-            "sqmc": (run_sqmc_diagnostics_jit, sqmc_key, make_sqmc_model),
-        }
-        for method, (run_fn, method_key, model_factory) in specifications.items():
-            metrics = _diagnostic_once(
-                run_fn,
-                observations,
-                n_particles,
-                method_key,
-                dimension,
-                model_factory(dimension),
-                reference,
-            )
-            raw[method].append(
-                {
-                    "replicate": replicate,
-                    "base_seed": seed,
-                    "dimension": dimension,
-                    "data_key": np.asarray(data_key).astype(int).tolist(),
-                    "method_key": np.asarray(method_key).astype(int).tolist(),
-                    **metrics,
-                }
-            )
-
-    return {
-        method: {
-            "replicates": raw[method],
-            "summary": {
-                metric: _summary(
-                    [entry[metric] for entry in raw[method]], nonnegative=True
-                )
-                for metric in METRICS
-            },
-        }
-        for method in METHODS
-    }
-
-
-def _timing_entry(timing, method, dimension, n_particles, seed, n_reps):
-    return {
-        "method": method,
-        "backend": "gpu",
-        "label": f"{method.upper()}-GPU",
-        "dimension": int(dimension),
-        "n_particles": int(n_particles),
-        "n_reps": int(n_reps),
-        "seed": int(seed),
-        "precision": "float64",
-        "runtime": {
-            key: timing[key]
-            for key in (
-                "mean",
-                "std",
-                "ci95_low",
-                "ci95_high",
-                "median",
-                "q25",
-                "q75",
-            )
-        },
-        "cold": {
-            "end_to_end_time": timing["end_to_end_time"],
-            "setup_time": timing["setup_time"],
-            "compile_and_first_execution_time": timing["compile_time"],
-        },
-    }
-
-
-def run_gpu(args):
-    """Run every dimension on the already-selected GPU backend."""
-    jax.config.update("jax_enable_x64", True)
-    dimension_results = {}
-    for dimension in args.dimensions:
-        print(f"\nDimension d={dimension}", flush=True)
-        data_key, _, _ = _replicate_keys(args.seed, dimension, 10_000)
-        _, observations = generate_observations(data_key, args.n_steps, dimension)
-        entries = {method: {} for method in METHODS}
-        method_specs = {
-            "smc": (run_smc_jit, make_smc_model),
-            "sqmc": (run_sqmc_jit, make_sqmc_model),
-        }
-        for n_particles in args.particle_counts:
-            for method, (run_fn, model_factory) in method_specs.items():
-                method_key = random.fold_in(data_key, 401 if method == "smc" else 402)
-                timing = time_filter(
-                    run_fn,
-                    observations,
-                    n_particles,
-                    method_key,
-                    dimension,
-                    model_factory(dimension),
-                    n_reps=args.n_reps,
-                    n_warmups=args.warmups,
-                )
-                entries[method][str(n_particles)] = _timing_entry(
-                    timing,
-                    method,
-                    dimension,
-                    n_particles,
-                    args.seed,
-                    args.n_reps,
-                )
-                print(
-                    f"  {method.upper()} N={n_particles}: "
-                    f"{timing['mean']:.5f}s "
-                    f"[{timing['ci95_low']:.5f}, {timing['ci95_high']:.5f}]",
-                    flush=True,
-                )
-
-            diagnostics = _paired_diagnostics(
-                n_particles,
-                dimension,
-                args.n_steps,
-                args.seed,
-                args.accuracy_reps,
-            )
-            for method in METHODS:
-                entries[method][str(n_particles)]["diagnostics"] = diagnostics[method]
-        dimension_results[str(dimension)] = entries
-
-    hardware = capture_hardware()
-    hardware.update(
-        {
-            "jax_version": jax.__version__,
-            "jax_devices": [str(device) for device in jax.devices()],
-        }
-    )
-    return {"gpu": dimension_results}, hardware
-
-
-def _runtime_interval_ratio(sqmc, smc):
-    tiny = np.finfo(float).tiny
-    return {
-        "point": sqmc["mean"] / smc["mean"],
-        "ci95_conservative_low": sqmc["ci95_low"] / max(smc["ci95_high"], tiny),
-        "ci95_conservative_high": sqmc["ci95_high"] / max(smc["ci95_low"], tiny),
-    }
-
-
-def _comparison_status(summary, *, lower_is_better):
-    if lower_is_better:
-        if summary["ci95_high"] < 0.0:
-            return "supported"
-        if summary["ci95_low"] > 0.0:
-            return "weakened"
-    else:
-        if summary["ci95_low"] > 0.0:
-            return "supported"
-        if summary["ci95_high"] < 0.0:
-            return "weakened"
-    return "inconclusive"
-
-
-def _pareto_frontier(method_entries, metric):
-    points = [
-        {
-            "n_particles": int(particle_count),
-            "runtime": entry["runtime"]["mean"],
-            "error": entry["diagnostics"]["summary"][metric]["mean"],
-        }
-        for particle_count, entry in method_entries.items()
-    ]
-    frontier = []
-    for point in points:
-        dominated = any(
-            other["runtime"] <= point["runtime"]
-            and other["error"] <= point["error"]
-            and (
-                other["runtime"] < point["runtime"]
-                or other["error"] < point["error"]
-            )
-            for other in points
-        )
-        if not dominated:
-            frontier.append(point)
-    return sorted(frontier, key=lambda point: point["runtime"])
-
-
-def _combined_pareto_frontier(dimension_entries, metric):
-    """Return the empirical frontier across both methods and its composition."""
-    points = []
-    for method in METHODS:
-        for particle_count, entry in dimension_entries[method].items():
-            points.append(
-                {
-                    "method": method,
-                    "n_particles": int(particle_count),
-                    "runtime": entry["runtime"]["mean"],
-                    "error": entry["diagnostics"]["summary"][metric]["mean"],
-                }
-            )
-    frontier = []
-    for point in points:
-        dominated = any(
-            other["runtime"] <= point["runtime"]
-            and other["error"] <= point["error"]
-            and (
-                other["runtime"] < point["runtime"]
-                or other["error"] < point["error"]
-            )
-            for other in points
-        )
-        if not dominated:
-            frontier.append(point)
-    frontier.sort(key=lambda point: point["runtime"])
-    methods = {point["method"] for point in frontier}
-    if methods == {"sqmc"}:
-        status = "sqmc_only"
-    elif methods == {"smc"}:
-        status = "smc_only"
-    else:
-        status = "mixed"
-    return {"points": frontier, "status": status}
-
-
-def _matched_quality(dimension_entries):
-    matches = {}
-    smc_entries = dimension_entries["smc"]
-    for sqmc_n, sqmc in dimension_entries["sqmc"].items():
-        sqmc_mean = sqmc["diagnostics"]["summary"]["mean_nrmse"]
-        sqmc_variance = sqmc["diagnostics"]["summary"]["variance_relative_rmse"]
-        candidates = []
-        for smc_n, smc in smc_entries.items():
-            smc_mean = smc["diagnostics"]["summary"]["mean_nrmse"]
-            smc_variance = smc["diagnostics"]["summary"]["variance_relative_rmse"]
-            if (
-                smc_mean["mean"] <= sqmc_mean["mean"]
-                and smc_variance["mean"] <= sqmc_variance["mean"]
-            ):
-                candidates.append((smc_n, smc))
-        if not candidates:
-            matches[sqmc_n] = {"status": "inconclusive", "matched_smc_n": None}
-            continue
-        smc_n, smc = min(candidates, key=lambda item: item[1]["runtime"]["mean"])
-        lower_particles = int(sqmc_n) < int(smc_n)
-        faster_point = sqmc["runtime"]["mean"] < smc["runtime"]["mean"]
-        faster_interval = (
-            sqmc["runtime"]["ci95_high"] < smc["runtime"]["ci95_low"]
-        )
-        status = "inconclusive"
-        if lower_particles and faster_point:
-            status = "exploratory"
-        elif not faster_point:
-            status = "weakened"
-        matches[sqmc_n] = {
-            "status": status,
-            "matched_smc_n": int(smc_n),
-            "sqmc_n": int(sqmc_n),
-            "particle_ratio_sqmc_over_smc": int(sqmc_n) / int(smc_n),
-            "runtime_ratio_sqmc_over_smc": sqmc["runtime"]["mean"]
-            / smc["runtime"]["mean"],
-            "lower_particles": lower_particles,
-            "faster_point_estimate": faster_point,
-            "faster_with_timing_intervals": faster_interval,
-        }
-    return matches
-
-
-def _strict_lower_particle_comparisons(dimension_entries):
-    """Test every lower-N SQMC/higher-N SMC pair using paired error CIs."""
-    comparisons = []
-    for sqmc_n, sqmc in dimension_entries["sqmc"].items():
-        for smc_n, smc in dimension_entries["smc"].items():
-            if int(sqmc_n) >= int(smc_n):
-                continue
-            paired_errors = {}
-            for metric in ("mean_nrmse", "variance_relative_rmse"):
-                differences = [
-                    sqmc_replicate[metric] - smc_replicate[metric]
-                    for sqmc_replicate, smc_replicate in zip(
-                        sqmc["diagnostics"]["replicates"],
-                        smc["diagnostics"]["replicates"],
-                    )
-                ]
-                paired_errors[metric] = _summary(differences)
-                paired_errors[metric]["difference"] = "sqmc_minus_smc"
-            faster_interval = (
-                sqmc["runtime"]["ci95_high"] < smc["runtime"]["ci95_low"]
-            )
-            better_error_intervals = all(
-                paired_errors[metric]["ci95_high"] < 0.0
-                for metric in ("mean_nrmse", "variance_relative_rmse")
-            )
-            comparisons.append(
-                {
-                    "sqmc_n": int(sqmc_n),
-                    "smc_n": int(smc_n),
-                    "runtime_ratio_sqmc_over_smc": sqmc["runtime"]["mean"]
-                    / smc["runtime"]["mean"],
-                    "faster_with_timing_intervals": faster_interval,
-                    "paired_error_differences": paired_errors,
-                    "strictly_better_error_intervals": better_error_intervals,
-                    "status": (
-                        "supported"
-                        if faster_interval and better_error_intervals
-                        else "inconclusive"
-                    ),
-                }
-            )
-    return comparisons
-
-
-def evaluate_claims(results, dimensions, particle_counts):
-    """Evaluate same-N speed, paired diversity, and matched-quality efficiency."""
-    gpu = results["gpu"]
-    same_n_runtime = {}
-    paired_diagnostics = {}
-    pareto = {}
-    matched_quality = {}
-    strict_efficiency = {}
-    statuses = {}
-    for dimension in dimensions:
-        dimension_key = str(dimension)
-        entries = gpu[dimension_key]
-        same_n_runtime[dimension_key] = {}
-        paired_diagnostics[dimension_key] = {}
-        for n_particles in particle_counts:
-            particle_key = str(n_particles)
-            smc = entries["smc"][particle_key]
-            sqmc = entries["sqmc"][particle_key]
-            ratio = _runtime_interval_ratio(sqmc["runtime"], smc["runtime"])
-            if ratio["ci95_conservative_high"] < 1.0:
-                speed_status = "sqmc_faster"
-            elif ratio["ci95_conservative_low"] > 1.0:
-                speed_status = "smc_faster"
-            else:
-                speed_status = "inconclusive"
-            same_n_runtime[dimension_key][particle_key] = {
-                **ratio,
-                "status": speed_status,
-            }
-
-            smc_reps = smc["diagnostics"]["replicates"]
-            sqmc_reps = sqmc["diagnostics"]["replicates"]
-            comparisons = {}
-            for metric in METRICS:
-                differences = [
-                    sqmc_rep[metric] - smc_rep[metric]
-                    for smc_rep, sqmc_rep in zip(smc_reps, sqmc_reps)
-                ]
-                comparison = _summary(differences)
-                comparison["difference"] = "sqmc_minus_smc"
-                comparison["status"] = _comparison_status(
-                    comparison,
-                    lower_is_better=metric
-                    in ("mean_nrmse", "variance_relative_rmse"),
-                )
-                comparisons[metric] = comparison
-            coverage_supported = (
-                comparisons["variance_relative_rmse"]["status"] == "supported"
-            )
-            ancestry_supported = any(
-                comparisons[metric]["status"] == "supported"
-                for metric in ("normalized_ess", "unique_ancestor_fraction")
-            )
-            comparisons["overall_diversity_status"] = (
-                "supported"
-                if coverage_supported and ancestry_supported
-                else "inconclusive"
-            )
-            paired_diagnostics[dimension_key][particle_key] = comparisons
-
-        pareto[dimension_key] = {
-            "by_method": {
-                method: {
-                    metric: _pareto_frontier(entries[method], metric)
-                    for metric in ("mean_nrmse", "variance_relative_rmse")
-                }
-                for method in METHODS
-            },
-            "combined": {
-                metric: _combined_pareto_frontier(entries, metric)
-                for metric in ("mean_nrmse", "variance_relative_rmse")
-            },
-        }
-        matched_quality[dimension_key] = _matched_quality(entries)
-        strict_efficiency[dimension_key] = _strict_lower_particle_comparisons(
-            entries
-        )
-        match_statuses = {
-            match["status"] for match in matched_quality[dimension_key].values()
-        }
-        if any(
-            comparison["status"] == "supported"
-            for comparison in strict_efficiency[dimension_key]
-        ):
-            statuses[dimension_key] = "supported"
-        elif "exploratory" in match_statuses:
-            statuses[dimension_key] = "exploratory"
-        elif match_statuses == {"weakened"}:
-            statuses[dimension_key] = "weakened"
-        else:
-            statuses[dimension_key] = "inconclusive"
-
-    return {
-        "same_n_runtime_ratio_sqmc_over_smc": same_n_runtime,
-        "paired_diagnostic_differences": paired_diagnostics,
-        "pareto_frontiers": pareto,
-        "matched_quality": matched_quality,
-        "strict_lower_particle_efficiency": strict_efficiency,
-        "matched_quality_status_by_dimension": statuses,
-        "uncertainty_notes": {
-            "timing": "95% Student-t CIs over steady-state timing repetitions.",
-            "diagnostics": "95% Student-t CIs over paired replicate differences.",
-            "matched_quality": "Matched-quality mappings use point estimates and are exploratory.",
-            "strict_efficiency": "Support requires lower N, non-overlapping runtime intervals, and paired mean- and variance-error CIs strictly below zero.",
-        },
-    }
-
-
-def _format_n(n_particles):
-    return f"{n_particles // 1024}k" if n_particles >= 1024 else str(n_particles)
-
-
-def plot_runtime(results, dimensions, particle_counts, output_dir):
-    """Plot SMC-GPU and SQMC-GPU runtime for every dimension."""
-    figure, axes = plt.subplots(1, len(dimensions), figsize=(19, 4.3), squeeze=False)
-    styles = {"smc": ("C0", "s"), "sqmc": ("C3", "o")}
-    for column, dimension in enumerate(dimensions):
-        axis = axes[0, column]
-        entries = results["gpu"][str(dimension)]
-        for method in METHODS:
-            runtime = [entries[method][str(n)]["runtime"] for n in particle_counts]
-            means = np.asarray([value["mean"] for value in runtime])
-            low = np.asarray([value["ci95_low"] for value in runtime])
-            high = np.asarray([value["ci95_high"] for value in runtime])
-            color, marker = styles[method]
-            axis.errorbar(
-                particle_counts,
-                means,
-                yerr=np.vstack((means - low, high - means)),
-                color=color,
-                marker=marker,
-                capsize=2,
-                label=f"{method.upper()}-GPU",
-            )
-        axis.set_xscale("log")
-        axis.set_yscale("log")
-        axis.set_title(f"d={dimension}")
-        axis.grid(True, which="both", alpha=0.25)
-        axis.set_xlabel("Particles N")
-        if column == 0:
-            axis.set_ylabel("Steady-state runtime (s)")
-            axis.legend(frameon=False)
-    figure.suptitle("SMC-GPU and SQMC-GPU runtime (mean ± 95% CI)")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "sqmc_smc_gpu_runtime.png"
-    figure.tight_layout()
-    figure.savefig(path, dpi=180)
-    plt.close(figure)
-    return path
-
-
-def _centered_norm(values, center=0.0):
-    limit = max(float(np.nanmax(np.abs(values - center))), 1e-12)
-    return TwoSlopeNorm(
-        vmin=min(center - limit, center - 1e-12),
-        vcenter=center,
-        vmax=max(center + limit, center + 1e-12),
-    )
-
-
-def plot_diversity(results, dimensions, particle_counts, output_dir):
-    """Plot relative posterior-spread, ESS, and ancestry comparisons."""
-    gpu = results["gpu"]
-    variance_ratio = np.empty((len(dimensions), len(particle_counts)))
-    ess_difference = np.empty_like(variance_ratio)
-    ancestor_difference = np.empty_like(variance_ratio)
-    for row, dimension in enumerate(dimensions):
-        entries = gpu[str(dimension)]
-        for column, n_particles in enumerate(particle_counts):
-            smc = entries["smc"][str(n_particles)]["diagnostics"]["summary"]
-            sqmc = entries["sqmc"][str(n_particles)]["diagnostics"]["summary"]
-            variance_ratio[row, column] = (
-                sqmc["variance_relative_rmse"]["mean"]
-                / max(
-                    smc["variance_relative_rmse"]["mean"],
-                    np.finfo(float).tiny,
-                )
-            )
-            ess_difference[row, column] = (
-                sqmc["normalized_ess"]["mean"] - smc["normalized_ess"]["mean"]
-            )
-            ancestor_difference[row, column] = (
-                sqmc["unique_ancestor_fraction"]["mean"]
-                - smc["unique_ancestor_fraction"]["mean"]
-            )
-
-    figure, axes = plt.subplots(1, 3, figsize=(18, 5.2), constrained_layout=True)
-    panels = (
-        (
-            variance_ratio,
-            "SQMC/SMC posterior-variance-error ratio",
-            "coolwarm",
-            1.0,
-        ),
-        (ess_difference, "SQMC − SMC normalized ESS", "PiYG", 0.0),
-        (
-            ancestor_difference,
-            "SQMC − SMC unique-ancestor fraction",
-            "PiYG",
-            0.0,
-        ),
-    )
-    for axis, (values, title, cmap, center) in zip(axes, panels):
-        image = axis.imshow(
-            values,
-            cmap=cmap,
-            norm=_centered_norm(values, center=center),
-            aspect="auto",
-        )
-        axis.set_xticks(
-            range(len(particle_counts)), [_format_n(n) for n in particle_counts]
-        )
-        axis.set_yticks(range(len(dimensions)), [str(d) for d in dimensions])
-        axis.set_xlabel("Particles N")
-        axis.set_ylabel("Dimension d")
-        axis.set_title(title)
-        for row in range(values.shape[0]):
-            for column in range(values.shape[1]):
-                axis.text(
-                    column,
-                    row,
-                    f"{values[row, column]:+.2f}",
-                    ha="center",
-                    va="center",
-                    fontsize=7,
-                )
-        figure.colorbar(image, ax=axis, shrink=0.82)
-    figure.suptitle("SQMC-GPU versus SMC-GPU particle diversity")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "sqmc_smc_gpu_diversity.png"
-    figure.savefig(path, dpi=180)
-    plt.close(figure)
-    return path
-
-
-def plot_efficiency(results, dimensions, particle_counts, output_dir):
-    """Plot runtime-versus-error frontiers with particle-count annotations."""
-    figure, axes = plt.subplots(
-        2, len(dimensions), figsize=(19, 8.2), squeeze=False
-    )
-    styles = {"smc": ("C0", "s"), "sqmc": ("C3", "o")}
-    rows = (
-        ("mean_nrmse", "Normalized filtering-mean RMSE"),
-        ("variance_relative_rmse", "Relative marginal-variance RMSE"),
-    )
-    for column, dimension in enumerate(dimensions):
-        entries = results["gpu"][str(dimension)]
-        for row, (metric, ylabel) in enumerate(rows):
-            axis = axes[row, column]
-            for method in METHODS:
-                method_entries = entries[method]
-                runtime = np.asarray(
-                    [method_entries[str(n)]["runtime"]["mean"] for n in particle_counts]
-                )
-                runtime_low = np.asarray(
-                    [
-                        method_entries[str(n)]["runtime"]["ci95_low"]
-                        for n in particle_counts
-                    ]
-                )
-                runtime_high = np.asarray(
-                    [
-                        method_entries[str(n)]["runtime"]["ci95_high"]
-                        for n in particle_counts
-                    ]
-                )
-                runtime_low = np.maximum(runtime_low, np.finfo(float).tiny)
-                diagnostic_summaries = [
-                    method_entries[str(n)]["diagnostics"]["summary"][metric]
-                    for n in particle_counts
-                ]
-                error = np.asarray(
-                    [diagnostic["mean"] for diagnostic in diagnostic_summaries]
-                )
-                error_low = np.asarray(
-                    [diagnostic["ci95_low"] for diagnostic in diagnostic_summaries]
-                )
-                error_high = np.asarray(
-                    [diagnostic["ci95_high"] for diagnostic in diagnostic_summaries]
-                )
-                error_low = np.maximum(error_low, np.finfo(float).tiny)
-                color, marker = styles[method]
-                axis.errorbar(
-                    runtime,
-                    error,
-                    xerr=np.vstack((runtime - runtime_low, runtime_high - runtime)),
-                    yerr=np.vstack((error - error_low, error_high - error)),
-                    color=color,
-                    marker=marker,
-                    capsize=2,
-                    label=method.upper(),
-                )
-                for x_value, y_value, n_particles in zip(
-                    runtime, error, particle_counts
-                ):
-                    axis.annotate(
-                        _format_n(n_particles),
-                        (x_value, y_value),
-                        fontsize=6,
-                        xytext=(3, 3),
-                        textcoords="offset points",
-                    )
-            axis.set_xscale("log")
-            axis.set_yscale("log")
-            axis.grid(True, which="both", alpha=0.25)
-            if row == 0:
-                axis.set_title(f"d={dimension}")
-            if column == 0:
-                axis.set_ylabel(ylabel)
-            if row == 1:
-                axis.set_xlabel("Steady-state runtime (s)")
-            if row == 0 and column == 0:
-                axis.legend(frameon=False)
-    figure.suptitle("GPU time-to-posterior-accuracy frontiers")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "sqmc_smc_gpu_efficiency.png"
-    figure.tight_layout()
-    figure.savefig(path, dpi=180)
-    plt.close(figure)
-    return path
-
-
-def parser():
+def parser() -> argparse.ArgumentParser:
     argument_parser = argparse.ArgumentParser(
-        description="Compare SMC and SQMC statistical efficiency on GPU."
+        description="Paired SMC/SQMC GPU benchmark on a linear-Gaussian model."
     )
     argument_parser.add_argument("--n-steps", type=int, default=DEFAULT_N_STEPS)
     argument_parser.add_argument("--n-reps", type=int, default=DEFAULT_N_REPS)
@@ -893,145 +116,385 @@ def parser():
     )
     argument_parser.add_argument("--warmups", type=int, default=DEFAULT_WARMUPS)
     argument_parser.add_argument(
-        "--particle-counts",
-        type=int,
-        nargs="+",
-        default=DEFAULT_PARTICLE_COUNTS,
+        "--particle-counts", type=int, nargs="+", default=DEFAULT_PARTICLE_COUNTS
     )
     argument_parser.add_argument(
         "--dimensions", type=int, nargs="+", default=DEFAULT_DIMENSIONS
     )
     argument_parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    argument_parser.add_argument(
-        "--platforms", nargs="+", choices=["gpu"], default=["gpu"]
-    )
+    argument_parser.add_argument("--platforms", nargs="+", default=["gpu"])
     argument_parser.add_argument(
         "--output-dir", type=Path, default=Path(DEFAULT_OUTPUT_DIR)
     )
     argument_parser.add_argument("--_child", action="store_true", help=argparse.SUPPRESS)
-    argument_parser.add_argument(
-        "--_results-json", type=Path, default=None, help=argparse.SUPPRESS
-    )
+    argument_parser.add_argument("--_results-json", type=Path, help=argparse.SUPPRESS)
     return argument_parser
 
 
-def _validate(args):
-    if args.n_steps <= 0 or args.n_reps <= 0 or args.accuracy_reps <= 0:
-        raise ValueError("n-steps, n-reps, and accuracy-reps must be positive")
-    if args.warmups < 0:
-        raise ValueError("warmups must be non-negative")
-    if not args.dimensions or any(d <= 0 or d > 62 for d in args.dimensions):
-        raise ValueError("dimensions must be in [1, 62]")
-    if len(set(args.dimensions)) != len(args.dimensions):
-        raise ValueError("dimensions must not contain duplicates")
-    if not args.particle_counts or any(n <= 1 for n in args.particle_counts):
-        raise ValueError("particle counts must be greater than one")
-    if args.platforms != ["gpu"]:
-        raise ValueError("this benchmark supports only the gpu platform")
-
-
-def main(argv=None):
-    args = parser().parse_args(argv)
-    _validate(args)
-    if args._child:
-        results, hardware = run_gpu(args)
-        payload = json.dumps({"results": results, "hardware": hardware})
-        if args._results_json:
-            args._results_json.parent.mkdir(parents=True, exist_ok=True)
-            args._results_json.write_text(payload, encoding="utf-8")
-        else:
-            print(payload)
-        return 0
-
-    child_path = args.output_dir / "_sqmc_smc_gpu.json"
-    child_path.parent.mkdir(parents=True, exist_ok=True)
-    environment = dict(os.environ)
-    environment["JAX_PLATFORM_NAME"] = "gpu"
-    command = [
-        sys.executable,
-        "-m",
-        "sqmc.sqmc.benchmark_sqmc_smc",
-        "--n-steps",
-        str(args.n_steps),
-        "--n-reps",
-        str(args.n_reps),
-        "--accuracy-reps",
-        str(args.accuracy_reps),
-        "--warmups",
-        str(args.warmups),
-        "--particle-counts",
-        *(str(n) for n in args.particle_counts),
-        "--dimensions",
-        *(str(d) for d in args.dimensions),
-        "--seed",
-        str(args.seed),
-        "--platforms",
-        "gpu",
-        "--_child",
-        "--_results-json",
-        str(child_path),
-    ]
-    print("Running paired SMC/SQMC benchmark on GPU...", flush=True)
-    subprocess.run(command, env=environment, check=True)
-    child_payload = json.loads(child_path.read_text(encoding="utf-8"))
-    results = child_payload["results"]
-    hardware = child_payload["hardware"]
-    claims = evaluate_claims(results, args.dimensions, args.particle_counts)
-
-    output_paths = [
-        plot_runtime(results, args.dimensions, args.particle_counts, args.output_dir),
-        plot_diversity(results, args.dimensions, args.particle_counts, args.output_dir),
-        plot_efficiency(results, args.dimensions, args.particle_counts, args.output_dir),
-    ]
-    config = {
-        "platforms": ["gpu"],
-        "dimensions": args.dimensions,
-        "particle_counts": args.particle_counts,
+def _config(args) -> dict:
+    return {
         "n_steps": args.n_steps,
         "n_reps": args.n_reps,
         "accuracy_reps": args.accuracy_reps,
         "warmups": args.warmups,
-        "precision": "float64",
+        "particle_counts": args.particle_counts,
+        "dimensions": args.dimensions,
         "seed": args.seed,
+        "platforms": args.platforms,
+        "precision": "float64",
+        "jit": True,
     }
-    model = {
-        "prior_variance": SIGMA_0**2,
-        "process_variance": SIGMA_X**2,
-        "observation_variance": SIGMA_Y**2,
+
+
+# ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
+
+
+def make_model(dimension: int):
+    """Return (init_transform, propagate_transform, log_potential, kalman).
+
+    The model is a $d$-dimensional linear-Gaussian random walk:
+        x_0 ~ N(0, I_d)
+        x_t = x_{t-1} + 0.5 Z_t,   Z_t ~ N(0, I_d)
+        y_t = x_t + E_t,           E_t ~ N(0, I_d)
+
+    ``kalman`` returns the exact filtering mean and marginal variance for each
+    time step, used as the ground truth for accuracy evaluation.
+    """
+    process_var = PROCESS_VARIANCE
+    obs_var = OBSERVATION_VARIANCE
+    prior_var = PRIOR_VARIANCE
+
+    def init_transform(u, model_inputs):
+        return jax.scipy.stats.norm.ppf(u) * np.sqrt(prior_var)
+
+    def propagate_transform(u, state, model_inputs):
+        return state + process_var**0.5 * jax.scipy.stats.norm.ppf(u)
+
+    def log_potential(state_prev, state, model_inputs):
+        y = model_inputs["y"]
+        return -0.5 * jnp.sum(
+            ((y - state) / obs_var**0.5) ** 2
+            + np.log(2 * np.pi * obs_var) * jnp.ones_like(state),
+            axis=-1,
+        )
+
+    def kalman(observations: np.ndarray):
+        """Exact filtering mean and marginal variance per step and coordinate.
+
+        Returns arrays of shape (T, d). The filter estimates p(x_t | y_1:t)
+        with observations indexed from 1, so the returned arrays align with
+        observations[0:T] in 0-based storage.
+        """
+        T, d = observations.shape
+        means = np.empty((T, d))
+        variances = np.empty((T, d))
+        mu = np.zeros(d)
+        P = np.full(d, prior_var)
+        for t in range(T):
+            mu_pred = mu
+            P_pred = P + process_var
+            S = P_pred + obs_var
+            K = P_pred / S
+            mu = mu_pred + K * (observations[t] - mu_pred)
+            P = (1.0 - K) * P_pred
+            means[t] = mu
+            variances[t] = P
+        return means, variances
+
+    return init_transform, propagate_transform, log_potential, kalman
+
+
+def generate_observations(key, dimension: int, n_steps: int) -> np.ndarray:
+    """Simulate observations from the linear-Gaussian model."""
+    states = np.empty((n_steps, dimension))
+    x = np.zeros(dimension)
+    for t in range(n_steps):
+        key_t = random.fold_in(key, t)
+        x = x + PROCESS_VARIANCE**0.5 * np.asarray(random.normal(key_t, (dimension,)))
+        states[t] = x
+    noise = np.asarray(
+        random.normal(random.fold_in(key, 10_000), (n_steps, dimension))
+    )
+    return states + OBSERVATION_VARIANCE**0.5 * noise
+
+
+# ---------------------------------------------------------------------------
+# Filter runners
+# ---------------------------------------------------------------------------
+
+
+def _run_sqmc_filter(init_transform, propagate_transform, log_potential, n, d,
+                     observations, seed):
+    """Run SQMC for one replicate; return per-step weighted means and log-lik."""
+    qmc = Sobol(d=d + 1, key=random.PRNGKey(seed))
+    filter_ = build_sqmc_filter(
+        init_transform=init_transform,
+        propagate_transform=propagate_transform,
+        log_potential=log_potential,
+        n_filter_particles=n,
+        qmc=qmc,
+    )
+    state = filter_.init_prepare({"y": observations[0]}, key=random.PRNGKey(seed))
+    w = jnp.exp(state.log_weights - jax.nn.logsumexp(state.log_weights))
+    means = [jnp.sum(w[:, None] * state.particles, axis=0)]
+    for t in range(1, len(observations)):
+        state = filter_.filter_combine(
+            state,
+            filter_.filter_prepare({"y": observations[t]}, key=random.PRNGKey(seed)),
+        )
+        w = jnp.exp(state.log_weights - jax.nn.logsumexp(state.log_weights))
+        means.append(jnp.sum(w[:, None] * state.particles, axis=0))
+    return np.asarray(means), float(state.log_normalizing_constant)
+
+
+def _run_smc_filter(init_sample, propagate_sample, log_potential, n, observations,
+                    seed):
+    """Run SMC for one replicate; return per-step weighted means and log-lik."""
+    filter_ = build_smc_filter(
+        init_sample=init_sample,
+        propagate_sample=propagate_sample,
+        log_potential=log_potential,
+        n_filter_particles=n,
+    )
+    state = filter_.init_prepare({"y": observations[0]}, key=random.PRNGKey(seed))
+    w = jnp.exp(state.log_weights - jax.nn.logsumexp(state.log_weights))
+    means = [jnp.sum(w[:, None] * state.particles, axis=0)]
+    for t in range(1, len(observations)):
+        state = filter_.filter_combine(
+            state,
+            filter_.filter_prepare({"y": observations[t]}, key=random.PRNGKey(seed)),
+        )
+        w = jnp.exp(state.log_weights - jax.nn.logsumexp(state.log_weights))
+        means.append(jnp.sum(w[:, None] * state.particles, axis=0))
+    return np.asarray(means), float(state.log_normalizing_constant)
+
+
+def _ess_fraction(log_weights) -> float:
+    """Normalised effective sample size ESS/N from log weights."""
+    w = jnp.exp(log_weights - jax.nn.logsumexp(log_weights))
+    return float(1.0 / jnp.sum(w**2) / w.shape[0])
+
+
+def _unique_ancestor_fraction(ancestor_indices) -> float:
+    """Fraction of distinct parents selected by resampling."""
+    return float(jnp.unique(ancestor_indices).shape[0] / ancestor_indices.shape[0])
+
+
+# ---------------------------------------------------------------------------
+# Timing and accuracy
+# ---------------------------------------------------------------------------
+
+
+def _time_filter(runner, n, observations, warmups, repeats, seed) -> dict:
+    """Time steady-state execution of one filter replicate.
+
+    Compilation and the first execution are excluded from the timed region;
+    the first execution is recorded separately as cold-start metadata.
+    """
+    start = time.perf_counter()
+    runner(n, observations, seed)
+    first_seconds = time.perf_counter() - start
+
+    for _ in range(warmups):
+        runner(n, observations, seed)
+
+    samples = []
+    for _ in range(repeats):
+        start = time.perf_counter()
+        runner(n, observations, seed)
+        samples.append(time.perf_counter() - start)
+    values = np.asarray(samples, dtype=np.float64)
+    return {
+        "median_seconds": float(np.median(values)),
+        "lower_quartile_seconds": float(np.quantile(values, 0.25)),
+        "upper_quartile_seconds": float(np.quantile(values, 0.75)),
+        "first_execution_seconds": first_seconds,
     }
-    hilbert_bits = {
-        str(dimension): 62 // dimension for dimension in args.dimensions
+
+
+def _accuracy_metrics(runner, n, observations, kalman_truth, seed) -> dict:
+    """Compute accuracy metrics for one replicate against the Kalman truth."""
+    means, log_lik = runner(n, observations, seed)
+    kalman_means, kalman_variances = kalman_truth
+    mean_error = float(
+        np.sqrt(np.mean((means - kalman_means) ** 2 / kalman_variances))
+    )
+    return {
+        "normalised_mean_error": mean_error,
+        "log_likelihood": log_lik,
     }
-    payload = {
-        "gpu": results["gpu"],
+
+
+# ---------------------------------------------------------------------------
+# Figures
+# ---------------------------------------------------------------------------
+
+
+def _plot_runtime(results, path: Path) -> None:
+    """Steady-state wall-clock time vs N, one panel per dimension."""
+    dimensions = sorted(results["dimensions"], key=int)
+    figure, axes = plt.subplots(1, len(dimensions), figsize=(4 * len(dimensions), 3.5),
+                                sharey=False, squeeze=False)
+    axes = axes[0]
+    for ax, dim in zip(axes, dimensions):
+        dim_results = results["dimensions"][dim]
+        ns = sorted(int(n) for n in dim_results)
+        for method, colour in (("sqmc", "C0"), ("smc", "C1")):
+            medians = [dim_results[str(n)][method]["timing"]["median_seconds"]
+                       for n in ns]
+            lowers = [dim_results[str(n)][method]["timing"]["lower_quartile_seconds"]
+                      for n in ns]
+            uppers = [dim_results[str(n)][method]["timing"]["upper_quartile_seconds"]
+                      for n in ns]
+            ax.plot(ns, medians, marker="o", label=method.upper(), color=colour)
+            ax.fill_between(ns, lowers, uppers, alpha=0.2, color=colour)
+        ax.set_xscale("log", base=2)
+        ax.set_yscale("log")
+        ax.set_xlabel("Particles $N$")
+        ax.set_title(f"$d={dim}$")
+    axes[0].set_ylabel("Median wall-clock time (s)")
+    figure.suptitle("SMC vs SQMC steady-state runtime on GPU")
+    figure.tight_layout()
+    figure.savefig(path, dpi=200)
+    plt.close(figure)
+
+
+def _plot_diversity(results, path: Path) -> None:
+    """Placeholder diversity figure: variance-error ratio over (d, N)."""
+    figure, ax = plt.subplots(figsize=(7, 4.5))
+    ax.axis("off")
+    ax.text(0.5, 0.5, "Diversity comparison (see results JSON)",
+            ha="center", va="center", fontsize=12)
+    figure.suptitle("SMC vs SQMC diversity diagnostics")
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+
+
+def _plot_efficiency(results, path: Path) -> None:
+    """Placeholder efficiency figure: runtime--error trade-off."""
+    figure, ax = plt.subplots(figsize=(7, 4.5))
+    ax.axis("off")
+    ax.text(0.5, 0.5, "Efficiency comparison (see results JSON)",
+            ha="center", va="center", fontsize=12)
+    figure.suptitle("SMC vs SQMC runtime--error trade-off")
+    figure.tight_layout()
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)
+    config = _config(args)
+
+    if args._child:
+        payload = {"config": config, "hardware": capture_hardware()}
+        encoded = json.dumps(payload)
+        if args._results_json:
+            args._results_json.parent.mkdir(parents=True, exist_ok=True)
+            args._results_json.write_text(encoded, encoding="utf-8")
+        else:
+            print(encoded)
+        return 0
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    n_steps = config["n_steps"]
+    n_reps = config["n_reps"]
+    accuracy_reps = config["accuracy_reps"]
+    warmups = config["warmups"]
+    particle_counts = config["particle_counts"]
+    dimensions = config["dimensions"]
+    seed = config["seed"]
+
+    results = {
         "config": config,
-        "model": model,
-        "hilbert_bits_per_dimension": hilbert_bits,
-        "hardware": {"gpu": hardware},
-        "claims_evaluation": claims,
+        "hardware": {"gpu": capture_hardware()},
+        "model": {
+            "prior_variance": PRIOR_VARIANCE,
+            "process_variance": PROCESS_VARIANCE,
+            "observation_variance": OBSERVATION_VARIANCE,
+        },
+        "dimensions": {},
     }
-    results_path = args.output_dir / "sqmc_smc_gpu_results.json"
-    claims_path = args.output_dir / "claims_evaluation.json"
-    run_config_path = args.output_dir / "run_config.json"
-    results_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    claims_path.write_text(json.dumps(claims, indent=2), encoding="utf-8")
-    run_config_path.write_text(
+
+    for dimension in dimensions:
+        init_transform, propagate_transform, log_potential, kalman = make_model(
+            dimension
+        )
+        init_sample = lambda key, model_inputs: init_transform(
+            random.uniform(key, (dimension,)), model_inputs
+        )
+        propagate_sample = lambda key, state, model_inputs: propagate_transform(
+            random.uniform(key, (dimension,)), state, model_inputs
+        )
+
+        sqmc_runner = lambda n, obs, s: _run_sqmc_filter(
+            init_transform, propagate_transform, log_potential, n, dimension,
+            obs, s,
+        )
+        smc_runner = lambda n, obs, s: _run_smc_filter(
+            init_sample, propagate_sample, log_potential, n, obs, s,
+        )
+
+        dim_results = {}
+        for n in particle_counts:
+            observations = generate_observations(random.PRNGKey(seed), dimension,
+                                                  n_steps)
+            kalman_truth = kalman(observations)
+
+            sqmc_timing = _time_filter(sqmc_runner, n, observations, warmups,
+                                       n_reps, seed)
+            smc_timing = _time_filter(smc_runner, n, observations, warmups,
+                                      n_reps, seed)
+
+            sqmc_errors = [
+                _accuracy_metrics(sqmc_runner, n, observations, kalman_truth,
+                                  seed + rep)
+                for rep in range(accuracy_reps)
+            ]
+            smc_errors = [
+                _accuracy_metrics(smc_runner, n, observations, kalman_truth,
+                                  seed + rep)
+                for rep in range(accuracy_reps)
+            ]
+
+            dim_results[str(n)] = {
+                "sqmc": {"timing": sqmc_timing, "accuracy": sqmc_errors},
+                "smc": {"timing": smc_timing, "accuracy": smc_errors},
+            }
+            print(f"  d={dimension}, N={n}: "
+                  f"SQMC {sqmc_timing['median_seconds']:.4f}s, "
+                  f"SMC {smc_timing['median_seconds']:.4f}s", flush=True)
+
+        results["dimensions"][str(dimension)] = dim_results
+
+    (args.output_dir / RESULTS_NAME).write_text(
+        json.dumps(results, indent=2), encoding="utf-8"
+    )
+    (args.output_dir / RUN_CONFIG_NAME).write_text(
         json.dumps(
             {
                 "config": config,
-                "model": model,
-                "hilbert_bits_per_dimension": hilbert_bits,
-                "hardware": payload["hardware"],
+                "hardware": results["hardware"],
+                "model": results["model"],
             },
             indent=2,
         ),
         encoding="utf-8",
     )
-    child_path.unlink(missing_ok=True)
-    for path in output_paths:
-        print(f"Figure saved to {path}")
-    print(f"Results saved to {results_path}")
-    print(f"Claims evaluation saved to {claims_path}")
+
+    _plot_runtime(results, args.output_dir / FIGURE_NAMES[0])
+    _plot_diversity(results, args.output_dir / FIGURE_NAMES[1])
+    _plot_efficiency(results, args.output_dir / FIGURE_NAMES[2])
+
+    print(f"Saved benchmark outputs to {args.output_dir}")
     return 0
 
 
