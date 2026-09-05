@@ -201,6 +201,11 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(config_path)
 
     output_dir = Path(config.get("remote_output_dir", "sqmc/comparison/outputs"))
+    # Each run is stored in a timestamped subdirectory DDMMYYYY_HHMM (UTC),
+    # supplied by the orchestrator so local and remote paths agree.
+    run_id = config.get("run_id")
+    if run_id:
+        output_dir = output_dir / run_id
 
     if arguments.dry_run:
         print(" ".join(comparison_command(config, output_dir)))

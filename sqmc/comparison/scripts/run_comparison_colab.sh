@@ -68,10 +68,15 @@ main() {
     COLAB_TIMEOUT="${COLAB_TIMEOUT:-$(read_config colab_timeout)}"
     SESSION="${SESSION:-$(read_config session)}"
     REMOTE_OUTPUTS="/content/rbsqmc/$(read_config remote_output_dir)"
-    CONFIG_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])), separators=(",", ":")))' "${CONFIG}")"
+    # Each run is stored in a timestamped subdirectory DDMMYYYY_HHMM (UTC),
+    # both on the remote and locally, so successive runs never overwrite.
+    RUN_ID="$(date -u '+%d%m%Y_%H%M')"
+    REMOTE_OUTPUTS="${REMOTE_OUTPUTS}/${RUN_ID}"
+    LOCAL_OUTPUTS="${LOCAL_OUTPUTS}/${RUN_ID}"
+    CONFIG_JSON="$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c["run_id"]=sys.argv[2]; print(json.dumps(c, separators=(",", ":")))' "${CONFIG}" "${RUN_ID}")"
 
     if [[ "${dry_run}" -eq 1 ]]; then
-        log "GPU=${GPU_TYPE}, timeout=${COLAB_TIMEOUT}, session=${SESSION}"
+        log "GPU=${GPU_TYPE}, timeout=${COLAB_TIMEOUT}, session=${SESSION}, run_id=${RUN_ID}"
         log "Remote source: $(read_config repo_url), branch=$(read_config repo_branch)"
         python3 "${REMOTE_RUNNER}" --config-json "${CONFIG_JSON}" --dry-run
         return 0
