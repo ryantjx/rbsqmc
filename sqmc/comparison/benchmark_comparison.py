@@ -160,6 +160,13 @@ def run_qmc(config: dict, output_dir: Path) -> dict:
         ]
         _run(command)
         commands.append(command)
+        # benchmark_qmc overwrites qmc_benchmark.csv on every invocation, so
+        # snapshot the rows for this dimension before the next run replaces
+        # them; _merge_qmc_csvs reassembles the full table from these copies.
+        snapshot = output_dir / f"qmc_benchmark_d{dimension}.csv"
+        main_csv = output_dir / "qmc_benchmark.csv"
+        if main_csv.exists():
+            shutil.copyfile(main_csv, snapshot)
 
     # Merge the per-dimension CSVs (each run overwrites qmc_benchmark.csv).
     _merge_qmc_csvs(output_dir, dimensions)
