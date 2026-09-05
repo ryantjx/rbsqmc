@@ -2,9 +2,9 @@
 
 Test conventions follow ``state-space-models/cuthbert``: ``chex.TestCase``
 classes, ``@chex.variants(with_jit, without_jit)`` for pure array-valued
-transformations, absl ``parameterized`` markers, ``chex.assert_trees_all_close``
-and ``chex.assert_shape``, and a module-autouse x64 fixture that restores the
-flag on teardown.
+transformations, absl ``parameterized`` markers, module-level
+``chex.assert_trees_all_close`` and ``chex.assert_shape``, and a
+module-autouse x64 fixture that restores the flag on teardown.
 """
 
 import sys
@@ -46,7 +46,7 @@ class GrayCodeTest(chex.TestCase):
             [0, 1, 2, 3, 17, 2**31, 2**62 - 1],
             dtype=jnp.uint64,
         )
-        self.assert_trees_all_close(
+        chex.assert_trees_all_close(
             self.variant(lambda: gray_decode(gray_encode(values)))(),
             values,
             rtol=0.0,
@@ -75,7 +75,7 @@ class GrayCodeTest(chex.TestCase):
             )(encoded)
 
         decoded = self.variant(decode)(self.variant(encode)())
-        self.assert_trees_all_close(decoded, steps, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(decoded, steps, rtol=0.0, atol=0.0)
 
 
 class HilbertIndexTest(chex.TestCase):
@@ -109,7 +109,7 @@ class HilbertIndexTest(chex.TestCase):
         actual = self.variant(
             lambda: jax.vmap(lambda point: Hilbert_to_int(point, 4))(coordinates)
         )()
-        self.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
 
 
 class HilbertSortTest(chex.TestCase):
@@ -118,13 +118,13 @@ class HilbertSortTest(chex.TestCase):
         values = jnp.asarray([3.0, 1.0, 4.0, 1.0, 5.0])
         expected = jnp.argsort(values, stable=True)
 
-        self.assert_trees_all_close(
+        chex.assert_trees_all_close(
             self.variant(lambda: hilbert_sort(values))(),
             expected,
             rtol=0.0,
             atol=0.0,
         )
-        self.assert_trees_all_close(
+        chex.assert_trees_all_close(
             self.variant(lambda: hilbert_sort(values[:, None]))(),
             expected,
             rtol=0.0,
@@ -134,7 +134,7 @@ class HilbertSortTest(chex.TestCase):
     @chex.variants(with_jit=True, without_jit=True)
     def test_constant_columns_are_handled_without_nan_dependent_ordering(self):
         points = jnp.ones((16, 3), dtype=jnp.float64)
-        self.assert_trees_all_close(
+        chex.assert_trees_all_close(
             self.variant(lambda: hilbert_sort(points))(),
             jnp.arange(16),
             rtol=0.0,
@@ -150,7 +150,7 @@ class HilbertSortTest(chex.TestCase):
             dtype=jnp.float64,
         )
         order = self.variant(lambda: hilbert_sort(points))()
-        self.assert_trees_all_close(
+        chex.assert_trees_all_close(
             jnp.sort(order),
             jnp.arange(points.shape[0]),
             rtol=0.0,
@@ -159,13 +159,13 @@ class HilbertSortTest(chex.TestCase):
 
     def test_empty_input_returns_empty_permutation(self):
         order = hilbert_sort(jnp.empty((0, 2), dtype=jnp.float64))
-        self.assert_shape(order, (0,))
+        chex.assert_shape(order, (0,))
 
     def test_more_than_62_dimensions_is_rejected(self):
         with pytest.raises(ValueError, match="At most 62 dimensions"):
             hilbert_sort(jnp.ones((4, 63), dtype=jnp.float64))
 
-    @parameterized.parameters([(2, 2, 2), (2, 0)])
+    @parameterized.parameters([((2, 2, 2),), ((2, 0),)])
     def test_invalid_shape_is_rejected(self, shape):
         with pytest.raises(ValueError):
             hilbert_sort(jnp.ones(shape, dtype=jnp.float64))

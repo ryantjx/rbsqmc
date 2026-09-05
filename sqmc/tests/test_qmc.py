@@ -1,8 +1,8 @@
 """Tests for the QMC point-set generators in ``sqmc.qmc.qmc``.
 
 Test conventions follow ``state-space-models/cuthbert``: ``chex.TestCase``
-classes, absl ``parameterized`` markers, ``chex.assert_trees_all_close`` and
-``chex.assert_shape``, and a module-autouse x64 fixture that restores the
+classes, absl ``parameterized`` markers, module-level ``chex.assert_trees_all_close``
+and ``chex.assert_shape``, and a module-autouse x64 fixture that restores the
 flag on teardown.
 
 ``@chex.variants(with_jit, without_jit)`` is applied only to pure,
@@ -61,7 +61,7 @@ class HaltonTest(chex.TestCase):
             dtype=np.float64,
         )
 
-        self.assert_trees_all_close(actual, expected, rtol=0.0, atol=1e-15)
+        chex.assert_trees_all_close(actual, expected, rtol=0.0, atol=1e-15)
 
     @parameterized.product(d=[1, 2, 5], n=[1, 100])
     def test_unscrambled_matches_scipy(self, d, n):
@@ -74,7 +74,7 @@ class HaltonTest(chex.TestCase):
             ).sample(n)
         )
         expected = qmc.Halton(d=d, scramble=False).random(n)
-        self.assert_trees_all_close(actual, expected, rtol=0.0, atol=1e-15)
+        chex.assert_trees_all_close(actual, expected, rtol=0.0, atol=1e-15)
 
     @parameterized.product(scramble=[False, True])
     def test_chunked_sampling_matches_single_batch(self, scramble):
@@ -104,7 +104,7 @@ class HaltonTest(chex.TestCase):
             axis=0,
         )
 
-        self.assert_trees_all_close(whole, chunked, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(whole, chunked, rtol=0.0, atol=0.0)
 
     def test_scramble_key_controls_reproducibility(self):
         first = np.asarray(
@@ -132,7 +132,7 @@ class HaltonTest(chex.TestCase):
             ).sample(100)
         )
 
-        self.assert_trees_all_close(first, repeated, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(first, repeated, rtol=0.0, atol=0.0)
         self.assertFalse(np.array_equal(first, different))
 
     def test_owen_permutations_are_valid(self):
@@ -149,11 +149,11 @@ class HaltonTest(chex.TestCase):
             engine._permutations,
         ):
             permutations = np.asarray(permutations)
-            self.assert_shape(permutations, (num_digits, base))
+            chex.assert_shape(permutations, (num_digits, base))
 
             expected_digits = np.arange(base)
             for permutation in permutations:
-                self.assert_trees_all_close(
+                chex.assert_trees_all_close(
                     np.sort(permutation),
                     expected_digits,
                     rtol=0.0,
@@ -183,7 +183,7 @@ class HaltonTest(chex.TestCase):
 
         actual = np.asarray(custom_engine.sample(100))
         expected = scipy_engine.random(100)
-        self.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
 
     @parameterized.parameters(0, -1, 10_001)
     def test_invalid_dimension_raises(self, d):
@@ -203,12 +203,13 @@ class HaltonTest(chex.TestCase):
 
 class SobolTest(chex.TestCase):
     def test_known_first_points(self):
+        # ``Sobol.sample`` drops the first point (the origin) by convention, so
+        # the first returned point is the second Sobol' point.
         actual = np.asarray(
             Sobol(d=2, scramble=False, dtype=jnp.float64).sample(8)
         )
         expected = np.array(
             [
-                [0.0, 0.0],
                 [0.5, 0.5],
                 [0.75, 0.25],
                 [0.25, 0.75],
@@ -216,11 +217,12 @@ class SobolTest(chex.TestCase):
                 [0.875, 0.875],
                 [0.625, 0.125],
                 [0.125, 0.625],
+                [0.1875, 0.3125],
             ],
             dtype=np.float64,
         )
 
-        self.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
 
     @parameterized.product(d=[1, 2, 5], m=[0, 3, 7])
     def test_unscrambled_matches_scipy(self, d, m):
@@ -228,8 +230,11 @@ class SobolTest(chex.TestCase):
         actual = np.asarray(
             Sobol(d=d, scramble=False, dtype=jnp.float64).sample(n)
         )
-        expected = qmc.Sobol(d=d, scramble=False, bits=_MAXBITS).random_base2(m)
-        self.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
+        # scipy includes the origin; our implementation drops it, so compare
+        # against scipy's sequence with the first point removed.
+        scipy_points = qmc.Sobol(d=d, scramble=False, bits=_MAXBITS).random(n + 1)
+        expected = scipy_points[1:]
+        chex.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
 
     @parameterized.product(scramble=[False, True])
     def test_chunked_sampling_matches_single_batch(self, scramble):
@@ -258,7 +263,7 @@ class SobolTest(chex.TestCase):
             axis=0,
         )
 
-        self.assert_trees_all_close(whole, chunked, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(whole, chunked, rtol=0.0, atol=0.0)
 
     def test_scramble_key_controls_reproducibility(self):
         first = np.asarray(
@@ -286,7 +291,7 @@ class SobolTest(chex.TestCase):
             ).sample(64)
         )
 
-        self.assert_trees_all_close(first, repeated, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(first, repeated, rtol=0.0, atol=0.0)
         self.assertFalse(np.array_equal(first, different))
 
     def test_lms_row_masks_are_unit_lower_triangular(self):
@@ -305,14 +310,14 @@ class SobolTest(chex.TestCase):
             bit_positions,
         )
 
-        self.assert_shape(row_masks, (engine.d, _MAXBITS))
-        self.assert_trees_all_close(
+        chex.assert_shape(row_masks, (engine.d, _MAXBITS))
+        chex.assert_trees_all_close(
             row_masks & diagonal_masks[None, :],
             np.broadcast_to(diagonal_masks, row_masks.shape),
             rtol=0.0,
             atol=0.0,
         )
-        self.assert_trees_all_close(
+        chex.assert_trees_all_close(
             row_masks & ~allowed_masks[None, :],
             np.zeros_like(row_masks),
             rtol=0.0,
@@ -337,7 +342,7 @@ class SobolTest(chex.TestCase):
             engine._direction_integers,
             identity_row_masks,
         )
-        self.assert_trees_all_close(
+        chex.assert_trees_all_close(
             actual,
             engine._direction_integers,
             rtol=0.0,
@@ -352,11 +357,15 @@ class SobolTest(chex.TestCase):
             dtype=jnp.float64,
         )
 
+        # ``Sobol.sample`` drops the origin, so the first returned point is
+        # index 1: the first direction integer XOR the digital shift.
         actual = np.asarray(engine.sample(1)[0])
+        first_direction = engine._direction_integers[:, 0]
         expected = (
-            np.asarray(engine._digital_shift, dtype=np.float64) * 2.0 ** -_MAXBITS
+            np.asarray(first_direction ^ engine._digital_shift, dtype=np.float64)
+            * 2.0 ** -_MAXBITS
         )
-        self.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
 
     def test_reset_reproduces_points(self):
         engine = Sobol(
@@ -370,7 +379,7 @@ class SobolTest(chex.TestCase):
         repeated = np.asarray(engine.sample(32))
 
         self.assertIs(returned, engine)
-        self.assert_trees_all_close(first, repeated, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(first, repeated, rtol=0.0, atol=0.0)
 
     @parameterized.parameters(0, -1, 21_202)
     def test_invalid_dimension_raises(self, d):

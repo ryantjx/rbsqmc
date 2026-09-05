@@ -260,7 +260,6 @@ def main(argv: list[str] | None = None) -> int:
         "hilbert_sort_benchmark_gpu.png",
         "hilbert_speedup_by_dimension.png",
         "sqmc_smc_gpu_runtime.png",
-        "sqmc_smc_gpu_rmse_over_time.png",
         "sqmc_smc_gpu_results.json",
         "run_config.json",
         "run_metadata.json",

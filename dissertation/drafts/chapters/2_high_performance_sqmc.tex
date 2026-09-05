@@ -9,56 +9,41 @@ Let $X_t \in \mathcal{X} \subseteq \mathbb{R}^d$ be a latent Markov state with o
 p(x_{0:T}, y_{1:T}) = m_0(x_0) \prod_{t=1}^T m_t(x_t | x_{t-1}) g_t(y_t | x_t)
 \end{equation}
 
-One common inference task in state-space models is \textit{filtering}---the task of recovering the distribution $p(x_{t} \mid y_{1:t})$, which is the distribution of the latent state $x_t$ given the data collected up to time $t$, $y_{1:t} = (y_1, \ldots, y_t)$. Another common inference task is to learn the fixed parameter $\theta$ of a state-space model, which could be done via \textit{smoothing}, recovering $p(x_{0:T} \mid y_{1:T})$ or via likelihood evaluation $p(y_{1:T})$. For a linear-Gaussian state-space model, these integrals are available analytically via the Kalman filter and the Rauch--Tung--Striebel smoother \citep{kalmandbucy1961filtering,rauchtungstriebel1965}. However, for non-linear or non-Gaussian state-space models, these integrals are intractable. SMC is a popular class of algorithms to approximate these integrals by empirical measures.
+One common inference task in state-space models is \textit{filtering}---the task of recovering the distribution $p(x_{t} \mid y_{1:t})$, which is the distribution of the latent state $x_t$ given the data collected up to time $t$, $y_{1:t} = (y_1, \ldots, y_t)$. Another common inference task is to learn the fixed parameter $\theta$ of a state-space model, which could be done via \textit{smoothing}, recovering $p(x_{0:T} \mid y_{1:T})$ or via likelihood evaluation $p(y_{1:T})$. For a linear-Gaussian state-space model, these integrals are available analytically via the Kalman filter and the Rauch--Tung--Striebel smoother \citep{kalmandbucy1961filtering,rauchtungstriebel1965}. However, for non-linear or non-Gaussian state-space models, these integrals are intractable. Sequential Monte Carlo is a popular class of algorithms to approximate sequential intractable integrals in state-space models.
 
 \subsection{Sequential Monte Carlo (SMC)}
 \label{sec:smc}
 
 % The initial motivation of SMC is the sequential analysis of state-space models. 
 
-Sequential Monte Carlo (SMC, also known as particle filtering) is a class of algorithms for computing recursively Monte Carlo approximations of a sequence of distributions $\pi_t (d \mathbf{x}_t)$, $t \in \{0, \ldots, T\}$. The algorithm is based on the idea of performing importance sampling sequentially to approximate a sequence of distributions, known as Sequential Importance Sampling (SIS)---choose an initial proposal density $q_0(x_0)$ and a sequence of proposal kernels $q_t(x_t \mid x_{t-1})$, $t \geq 1$, then simulate $N$ times iteratively from these proposals and reweight the particles $x_t^n$ with importance weights
+Sequential Monte Carlo (SMC, also known as particle filtering) is a class of algorithms for computing recursively Monte Carlo approximations of a sequence of distributions $\pi_t (d \mathbf{x}_t)$, $t \in \{0, \ldots, T\}$. The algorithm is based on the idea of performing importance sampling sequentially to approximate the sequence of distributions, known as Sequential Importance Sampling (SIS)---choose an initial proposal density $q_0(x_0)$ and a sequence of proposal kernels $q_t(x_t \mid x_{t-1})$, $t \geq 1$, then simulate $N$ times iteratively from these proposals and reweight the particles $x_t^n$ with importance weights $\tilde{w}_t^n$
 
 \begin{equation}
-    w_0^n = G_0(x_0^n), \qquad w_t^n = w_{t-1}^n \cdot G_t(x_{t-1}^n, x_t^n)
+    \tilde{w}_0^n = G_0(x_0^n), \qquad \tilde{w}_t^n = \tilde{w}_{t-1}^n \cdot G_t(x_{t-1}^n, x_t^n), \qquad w_t^n = \frac{\tilde{w}_t^n}{\sum_{m=1}^N \tilde{w}_t^m} \nonumber
 \end{equation}
 
 and the weight functions $G_t$ are defined as 
 
 \begin{equation}
-    G_0(x_0) = \frac{m_0(x_0)}{q_0(x_0)}, \qquad  G_t(x_{t-1}, x_t) = \frac{m_t(x_t \mid x_{t-1}) g_t(y_t \mid x_t)}{q_t(x_t \mid x_{t-1})}
+    G_0(x_0) = \frac{m_0(x_0)}{q_0(x_0)}, \qquad  G_t(x_{t-1}, x_t) = \frac{m_t(x_t \mid x_{t-1}) g_t(y_t \mid x_t)}{q_t(x_t \mid x_{t-1})} \nonumber
 \end{equation}
 
-We then obtain a consistent estimate of the filtering expectation $\mathbb{E}[\psi(x_t) \mid y_{1:t}]$ as
+We then obtain a consistent estimate of the filtering expectation $\mathbb{E}_{\pi_t}[\psi(x_t)]$ as $N \to \infty$.
 
 \begin{equation}
-    \hat{\psi}_t^N = \sum_{n=1}^N W_t^n \psi(x_t^n), \qquad W_t^n = \frac{w_t^n}{\sum_{m=1}^N w_t^m}
+    \mathbb{E}_{\pi_t}[\psi(x_t)] \approx \hat{\psi}_t^N = \sum_{n=1}^N w_t^n \psi(x_t^n) \nonumber
 \end{equation}
 
-However, it is well known that SIS suffers from weight degeneracy---over time the importance weights of particles become concentrated on a few original particles. The solution to this degeneracy problem is to perform \textit{resampling}---drawing $N$ times with replacement from the current set of particles proportional to their importance weights. This idea of resampling can be traced back to \citet{gordonsalmondsmith1993}, and has been refined by the auxiliary particle filter of \citet{pittshephard1999} and the formal treatment of \citet{johansendoucet2008}. Thus, SMC can be considered as SIS with resampling.
+However, it is well known that SIS suffers from weight degeneracy---more particles get negligible weight over time. \citet{gordonsalmondsmith1993} introduced the additional step of \textit{resampling}: drawing $N$ times with replacement from the current set of particles proportional to their importance weights $w_t^n$. Particles with low weights get quickly discarded, while particles with large weights may get many children at the next iteration. Empirically, resampling has a huge impact --- the variance of filtering estimates typically remain stable over time, while without resampling, it diverges exponentially fast.
+
+Resampling draws the ancestor indices $a^{1:N}$ from the discrete distribution with weights $w^{1:N}$. A general way to do this is the inverse-CDF transform: given the normalised weights and a set of uniforms $u^{1:N} \sim \mathcal{U}[0,1]$, one computes the cumulative sums of the weights and maps each uniform to the smallest index whose cumulative sum is at least $u^n$. We will re-use Algorithm~\ref{alg:resampling} in SQMC.
 
 \begin{algorithm}[t]
-\caption{Particle filter}
-\label{alg:pf}
+\caption{Resampling}
+\label{alg:resampling}
 \begin{algorithmic}[1]
-\State Sample $x_0^n \sim q_0$ and set $w_0^n = G_0(x_0^n)$ for $n = 1, \ldots, N$.
-\For{$t = 1, \ldots, T$}
-    \State Resample: draw ancestor indices $a_t^n$ from the discrete distribution with weights $W_{t-1}^{1:N}$.
-    \State Propagate: sample $x_t^n \sim q_t(\cdot \mid x_{t-1}^{a_t^n})$ for $n = 1, \ldots, N$.
-    \State Weight: compute $w_t^n = G_t(x_{t-1}^{a_t^n}, x_t^n)$ and normalise $W_t^n = w_t^n / \sum_{m=1}^N w_t^m$.
-\EndFor
-\end{algorithmic}
-\end{algorithm}
-
-By setting the proposal kernels $q_t(x_t \mid x_{t-1}) = m_t(x_t \mid x_{t-1})$, we obtain the bootstrap particle filter of \citet{gordonsalmondsmith1993}. The bootstrap particle filter is a simple and efficient algorithm to approximate the filtering distribution, and is widely used in practice. The bootstrap particle filter will be used in Section~\ref{sec:rb-smc}.
-
-The error rate of SMC is known to be $\mathcal{O}_P(N^{-1/2})$ \citep{delmoralguionnet1999clt,chopin2004clt,kunsch2005recursive}. The complexity of SMC, including the resampling step, is $\mathcal{O}(N)$, where $N$ is the number of simulations per step (without any sorting). Most resampling algorithms have complexity $\mathcal{O}(N)$. A popular resampling algorithm, called multinomial resampling \citep[pg.~214]{devroye1986nonuniform}, is a simple and efficient algorithm to sample from a discrete distribution. We will re-use Algorithm~\ref{alg:multinomial} in SQMC, which is the only resampling algorithm that is compatible with SQMC.
-
-\begin{algorithm}[t]
-\caption{Multinomial resampling}
-\label{alg:multinomial}
-\begin{algorithmic}[1]
-\Require normalised weights $W^{1:N}$ and uniforms $u^{1:N} \sim \mathcal{U}[0,1]$
-\State Compute the cumulative sums $C^n = \sum_{m=1}^n W^m$ for $n = 1, \ldots, N$.
+\Require normalised weights $w^{1:N}$ and uniforms $u^{1:N} \sim \mathcal{U}[0,1]$
+\State Compute the cumulative sums $C^n = \sum_{m=1}^n w^m$ for $n = 1, \ldots, N$.
 \For{$n = 1, \ldots, N$}
     \State Set $a^n = \min\{m : C^m \geq u^n\}$.
 \EndFor
@@ -66,10 +51,52 @@ The error rate of SMC is known to be $\mathcal{O}_P(N^{-1/2})$ \citep{delmoralgu
 \end{algorithmic}
 \end{algorithm}
 
+A simplification can be made to the SIS algorithm by setting the proposal kernels to the transition density, $q_t(x_t \mid x_{t-1}) = m_t(x_t \mid x_{t-1})$, the weight function then reduces to the observation likelihood,
+
+\begin{equation}
+    G_t(x_{t-1}, x_t) = g_t(y_t \mid x_t),
+\end{equation}
+
+so that the transition density need not be evaluated when computing the weights. This simplification and resampling yields the bootstrap particle filter of \citet{gordonsalmondsmith1993} defined in Algorithm~\ref{alg:pf}, whose per-iteration cost is $\mathcal{O}(N)$. This filter is the basis of the Rao-Blackwellised construction in Section~\ref{sec:rb-smc}.
+
+\begin{algorithm}[t]
+\caption{Bootstrap particle filter}
+\label{alg:pf}
+\begin{algorithmic}[1]
+\State Sample $x_0^n \sim q_0$ and set $\tilde{w}_0^n = G_0(x_0^n)$ for $n = 1, \ldots, N$.
+\For{$t = 1, \ldots, T$}
+    \State Resample: draw ancestor indices $a_t^n$ from the discrete distribution with weights $w_{t-1}^{1:N}$. See Algorithm~\ref{alg:resampling}
+    \State Propagate: sample $x_t^n \sim q_t(\cdot \mid x_{t-1}^{a_t^n})$ for $n = 1, \ldots, N$.
+    \State Weight: compute $\tilde{w}_t^n = G_t(x_{t-1}^{a_t^n}, x_t^n)$ and normalise $w_t^n = \tilde{w}_t^n / \sum_{m=1}^N \tilde{w}_t^m$.
+\EndFor
+\end{algorithmic}
+\end{algorithm} 
+
+% resampling 
+% introduced bootstrap filter
+
+% \citet{gordonsalmondsmith1993} introduced the \textit{bootstrap particle filter}
+
+% The solution to this degeneracy problem is to perform \textit{resampling}---drawing $N$ times with replacement from the current set of particles proportional to their importance weights. Particles with low weights get quickly discarded, while particles with large weights may get many children at the next iteration. Empirically, resampling has a huge positive impact --- the variance of filtering estimates typically remain stable over time, while without resampling, it diverges exponentially fast.
+
+% This idea of resampling can be traced back to \citet{gordonsalmondsmith1993}. SMC can be considered as SIS with resampling.
+
+% By setting the proposal kernels $q_t(x_t \mid x_{t-1}) = m_t(x_t \mid x_{t-1})$, we obtain the bootstrap particle filter of \citet{gordonsalmondsmith1993}. The bootstrap particle filter is a simple and efficient algorithm to approximate the filtering distribution, and is widely used in practice. The bootstrap particle filter will be used in Section~\ref{sec:rb-smc}.
+
+% TO DO: EXPLAIN THE PROPERTIES OF SMC
+
+% The properties of SMC are well studied. The error rate is $\mathcal{O}_P(N^{-1/2})$ \citep{delmoralguionnet1999clt,chopin2004clt,kunsch2005recursive} and the computational complexity of SMC, including the resampling step, is $\mathcal{O}(N)$, where $N$ is the number of simulations per step (without any sorting). A popular resampling algorithm, called multinomial resampling \citep[pg.~214]{devroye1986nonuniform}, is a simple algorithm to sample from a discrete distribution. It has a computational complexity of $\mathcal{O}(N)$. We will re-use Algorithm~\ref{alg:multinomial} in SQMC.
+
 \subsection{Quasi-Monte Carlo (QMC)}
 \label{sec:qmc}
 
-QMC (Quasi-Monte Carlo) is an alternative to Monte Carlo (MC) methods for approximating integrals. The idea is to replace Monte Carlo random samples with a low-discrepancy point set $\{\mathbf{u}^n\}_{n=1}^N \subset [0,1)^d$, which is spread more evenly over the unit cube than random points. The quality of a point set is quantified by its \emph{discrepancy}, a measure of how far its empirical distribution departs from uniformity \citep{niederreiter1992qmc}. The relevance of discrepancy to integration is given by the Koksma--Hlawka inequality, which bounds the integration error by the product of the variation of the integrand and the discrepancy of the point set,
+QMC (Quasi-Monte Carlo) is an alternative to Monte Carlo (MC) methods for approximating integrals. The idea is to replace Monte Carlo random samples with a low-discrepancy point set $\{\mathbf{u}^n\}_{n=1}^N \subset [0,1)^d$ to estimate our integral of interest,
+
+\begin{equation}
+    \mathbb{E}\left[\frac{1}{N}\sum_{n=1}^N f(\mathbf{u}_t^n)\right] \approx \frac{1}{N} \sum_{n=1}^N (\mathbf{u}_t^n) \nonumber
+\end{equation}
+
+where $\mathbf{u}^n$ is a vector with low-discrepancy. Informally, $\mathbf{u}^n$ is spread more evenly over the unit cube than random points. This means that we are able to cover the entire support of a function with lesser values, obtaining a better estimate. The quality of a point set is quantified by its \emph{discrepancy}, a measure of how far its empirical distribution departs from uniformity \citep{niederreiter1992qmc}. The relevance of discrepancy to integration is given by the Koksma--Hlawka inequality, which bounds the integration error by the product of the variation of the integrand and the discrepancy of the point set,
 
 \begin{equation}
     \left| \frac{1}{N}\sum_{n=1}^N f(\mathbf{u}^n) - \int_{[0,1]^d} f(\mathbf{u}) \, d\mathbf{u} \right|
@@ -78,38 +105,64 @@ QMC (Quasi-Monte Carlo) is an alternative to Monte Carlo (MC) methods for approx
 
 where $V(f)$ is the variation of $f$ in the sense of Hardy and Krause and $D^*$ is the star discrepancy \citep{niederreiter1992qmc}. Low-discrepancy point sets therefore reduce the bound on the integration error, and for well-behaved integrands QMC can achieve an error close to $\mathcal{O}(N^{-1})$, compared with the Monte Carlo rate $\mathcal{O}_P(N^{-1/2})$.
 
+Figure~\ref{fig:qmc-vs-mc} illustrates the difference between the two constructions in two dimensions: the random points cluster and leave gaps, whereas the Sobol' points cover the square more evenly. 
+
+% The advantage, however, depends on the dimension. Figure~\ref{fig:qmc-highdim} shows the first two coordinates of 256-point sets in increasing dimension; the Sobol' projection remains regular at $d=2$ but visibly degrades as $d$ grows, which foreshadows the dimension dependence discussed in Section~\ref{sec:rqmc}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{qmc_vs_mc.png}
+\caption{Two-dimensional point sets of size $N=256$: independent uniform random points (left) and the first 256 non-origin points of the Sobol' sequence (right).}
+\label{fig:qmc-vs-mc}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{qmc_vs_mc_highdim.png}
+\caption{First two coordinates of 256-point sets in dimension $d$: independent uniform random points (top) and the Sobol' sequence (bottom), for $d \in \{2, 5, 10, 30\}$.}
+\label{fig:qmc-highdim}
+\end{figure}
+
 \subsubsection{Randomized Quasi-Monte Carlo (RQMC)}
 \label{sec:rqmc}
-RQMC randomises a QMC point set while preserving its low-discrepancy structure. One benefit of RQMC is that it yields an unbiased estimator for our integral of interest,
+RQMC randomises a QMC point set while preserving its low-discrepancy structure. One advantage of RQMC over QMC is that it yields an unbiased estimator for our integral of interest,
 
 \begin{equation}
-    \mathbb{E}\left[\frac{1}{N}\sum_{n=1}^N f(\mathbf{u}_t^n)\right] = \int f(\mathbf{u}) \, d\mathbf{u},
+    \mathbb{E}\left[\frac{1}{N}\sum_{n=1}^N f(\mathbf{u}_t^n)\right] = \int_{[0,1)^d} f(\mathbf{u}_n) d\mathbf{u} \nonumber
 \end{equation}
 
-making it possible to evaluate the approximation error through independent simulations. For any scrambling that preserves the net structure, the variance of the RQMC estimator is $\mathcal{O}(N^{-2} (\log N)^{d-1})$ for square-integrable integrands \citep{owen1997scrambling}. Under the stronger nested scrambling of Owen, the mean squared error (MSE) of RQMC improves to $\mathcal{O}(N^{-3+\epsilon})$ for smooth integrands and $\mathcal{O}(N^{-2+\epsilon})$ for non-smooth integrands, for any $\epsilon > 0$ \citep{owen1997scrambling,owen1998scrambling}. Both rates are a significant improvement over the Monte Carlo rate of $\mathcal{O}(N^{-1})$.
+making it possible to evaluate the approximation error through independent simulations. This unbiased property carries over to SQMC: when the point sets are randomised, SQMC provides an unbiased estimator of the normalising constant $Z_t$, and hence of the likelihood of the state-space model \citep{chopingerber2015sqmc,delmoral1996}. The next advantage of RQMC over QMC is that, for any scrambling that preserves the net structure, the variance of the RQMC estimator is $\mathcal{O}(N^{-2} (\log N)^{d-1})$ for square-integrable integrands \citep{owen1997scrambling}. Under the stronger nested scrambling of Owen, the mean squared error (MSE) of RQMC improves to $\mathcal{O}(N^{-3+\epsilon})$ for smooth integrands and $\mathcal{O}(N^{-2+\epsilon})$ for non-smooth integrands, for any $\epsilon > 0$ \citep{owen1997scrambling,owen1998scrambling}. Both rates are a significant improvement over the Monte Carlo rate of $\mathcal{O}(N^{-1})$.
 
-In the implementation of SQMC, we use RQMC to generate the low-discrepancy point set $\{\mathbf{u}^n\}_{n=1}^N$ at each iteration. This allows us to obtain an unbiased estimate of the filtering expectation and evaluate the approximation error through independent simulations.
+% In the implementation of SQMC, we use RQMC to generate the low-discrepancy point set $\{\mathbf{u}^n\}_{n=1}^N$ at each iteration. This allows us to obtain an unbiased estimate of the filtering expectation and evaluate the approximation error through independent simulations.
 
 \subsubsection{QMC Sequences}
 \label{sec:qmc-sequences}
 
-Two low-discrepancy sequences are used in this work, both of which are randomized as described in Section~\ref{sec:rqmc}. The \emph{Halton sequence} \citep{halton1960quasirandom} uses a radical-inverse sequence in a distinct prime base for each dimension. If $n = \sum_{k\geq 0} a_k (n) b^k$, then 
+We introduce two popular low-discrepancy sequences, both of which can be randomized as described in Section~\ref{sec:rqmc}. The \emph{Halton sequence} \citep{halton1960quasirandom} uses a radical-inverse sequence (reversing the base-$b$ digits of the index) in a distinct prime base for each dimension. If $n = \sum_{k\geq 0} a_k (n) b^k$, where $n$ is the index of the points in the Halton sequence and $b$ is the base, then the radical-inverse function $\phi_b$ is defined as
 
 \begin{equation}
     \phi_b(n) = \sum_{k\geq 0} a_k (n) b^{-k-1}, \qquad \mathbf{u}^n = (\phi_{b_1}(n), \ldots, \phi_{b_d}(n)) \in [0,1)^d
 \end{equation}
 
-It is simple to construct but its higher-dimensional coordinates can exhibit poor uniformity. Our implementation uses Owen's nested scrambling to randomize the Halton sequence, which improves its uniformity and attains the general RQMC variance rate of Section~\ref{sec:rqmc}, $\mathcal{O}(N^{-2} (\log N)^{d-1})$ \citep{owen1997scrambling}. The stronger smooth-integrand rate $\mathcal{O}(N^{-3+\epsilon})$ is not guaranteed for Halton, because it is a radical-inverse sequence rather than a digital net; this is one reason we use the Sobol' sequence for SQMC.
+The Halton sequence is simple to construct, but its coordinates in higher dimensions use successively larger prime bases and become strongly correlated, which degrades uniformity.
+
+% It is simple to construct but its higher-dimensional coordinates can exhibit poor uniformity. 
+
+% Our implementation allows a user to perform Owen's nested scrambling to randomize the Halton sequence, which improves its uniformity and attains the general RQMC variance rate of Section~\ref{sec:rqmc}, $\mathcal{O}(N^{-2} (\log N)^{d-1})$ \citep{owen1997scrambling}. 
+
+% The stronger smooth-integrand rate $\mathcal{O}(N^{-3+\epsilon})$ is not guaranteed for Halton, because it is a radical-inverse sequence rather than a digital net; this is one reason we use the Sobol' sequence for SQMC.
 
 % In future section, reference that the bivariate poisson likelihood is non-smoothed integrand so the error rate of RQMC is $\mathcal{O}(N^{-2+\epsilon})$.
 
-The \emph{Sobol' sequence} \citep{sobol1967distribution} is a digital $(t,s)$-sequence in base $2$, constructed from direction numbers. If $a(n)$ is the binary digit vector of $n$ and $C_j$ is the generator matrix for dimension $j$, then
+The \emph{Sobol' sequence} \citep{sobol1967distribution} is a digital $(t,s)$-sequence in base $2$, constructed from direction numbers.\footnote{A digital sequence is generated by linear algebra over the field of two elements: each coordinate is obtained by multiplying the binary digit vector of the point index by a generator matrix, an operation that reduces to bitwise XOR. The direction numbers are the columns of these generator matrices; they are fixed constants that define a particular Sobol' sequence, and their choice controls its uniformity.} A $(t,s)$-sequence is a sequence of points in $[0,1)^s$, and $t$ is a non-negative integer that measures its uniformity: smaller $t$ means the points are spread more evenly, with $t=0$ optimal. If $a(n)$ is the binary digit vector of $n$ and $C_j$ is the generator matrix for dimension $j$, then
 
 \begin{equation}
     z_j = C_j a(n) (\text{mod } 2), \qquad u_j^n = \sum_{r = 1}^{m} z_j 2^{-r}, \qquad \mathbf{u}^n = (u_1^n, \ldots, u_d^n) \in [0,1)^d
 \end{equation}
 
-This multiplication is a bitwise XOR operation, and the Sobol' sequence can be generated efficiently with bit-level operations. The Sobol' sequence has good low-dimensional projections and is often the standard choice for high-dimensional QMC. However, it is limited to dimensions $d \leq 1111$ with the direction numbers of \citet{joekuo2008sobol}. Our Sobol' implementation uses a left linear matrix scramble followed by a digital shift (LMS+shift) \citep{matousek1998l2discrepancy}, which is cheaper than nested scrambling but attains only the general RQMC variance rate of Section~\ref{sec:rqmc}, $\mathcal{O}(N^{-2} (\log N)^{d-1})$ \citep{owen1997scrambling}. Following standard practice, we drop the first Sobol' point, which is the origin \citep{owen2020droppingfirstsobol}.
+This multiplication is a bitwise XOR operation, and the Sobol' sequence can be generated efficiently with bit-level operations. The Sobol' sequence has good low-dimensional projections and is often the standard choice for high-dimensional QMC. However, it is limited to dimensions $d \leq 1111$ with the direction numbers of \citet{joekuo2008sobol}. Following standard practice, we also drop the first Sobol' point, which is the origin \citep{owen2020droppingfirstsobol}. Moreover, our Sobol' implementation uses a left linear matrix scramble followed by a digital shift (LMS+shift) \citep{matousek1998l2discrepancy}, which is cheaper than nested scrambling but attains only the general RQMC variance rate $\mathcal{O}(N^{-2} (\log N)^{d-1})$ \citep{owen1997scrambling}, rather than the faster rates $\mathcal{O}(N^{-3+\epsilon})$ and $\mathcal{O}(N^{-2+\epsilon})$ available to nested scrambling for smooth and non-smooth integrands respectively. 
+
+Both sequences are implemented in our codebase, but the Sobol' sequence is the default for the SQMC experiments because of its favourable projections and its efficient bit-level generation.
 
 % Both are implemented in our codebase, and we use the Sobol' sequence for SQMC because of its favourable projections and its efficient generation via bit-level operations. 
 
@@ -118,13 +171,30 @@ This multiplication is a bitwise XOR operation, and the Sobol' sequence can be g
 
 Sequential quasi-Monte Carlo (SQMC) combines the two previous ideas, SMC and QMC. It is an extension of the array-RQMC algorithm of L'Ecuyer et al. \citep{lecuyerlectuffin2006arrayrqmc}. Because the particles are propagated deterministically from a low-discrepancy point set, the resampling step of SMC cannot be applied directly: drawing the ancestors by a stochastic inverse-CDF transform or other resampling algorithms would destroy the low-discrepancy structure of the particles. SQMC instead sorts the particles before resampling, so that the inverse-CDF transform acts on an ordered set and preserves the low-discrepancy structure.
 
-The required ordering depends on the dimension of the state. For $d=1$, the particles are scalars and an ordinary sort suffices. For $d \geq 2$, the particles are ordered along a Hilbert space-filling curve. The Hilbert curve is a space-filling curve, that is a function $H: [0,1] \to [0,1]^d$ that fills $[0,1]^d$; its pseudo-inverse $h: [0,1]^d \to [0,1]$ maps each $d$-dimensional particle to a scalar key, and the particles are sorted by these keys. Because $H$ preserves spatial locality, nearby particles receive nearby keys, which maintains the low-discrepancy structure of the cloud.
+The required ordering depends on the dimension of the state. For $d=1$, the particles are scalars and we set $H(x) = h(x) = x$ for $x \in [0,1)$, where an ordinary sort suffices. For $d \geq 2$, the particles are ordered along a Hilbert space-filling curve. The Hilbert curve is a space-filling curve: a continuous surjective function $H: [0,1] \to [0,1]^d$ that fills the entire unit cube \citep{sagan1994spacefilling}. Its pseudo-inverse $h: [0,1]^d \to [0,1]$ maps each $d$-dimensional particle to a scalar key in $[0,1]$. The key property of the Hilbert curve is that it preserves locality: points that are close in $[0,1]^d$ are mapped by $h$ to close keys in $[0,1]$. Refer to \citep{sagan1994spacefilling,butz1969convergencehilbert} for detailed discussion of the Hilbert curve and its properties and \citep{hamiltonrauchaplin2008compacthilbert,chopingerber2015sqmc} for algorithms to compute the pseudo-inverse $h$ for $d \geq 2$.
 
-The only requirement of SQMC is that the simulation of particle $\mathbf{x}_t^n$ from $\mathbf{x}_{t-1}^n$ can be written as a deterministic function of $\mathbf{x}_{t-1}^n$ and a fixed number of uniform variates. 
+% Figure~\ref{fig:hilbert-curve} shows the first six iterates $H_1, \ldots, H_6$ in two dimensions; as $m$ grows the curve visits an increasingly fine grid, and in the limit it fills the unit square.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{hilbert_curve.png}
+\caption{First six iterates $H_1, \ldots, H_6$ of the two-dimensional Hilbert space-filling curve, showing the curve filling the unit square at increasing resolution. Start and end points are marked in blue and red.}
+\label{fig:hilbert-curve}
+\end{figure}
+
+% The key property of the Hilbert curve is that it preserves locality: points that are close in $[0,1]^d$ are mapped by $h$ to close keys in $[0,1]$, and conversely points with close keys lie in nearby regions of the cube \citep{sagan1994spacefilling,butz1969convergencehilbert}. It is this locality that makes the Hilbert curve preferable for SQMC: ordering the particles by their Hilbert keys keeps nearby particles adjacent in the sorted sequence, so the low-discrepancy structure is retained through resampling. Computing these keys for $d \geq 2$ requires evaluating the pseudo-inverse $h$; algorithms and bit-level routines for this computation are given by \citet{butz1969convergencehilbert,sagan1994spacefilling,hamiltonrauchaplin2008compacthilbert,chopingerber2015sqmc}.
+
+To sort the particles at time $t-1$, each state is first mapped into the unit cube by a component-wise function $\psi: \mathcal{X} \to [0,1]^d$, and the Hilbert key is then the pseudo-inverse of the transformed state. The $n$-th particle receives the key
+
+\begin{equation}
+    h_{t-1}^n = h \circ \psi(X_{t-1}^n) \in [0,1] \nonumber
+\end{equation}
+
+For the pseudo-inverse $h$ to preserve the low-discrepancy structure when acting on $\{\psi(X_{t-1}^n)\}$, the mapping $\psi$ must itself be discrepancy-preserving. It suffices to take $\psi(\mathbf{x}) = (\psi_1(x_1), \ldots, \psi_d(x_d))$ with each $\psi_i$ a continuous and strictly monotone bijection of the real line onto $(0,1)$; this form maps a low-discrepancy point set into a low-discrepancy point set in the cube. A common choice is to apply the logistic transformation component-wise when $\mathcal{X} = \mathbb{R}^d$, giving $\psi_i(x_i) = (1 + e^{-x_i})^{-1}$. The only requirement of SQMC is that the simulation of particle $\mathbf{x}_t^n$ from $\mathbf{x}_{t-1}^n$ can be written as a deterministic function of $\mathbf{x}_{t-1}^n$ and a fixed number of uniform variates. 
 
 % We write this function as $\Gamma_t$, so that $X_t^n = \Gamma_t(X_{t-1}^{A_t^n}, v_t^n)$, where $A_t^n$ is the ancestor index selected by resampling and $v_t^n$ is the vector of uniform variates used to propagate particle $n$. The resampling step uses the first component $u_t^n$ of each point in a $(d+1)$-dimensional QMC or RQMC point set, and the ancestor indices $A_t^{1:N}$ are obtained by an inverse-CDF transform applied to the sorted particles. The permutation $\sigma_t$ orders the particles along the Hilbert curve, and $\psi$ is the model-dependent map from the state space to the unit cube used before applying the Hilbert pseudo-inverse $h$. The normalised weights $W_t^n$ are computed from the potential functions $G_t$. 
 
-Algorithm 3 describes the operations performed in SQMC. Details on the algorithm are given in \citet{chopingerber2015sqmc}, \citet{chopingerber2017sqmcintroduction} or \citet{chopinpapaspiliopoulos020introtosmc}.
+Algorithm 3 describes the operations performed in SQMC. Details and further discussions on the algorithm are given in \citet{chopingerber2015sqmc}, \citet{chopingerber2017sqmcintroduction} or \citet{chopinpapaspiliopoulos020introtosmc}.
 
 \begin{algorithm}[t]
 \caption{SQMC}
@@ -156,13 +226,13 @@ Algorithm 3 describes the operations performed in SQMC. Details on the algorithm
 As noted above, the Hilbert sort makes the per-iteration cost of SQMC $\mathcal{O}(N \log N)$, compared with $\mathcal{O}(N)$ for SMC. The additional cost comes from preserving the low-discrepancy structure of the particles through the Hilbert-sort.
 
 \paragraph{Consistency.}
-Under the same conditions as SMC, the SQMC estimator is consistent: the empirical filtering distribution converges to the true filtering distribution as $N \to \infty$ \citep{chopingerber2015sqmc}. The deterministic propagation through low-discrepancy points does not compromise the asymptotic correctness of the filter.
+Under the same conditions as SMC, the SQMC estimator is \textit{consistent}: the empirical filtering distribution converges to the true filtering distribution as $N \to \infty$ \citep{chopingerber2015sqmc}. The deterministic propagation through low-discrepancy points does not compromise the asymptotic correctness of the filter.
 
 \paragraph{RQMC error.}
 The error rate of SMC at iteration $t$ is $C_t N^{-1/2}$, where $C_t$ is a time-dependent constant. Much work focuses on the first factor $C_t$, either by establishing that the error is bounded uniformly in time \citep{delmoral2004feynman,whiteley2013stability}, or by reducing $C_t$ through more efficient algorithmic designs, such as better proposal kernels or resampling schemes \citep{delmoraldoucetjasra2012smcsamplers}. SQMC improves the second factor: its RQMC error is of the same order as the Monte Carlo error of SMC, $\mathcal{O}_P(N^{-1/2})$, but with a smaller constant \citep{chopingerber2015sqmc}. Under additional regularity conditions, the low-discrepancy structure can yield a faster rate, although this advantage depends on the effective dimension of the problem, as discussed in Section~\ref{sec:rqmc}.
 
 \paragraph{Time-uniform error bounds.}
-Finally, SQMC offers a stronger guarantee over time than SMC. Recent literature suggests that a time-uniform almost-sure guarantee cannot exist for SMC: a fixed-size particle filter's error exceeds any fixed threshold infinitely often. SQMC, by contrast, retains the time-uniform almost-sure guarantee: its error vanishes uniformly in time, $\lim_{N\to\infty}\sup_{t\ge 1}\|\hat\eta_t^N - \eta_t\| = 0$ almost surely \citep{gerber2026}. This makes SQMC attractive for long-horizon filtering.
+SQMC offers a stronger guarantee over time than SMC. Recent literature suggests that a time-uniform almost-sure guarantee cannot exist for SMC: a fixed-size particle filter's error exceeds any fixed threshold infinitely often. SQMC, by contrast, retains the time-uniform almost-sure guarantee: its error vanishes uniformly in time, $\lim_{N\to\infty}\sup_{t\ge 1}\|\hat\eta_t^N - \eta_t\| = 0$ almost surely \citep{gerber2026}. This makes SQMC attractive for long-horizon filtering problems.
 
 % The error rate of SMC at iteration $t$ is $C_t N^{-1/2}$, where $C_t$ is a time-dependent constant. Many works focus on the first factor $C_t$, either by establishing that the error is bounded uniformly in time \citep{delmoral2004feynman,whiteley2013stability}, or by reducing $C_t$ through more efficient algorithmic designs, such as better proposal kernels or resampling schemes \citep{delmoraldoucetjasra2012smcsamplers}. However, recent literature suggests that a time-uniform almost-sure guarantee cannot exist for SMC: a fixed-size particle filter's error exceeds any fixed threshold infinitely often. SQMC improves the second factor in the error rate, $N^{-1/2}$, so that its error is of the same order as SMC's but with a smaller constant \citep{chopingerber2015sqmc}. Furthermore, SQMC retains the time-uniform almost-sure guarantee, making it attractive for long-horizon filtering.
 
@@ -171,7 +241,7 @@ Finally, SQMC offers a stronger guarantee over time than SMC. Recent literature 
 SQMC adds two operations that are not present in a standard bootstrap particle filter: the generation of the low-discrepancy point set and the Hilbert sort used for resampling. Both are well suited to accelerator hardware, although for different reasons.
 
 \paragraph{QMC point generation is compute-bound, not latency-bound.}
-The Halton and Sobol' sequences in Section~\ref{sec:qmc-sequences} are both constructed by operations that are computed in integer arithmetic before a single conversion to floating point, avoiding floating-point cancellation \citep{kellerwachterbinder2023qmcgraphics}. The Sobol' generator in particular is "solely computed by XOR operations" \citep{kellerwachterbinder2023qmcgraphics}. Because each point's coordinates are a function of its index alone, the whole batch can be generated independently in parallel, and Quasi-Monte Carlo methods in general "do not require intermediate synchronization" \citep{kellerwachterbinder2023qmcgraphics}. In our implementation both generators are written in JAX so that \texttt{sample} is a vectorised operation over the batch of particles, and the Sobol' points are produced by a parallel XOR prefix scan. Table~\ref{tab:qmc-accelerator} summarises the QMC point-generation operations and why they benefit from the GPU.
+The Halton and Sobol' sequences in Section~\ref{sec:qmc-sequences} are both constructed by operations that are computed in integer arithmetic before a single conversion to floating point, avoiding floating-point cancellation. The Sobol' generator in particular is "solely computed by XOR operations". Because each point's coordinates are a function of its index alone, the whole batch can be generated independently in parallel, and Quasi-Monte Carlo methods in general "do not require intermediate synchronization". These properties are emphasised in the QMC literature of \citep{kellerwachterbinder2023qmcgraphics}. In our implementation both generators are written in JAX so that \texttt{sample} is a vectorised operation over the batch of particles, and the Sobol' points are produced by a parallel XOR prefix scan. Table~\ref{tab:qmc-accelerator} summarises the QMC point-generation operations and why they benefit from the GPU.
 
 \begin{table}[t]
 \centering
@@ -188,7 +258,7 @@ Halton point generation & \texttt{Halton.sample} in \texttt{qmc.py} & Radical in
 \end{table}
 
 \paragraph{Hilbert index computation and the residual sort cost.}
-The resampling step of SQMC orders the particles along a Hilbert curve, which maps nearby states to nearby positions in the ordering and thereby preserves the low-discrepancy structure of the particle cloud \citep{chopingerber2015sqmc}. Computing the Hilbert index of a point is a purely local, index-based operation that requires no lookup tables \citep{kellerwachterbinder2022hilbertcurve}, and deterministic index computations of this kind "can be reliably parallelized and results are exactly reproducible" \citep{kellerwachterbinder2022hilbertcurve}. This makes the per-particle index computation cheap and embarrassingly parallel.
+The resampling step of SQMC orders the particles along a Hilbert curve, which maps nearby states to nearby positions in the ordering and thereby preserves the low-discrepancy structure of the particle cloud \citep{chopingerber2015sqmc}. Computing the Hilbert index of a point is a purely local, index-based operation that requires no lookup tables, and deterministic index computations of this kind "can be reliably parallelized and results are exactly reproducible". These properties are emphasised in the Hilbert-curve literature \citep{kellerwachterbinder2022hilbertcurve}. This makes the per-particle index computation cheap and embarrassingly parallel.
 
 Our implementation follows the reference Hilbert-ordering routine of the \texttt{particles} library \citep{chopinpapaspiliopoulos020introtosmc}, computing the packed index from bit interleaving and Gray-code reflection, so that the ordering used here is consistent with the standard SQMC formulation. The subsequent ordering of those indices, however, is a separate global sort of $\mathcal{O}(N \log N)$ operations and remains the main synchronisation point of the filter; the GPU accelerates the index computation and point generation but does not remove this global sort. Table~\ref{tab:hilbert-accelerator} summarises the Hilbert-sort operations and why they benefit from the GPU.
 
@@ -205,8 +275,6 @@ Hilbert sort & \texttt{hilbert\_sort} in \texttt{hilbert\_sort.py} & The final \
 \bottomrule
 \end{tabular}
 \end{table}
-
-
 
 Exact implementations are documented in the repository \href{https://github.com/ryantjx/sqmc-cuthbert}{\texttt{ryantjx/sqmc-cuthbert}} and will be integrated into \texttt{state-space-models/cuthbert} under the issue \href{https://github.com/state-space-models/cuthbert/issues/255}{Implement Sequential Quasi Monte Carlo \#255}.
 

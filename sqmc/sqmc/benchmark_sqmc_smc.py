@@ -66,7 +66,6 @@ OBSERVATION_VARIANCE = 1.0
 
 FIGURE_NAMES = (
     "sqmc_smc_gpu_runtime.png",
-    "sqmc_smc_gpu_rmse_over_time.png",
 )
 
 RESULTS_NAME = "sqmc_smc_gpu_results.json"
@@ -456,7 +455,6 @@ def _accuracy_metrics(runner, observations, kalman_truth) -> dict:
     return {
         "normalised_mean_error": mean_error,
         "log_likelihood": log_lik,
-        "per_step_squared_error": per_step_squared_error.tolist(),
     }
 
 
@@ -489,55 +487,6 @@ def _plot_runtime(results, path: Path) -> None:
         ax.set_title(f"$d={dim}$")
     axes[0].set_ylabel("Median wall-clock time (s)")
     figure.suptitle("SMC vs SQMC steady-state runtime on GPU")
-    figure.tight_layout()
-    figure.savefig(path, dpi=200)
-    plt.close(figure)
-
-
-def _plot_rmse_over_time(results, path: Path) -> None:
-    """Filtering-mean RMSE against the Kalman truth, over time.
-
-    One row of panels per dimension, one column per particle count; each panel
-    shows the per-step RMSE of SQMC and SMC against the exact Kalman mean.
-    """
-    dimensions = sorted(results["dimensions"], key=int)
-    particle_counts = sorted(
-        int(n) for n in next(iter(results["dimensions"].values()))
-    )
-    n_steps = results["config"]["n_steps"]
-
-    figure, axes = plt.subplots(
-        len(dimensions), len(particle_counts),
-        figsize=(3.2 * len(particle_counts), 2.6 * len(dimensions)),
-        squeeze=False, sharex=True,
-    )
-
-    for row, dim in enumerate(dimensions):
-        dim_results = results["dimensions"][dim]
-        for col, n in enumerate(particle_counts):
-            ax = axes[row][col]
-            entry = dim_results[str(n)]
-            for method, colour in (("sqmc", "C0"), ("smc", "C1")):
-                errors = np.asarray(
-                    [a["per_step_squared_error"] for a in entry[method]["accuracy"]]
-                )
-                # errors: (replicates, T, d) -> per-step RMSE over replicates.
-                rmse = np.sqrt(errors.mean(axis=(0, 2)))
-                steps = np.arange(1, rmse.shape[0] + 1)
-                ax.plot(steps, rmse, color=colour, label=method.upper(),
-                        linewidth=1.2)
-            if row == 0:
-                ax.set_title(f"$N={n}$")
-            if col == 0:
-                ax.set_ylabel(f"$d={dim}$\nRMSE", fontsize=9)
-            if row == len(dimensions) - 1:
-                ax.set_xlabel("Filtering step $t$")
-            ax.set_yscale("log")
-            ax.tick_params(labelsize=8)
-    axes[0][0].legend(frameon=False, fontsize=8)
-    figure.suptitle(
-        "Filtering-mean RMSE against the exact Kalman mean, by step"
-    )
     figure.tight_layout()
     figure.savefig(path, dpi=200)
     plt.close(figure)
@@ -644,7 +593,6 @@ def main(argv=None) -> int:
     )
 
     _plot_runtime(results, args.output_dir / FIGURE_NAMES[0])
-    _plot_rmse_over_time(results, args.output_dir / FIGURE_NAMES[1])
 
     print(f"Saved benchmark outputs to {args.output_dir}")
     return 0

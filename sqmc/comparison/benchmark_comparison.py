@@ -60,7 +60,6 @@ HILBERT_OUTPUTS = (
 )
 SQMC_SMC_OUTPUTS = (
     "sqmc_smc_gpu_runtime.png",
-    "sqmc_smc_gpu_rmse_over_time.png",
     "sqmc_smc_gpu_results.json",
     "run_config.json",
 )
