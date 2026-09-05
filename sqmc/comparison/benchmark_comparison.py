@@ -299,12 +299,19 @@ def run_hilbert(config: dict, output_dir: Path) -> dict:
     merged = pd.concat(frames, ignore_index=True)
     merged.to_csv(output_dir / "hilbert_sort_benchmark.csv", index=False)
 
-    # The GPU chart is only produced when a JAX GPU is available.
+    # The GPU chart is only produced when a JAX GPU is available. Each
+    # per-dimension run writes its own chart into its subdirectory; copy the
+    # last one to the top level so the single-chart artifact exists there too.
     required = (
         ("hilbert_sort_benchmark.csv", "hilbert_sort_benchmark_gpu.png")
         if _gpu_available()
         else ("hilbert_sort_benchmark.csv",)
     )
+    if _gpu_available():
+        last_dim_dir = output_dir / f"hilbert_d{dimensions[-1]}"
+        gpu_chart = last_dim_dir / "hilbert_sort_benchmark_gpu.png"
+        if gpu_chart.exists():
+            shutil.copy2(gpu_chart, output_dir / "hilbert_sort_benchmark_gpu.png")
     missing = _check_outputs(output_dir, required)
     if missing:
         raise RuntimeError(f"Hilbert-sort benchmark did not create: {missing}")
