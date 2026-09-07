@@ -281,3 +281,44 @@ That failure motivated the verified Git-bundle transport described above. Its
 regression test creates a real temporary Git repository and verifies that the
 uploaded bundle reproduces the pinned commit while excluding working-tree edits.
 A fresh full-profile acceptance attempt follows the pushed transport fix.
+
+The subsequent attempt `07092026_0607`, using
+`308348a726dbdb67a97a445732b1cbbf2072c92f`, verified and downloaded QMC and Hilbert
+sort, then lost access to the session during SQMC. Its failure status and recovery
+errors are retained; session absence was verified. Its incomplete SQMC outputs
+must not be combined with another run.
+
+The completed run supplied for review, **`07092026_1002`**, uses that same source
+commit and the full profile. Review of the retained configuration, manifests,
+logs, numerical arrays and figures establishes:
+
+- Hardware: A100-SXM4 40 GB; 12 exposed Xeon CPU threads at 2.20 GHz;
+  JAX/JAXlib 0.11.1; float64; Threefry PRNG.
+- QMC: **240** complete CPU/GPU timing rows, 120 paired comparisons; benchmark
+  wall time 782.30 seconds.
+- Hilbert sort: **140** timing rows, 70 paired comparisons; all paired permutations
+  agree exactly and the retained input hashes agree; wall time 197.37 seconds.
+- SQMC: **50** timing rows and **1,200** accuracy records, with all 30 backend,
+  dimension and budget outcomes checked; wall time 331.23 seconds.
+- Every manifest member's size/hash matches the retained artifact; all source
+  commits and canonical configuration hashes agree. Complete grids, arguments,
+  timing summaries, input arrays, SQMC estimate/error calculations, budget choices
+  and PNG integrity pass the local artifact validators.
+- QMC was downloaded at 10:16:53 UTC before Hilbert began at 10:16:54; Hilbert was
+  downloaded at 10:21:19 before SQMC began at 10:21:20; SQMC was downloaded at
+  10:27:36. The saved status/logs record verified shutdown at 10:27:41 UTC, exit 0,
+  with no secondary errors. The owned session was
+  `comparison_07092026_1002_92339ee396`.
+- No configuration meets the 10 ms trajectory budget. Under 100 ms, GPU selects
+  2,048 particles at every dimension; CPU selects 256, 512, 256, 256 and 128 at
+  dimensions 2, 5, 10, 30 and 60. CPU/GPU held-out error ratios are 3.73, 1.90,
+  1.95, 1.34 and 1.37. At matched counts the largest absolute RMSE difference is
+  2.22e-16. Three GPU selections under 50 ms satisfy the limit in only six of
+  seven timings, consistent with a median budget rather than a hard deadline.
+
+The original QMC plot emits a `constrained_layout` warning because its legend is
+crowded. Numerical and file-integrity validation succeeds, but publication use
+requires a clearer plot. The dissertation review regenerates faceted figures from
+this run's saved results without altering the original output folder or rerunning
+any experiments. Local validation totals **197 passing package, benchmark and
+launcher tests**; shell syntax and all three small CPU smoke runs also pass.
