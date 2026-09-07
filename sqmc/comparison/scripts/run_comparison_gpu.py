@@ -4,6 +4,7 @@ This file can be submitted by `colab run` (which supplies no __file__).
 """
 import argparse
 import contextlib
+import hashlib
 import importlib.metadata
 import importlib.util
 import json
@@ -78,7 +79,12 @@ def setup(config, root):
         raise FileExistsError(REPO)
     run(["git", "init", str(REPO)])
     run(["git", "remote", "add", "origin", config["repo_url"]])
-    run(["git", "-c", "http.version=HTTP/1.1", "fetch", "--depth=1", "origin", config["source_commit"]])
+    bundle = root / "source.bundle"
+    with bundle.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != config["source_bundle_sha256"]:
+            raise RuntimeError("Uploaded source bundle checksum mismatch")
+    run(["git", "bundle", "verify", str(bundle)])
+    run(["git", "fetch", str(bundle), "refs/heads/" + config["repo_branch"]])
     run(["git", "checkout", "--detach", "FETCH_HEAD"])
     actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
     if actual != config["source_commit"]:
@@ -128,21 +134,28 @@ def setup(config, root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--action", choices=["setup", "stage", "snapshot"], required=True)
+    parser.add_argument("--action", choices=["provision", "setup", "stage", "snapshot"], required=True)
     parser.add_argument("--config-json")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--stage", choices=["qmc", "hilbert_sort", "sqmc"])
     args = parser.parse_args()
     config = json.loads(args.config_json) if args.config_json else json.loads(args.config.read_text())
     root = Path("/content/sqmc-comparison-" + config["run_id"])
-    root.mkdir(exist_ok=args.action != "setup")
+    root.mkdir(exist_ok=args.action != "provision")
     os.environ.update(JAX_ENABLE_X64="true", XLA_PYTHON_CLIENT_PREALLOCATE="false", MPLBACKEND="Agg", MPLCONFIGDIR="/tmp/sqmc-matplotlib", PYTHONUNBUFFERED="1")
     (root / "comparison_config.json").write_text(json.dumps(config, indent=2) + "\n")
     # Keep redirected worker output separate from the canonical remote log.
     with (root / "remote_logs.txt").open("a", buffering=1) as log:
         with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
+            if args.action == "provision":
+                print("Provisioned; waiting for the verified source bundle.", flush=True)
+                return
             if args.action == "setup":
-                setup(config, root)
+                try:
+                    setup(config, root)
+                except BaseException:
+                    traceback.print_exc()
+                    raise
             sys.path.insert(0, str(REPO / "sqmc/comparison/scripts"))
             from comparison_protocol import STAGES, make_archive, now, read_json, stage_command, validate_config, validate_stage, write_json
             validate_config(config)

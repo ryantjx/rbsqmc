@@ -40,7 +40,7 @@ def config_digest(config):
 
 def validate_config(config):
     defaults = read_json(Path(__file__).parent / "config/comparison_config.json")
-    allowed = set(defaults) | {"source_commit", "repo_branch", "run_id", "session_name", "resolved_utc"}
+    allowed = set(defaults) | {"source_commit", "repo_branch", "run_id", "session_name", "resolved_utc", "source_bundle_sha256", "source_transport"}
     if set(config) - allowed or set(defaults) - set(config):
         raise ValueError("Unknown or missing top-level configuration fields")
     if config["gpu"] not in {"A100", "H100", "T4", "L4", "G4"}:
@@ -54,6 +54,8 @@ def validate_config(config):
         raise ValueError("repo_url must be an HTTPS URL")
     if "source_commit" in config and not re.fullmatch(r"[0-9a-f]{40}", config["source_commit"]):
         raise ValueError("source_commit must be a full Git SHA")
+    if "source_bundle_sha256" in config and not re.fullmatch(r"[0-9a-f]{64}", config["source_bundle_sha256"]):
+        raise ValueError("Invalid source bundle checksum")
     for stage in STAGES:
         args = config[stage]
         if set(args) != set(defaults[stage]):

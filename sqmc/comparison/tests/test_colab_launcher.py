@@ -110,6 +110,12 @@ def test_unsafe_archives(tmp_path, config, name, kind):
 
 
 class MockLauncher(local.Launcher):
+    def prepare_source(self, directory):
+        return Path(directory) / "source.bundle"
+
+    def setup_from_bundle(self, bundle):
+        self.events.append("setup_bundle")
+
     def __init__(self, config, output, failure=None, existing=False, shutdown_failure=False):
         self.events, self.active, self.failure = [], existing, failure
         self.shutdown_failure = shutdown_failure
@@ -151,7 +157,7 @@ class MockLauncher(local.Launcher):
         if stage in protocol.STAGES:
             self.status["stages"][stage]["download"] = "partial" if partial else "complete"
 
-    def execute(self, code):
+    def execute(self, code, timeout=None):
         self.events.append("snapshot")
 
     def stream_log(self):
@@ -223,3 +229,97 @@ def test_root_bundle_never_overwrites_local_log(tmp_path, config):
     launcher.download("root")
     assert (output / "logs.txt").read_text() == "local"
     assert (output / "remote_logs.txt").read_text() == "remote"
+
+
+def test_endpoint_change_is_not_stopped(config, tmp_path):
+    launcher = MockLauncher(config, tmp_path, existing=True)
+    launcher.endpoint = "original-endpoint"
+    with pytest.raises(RuntimeError, match="unowned"):
+        launcher.shutdown()
+    assert "stop" not in launcher.events
+
+
+def test_shutdown_must_disappear_from_server(config, tmp_path):
+    launcher = MockLauncher(config, tmp_path, existing=True)
+    launcher.endpoint = "owned"
+    original = launcher.fake
+    def run(argv, timeout):
+        if argv[1] == "stop":
+            return "pretended to stop"
+        return original(argv, timeout)
+    launcher.run = run
+    with pytest.raises(RuntimeError, match="remains active"):
+        launcher.shutdown()
+    assert launcher.status["shutdown"] != "verified_stopped"
+
+
+def test_interrupt_salvages_before_shutdown(config, tmp_path):
+    launcher = MockLauncher(config, tmp_path)
+    def interrupted(stage):
+        raise KeyboardInterrupt
+    launcher.wait_stage = interrupted
+    assert launcher.launch() == 130
+    assert "download:qmc:partial" in launcher.events
+    assert "start:hilbert_sort" not in launcher.events
+    assert launcher.status["shutdown"] == "verified_stopped"
+
+
+def test_duplicate_and_changed_member_rejected(config, tmp_path):
+    root = bundle(tmp_path, config)
+    archive = root / "qmc.tar.gz"
+    with tarfile.open(archive, "r:gz") as tar:
+        parts = [(m, tar.extractfile(m).read()) for m in tar.getmembers()]
+    for duplicate in (False, True):
+        with tarfile.open(archive, "w:gz") as tar:
+            for member, content in parts:
+                if member.name == "qmc/logs.txt" and not duplicate:
+                    content = b"changed!!"
+                    member.size = len(content)
+                tar.addfile(member, io.BytesIO(content))
+            if duplicate:
+                tar.addfile(parts[0][0], io.BytesIO(parts[0][1]))
+        (root / "qmc.tar.gz.sha256").write_text(protocol.digest(archive))
+        with pytest.raises(ValueError, match="Duplicate|Member checksum"):
+            protocol.unpack_verified(archive, root / "qmc.tar.gz.sha256", tmp_path / "out", "qmc", config)
+
+
+def test_remote_worker_timeout_kills_child(tmp_path, monkeypatch):
+    import run_comparison_gpu as remote
+    monkeypatch.setattr(remote, "REPO", tmp_path)
+    with pytest.raises(TimeoutError):
+        remote.run([sys.executable, "-c", "import time; print('starting', flush=True); time.sleep(20)"], timeout=.15)
+
+
+def test_colab_bootstrap_allows_cli_prelude():
+    # colab run prepends imports and sys.argv and provides no __file__.
+    body = (SCRIPTS / "run_comparison_gpu.py").read_text()
+    compile("import sys\nsys.argv = ['run_comparison_gpu.py']\n" + body, "colab_payload", "exec")
+
+
+def test_source_bundle_contains_exact_commit_only(config, tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    def git(*args, cwd=source):
+        return subprocess.check_output(["git", *args], cwd=cwd, text=True, stderr=subprocess.DEVNULL).strip()
+    git("init", "-b", config["repo_branch"])
+    (source / "tracked.py").write_text("original")
+    git("add", "tracked.py")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "fixture")
+    config["source_commit"] = git("rev-parse", "HEAD")
+    (source / "tracked.py").write_text("unstaged edit")
+    (source / "untracked.txt").write_text("must not upload")
+    monkeypatch.setattr(local, "REPO", source)
+    output = tmp_path / "output"
+    output.mkdir()
+    launcher = local.Launcher(config, output)
+    bundle = launcher.prepare_source(tmp_path)
+    assert protocol.digest(bundle) == launcher.config["source_bundle_sha256"]
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    git("init", cwd=clone)
+    git("fetch", str(bundle), "refs/heads/" + config["repo_branch"], cwd=clone)
+    git("checkout", "--detach", "FETCH_HEAD", cwd=clone)
+    assert git("rev-parse", "HEAD", cwd=clone) == config["source_commit"]
+    assert (clone / "tracked.py").read_text() == "original"
+    assert not (clone / "untracked.txt").exists()
+    assert (source / "tracked.py").read_text() == "unstaged edit"

@@ -124,7 +124,7 @@ Validation on 7 September 2026: all three entry points completed CPU smoke runs,
 
 Activate the local environment containing NumPy and Pillow for artifact validation;
 `colab` is discovered on the inherited `PATH` (it need not live in `.venv`).
-Push the source commit before starting. The configured branch must point to that
+Push the source commit before starting. Both the local and remote configured branch must point to that
 exact commit; the remote checkout is detached at the SHA, so later branch changes
 cannot change the experiment's source.
 
@@ -175,7 +175,8 @@ per stage, default 3600 seconds), `setup_timeout` (900 seconds),
 (unique-session prefix), `repo_url`, optional `repo_branch` and `source_commit`
 (default current local branch and HEAD). Existing `GPU_TYPE`, `COLAB_TIMEOUT`
 and `SESSION` environment overrides take precedence over the JSON. The saved
-configuration contains their resolved values, complete experiment parameters,
+configuration also records `source_transport=colab_git_bundle` and
+`source_bundle_sha256`. It contains resolved overrides, complete experiment parameters,
 UTC run identifier, unique session name and exact source commit. Runtime IDs
 are regenerated even when a previous effective configuration is supplied.
 
@@ -221,7 +222,11 @@ logger cannot intercept. Root downloads explicitly exclude `logs.txt`.
 NVIDIA driver/CUDA information, Python and installed package versions, JAX/JAXlib,
 backend device descriptions, float64 configuration and PRNG settings. It references
 the same source SHA and canonical configuration hash as the archive manifests.
-Setup preserves preinstalled JAX and NVIDIA packages with pip constraints, installs
+The launcher creates a Git bundle from the committed branch, verifies the branch
+SHA on origin, and uploads the bundle through Colab. The VM verifies its SHA-256
+and Git structure, then checks out the exact commit. Uncommitted and staged edits
+are excluded; remote GitHub access is not required. Setup preserves preinstalled
+JAX and NVIDIA packages with pip constraints, installs
 missing dependencies, generates the ignored Sobol archive from the checked-in
 Joe–Kuo table, verifies it against SciPy, and requires both CPU and the requested GPU.
 
@@ -258,3 +263,21 @@ downloads, checksums and unsafe archives, partial failures, original error reten
 root-log protection and session ownership. Live A100 acceptance evidence is recorded
 below after executing the pushed source commit; local smoke results alone do not
 establish GPU performance.
+
+
+### Live acceptance record — 7 September 2026
+
+Attempt `07092026_0557` used commit
+`26447649aca8e72cbcac196953c55e93848a8140` on
+`codex/colab-comparison-07092026`, with the full A100 profile. A100 provisioning
+succeeded, but the VM's GitHub HTTPS connection timed out during `git fetch` after
+132.7 seconds. No benchmark stage started. The launcher retrieved `remote_logs.txt`,
+retained the setup failure in `status.json`, stopped only its owned session
+`comparison_07092026_0557_20092bab0a`, and verified no active sessions remained.
+The unavailable root metadata archive was reported as a separate recovery error.
+This failed attempt is not performance evidence.
+
+That failure motivated the verified Git-bundle transport described above. Its
+regression test creates a real temporary Git repository and verifies that the
+uploaded bundle reproduces the pinned commit while excluding working-tree edits.
+A fresh full-profile acceptance attempt follows the pushed transport fix.

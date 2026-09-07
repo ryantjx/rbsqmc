@@ -17,7 +17,7 @@ import time
 import traceback
 import uuid
 
-from comparison_protocol import (STAGES, REMOTE_REPO, ROOT_FILES, config_digest,
+from comparison_protocol import (STAGES, REMOTE_REPO, ROOT_FILES, config_digest, digest,
                                  now, read_json, stage_command, unpack_verified,
                                  validate_config, validate_stage, write_json)
 
@@ -99,6 +99,8 @@ def resolve(path=None, environ=None, repo=REPO, clock=None):
     config["run_id"] = timestamp
     config["session_name"] = f"{config['session']}_{timestamp}_{uuid.uuid4().hex[:10]}"
     config["resolved_utc"] = now()
+    config["source_transport"] = "colab_git_bundle"
+    config.pop("source_bundle_sha256", None)
     validate_config(config)
     return config
 
@@ -131,11 +133,32 @@ class Launcher:
     def sessions(self):
         return session_map(self.call("sessions"))
 
-    def execute(self, code):
+    def execute(self, code, timeout=None):
         with tempfile.TemporaryDirectory(prefix="sqmc-dispatch-") as temp:
             path = Path(temp) / "dispatch.py"
             path.write_text(code)
-            return self.call("exec", "--session", self.session, "--timeout", self.config["transfer_timeout"], "--file", path)
+            duration = timeout or self.config["transfer_timeout"]
+            return self.call("exec", "--session", self.session, "--timeout", duration, "--file", path, timeout=duration + 30)
+
+    def prepare_source(self, directory):
+        ref = "refs/heads/" + self.config["repo_branch"]
+        sha = self.run(["git", "-C", str(REPO), "rev-parse", ref], timeout=60).strip()
+        if sha != self.config["source_commit"]:
+            raise RuntimeError("Local source branch does not match the pushed commit")
+        # Upload only committed objects; never include the working tree/index.
+        bundle = Path(directory) / "source.bundle"
+        self.run(["git", "-C", str(REPO), "bundle", "create", str(bundle), ref], timeout=120)
+        self.config["source_bundle_sha256"] = digest(bundle)
+        self.status["config_sha256"] = config_digest(self.config)
+        write_json(self.output / "comparison_config.json", self.config)
+        self.save()
+        return bundle
+
+    def setup_from_bundle(self, bundle):
+        self.call("upload", "--session", self.session, bundle, self.remote / "source.bundle")
+        self.call("upload", "--session", self.session, SCRIPTS / "run_comparison_gpu.py", self.remote / "bootstrap.py")
+        args = [str(self.remote / "bootstrap.py"), "--action", "setup", "--config", str(self.remote / "comparison_config.json")]
+        self.execute(f"import subprocess, sys\nsubprocess.run([sys.executable, *{args!r}], check=True)\n", timeout=self.config["setup_timeout"])
 
     def worker_command(self, action, stage=None):
         args = ["/usr/bin/python3", str(REMOTE_REPO / "sqmc/comparison/scripts/run_comparison_gpu.py"),
@@ -276,6 +299,7 @@ class Launcher:
     def launch(self):
         self.save()
         code = 0
+        source_temp = tempfile.TemporaryDirectory(prefix="sqmc-source-")
         try:
             available = self.sessions()
             if self.session in available:
@@ -283,15 +307,17 @@ class Launcher:
             remote_ref = self.run(["git", "ls-remote", self.config["repo_url"], "refs/heads/" + self.config["repo_branch"]], timeout=60)
             if not remote_ref.split() or remote_ref.split()[0] != self.config["source_commit"]:
                 raise RuntimeError("Push the exact source commit to repo_branch before provisioning")
+            bundle = self.prepare_source(source_temp.name)
             self.attempted = True
             self.call("run", "--keep", "--gpu", self.config["gpu"], "--session", self.session,
                       "--timeout", self.config["setup_timeout"], SCRIPTS / "run_comparison_gpu.py",
-                      "--action", "setup", "--config-json", json.dumps(self.config),
+                      "--action", "provision", "--config-json", json.dumps(self.config),
                       timeout=self.config["setup_timeout"] + 120)
             self.endpoint = self.sessions().get(self.session)
             if not self.endpoint:
                 raise RuntimeError("Provisioned session missing from server session list")
             self.status["endpoint"] = self.endpoint
+            self.setup_from_bundle(bundle)
             self.download("root")
             for stage in STAGES:
                 self.current = stage
@@ -334,6 +360,7 @@ class Launcher:
                 self.status["shutdown"] = "not_provisioned"
             self.status.update(finished_utc=now(), exit_code=code)
             self.save()
+            source_temp.cleanup()
         return code
 
 
@@ -349,7 +376,9 @@ def main(argv=None):
     if args.dry_run:
         print(json.dumps(config, indent=2))
         print(f"Output: {output}")
-        print("colab run --keep --gpu", config["gpu"], "--session", config["session_name"], "--timeout", config["setup_timeout"], "run_comparison_gpu.py --action setup --config-json <effective JSON above>")
+        print("git bundle create <temporary source.bundle> refs/heads/" + config["repo_branch"])
+        print("colab run --keep --gpu", config["gpu"], "--session", config["session_name"], "--timeout", config["setup_timeout"], "run_comparison_gpu.py --action provision --config-json <effective JSON plus bundle SHA-256>")
+        print("colab upload <source.bundle>; colab upload <bootstrap.py>; colab exec <setup pinned checkout>")
         for stage in STAGES:
             print(shlex.join(stage_command(config, stage, Path("/content/sqmc-comparison-" + config["run_id"]) / stage)))
             print(f"colab exec --session {config['session_name']} --file <start {stage} worker>; poll; download and verify {stage}.tar.gz")
