@@ -26,7 +26,13 @@ from scipy.stats import qmc
 
 import chex
 
-from sqmc.qmc.qmc import Halton, Sobol, _MAXBITS, _apply_lms
+from sqmc.qmc.qmc import (
+    Halton,
+    Sobol,
+    _MAXBITS,
+    _apply_lms,
+    normal_coordinates,
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -199,6 +205,135 @@ class HaltonTest(chex.TestCase):
     def test_noninteger_sample_size_raises(self, n):
         with pytest.raises(TypeError):
             Halton(d=2).sample(n)
+
+    @parameterized.product(scramble=[False, True])
+    def test_explicit_state_scan_continues_sequence(self, scramble):
+        """Three continuation calls of 8 points must match one 24-point call.
+
+        The explicit-state path must advance the sequence index on every
+        runtime iteration inside ``jax.lax.scan``, unlike the eager counter
+        which only advances during tracing.
+        """
+        key = jax.random.PRNGKey(42)
+        engine = Halton(
+            d=5,
+            scramble=scramble,
+            key=key,
+            start_index=0,
+            dtype=jnp.float64,
+        )
+
+        def step(qmc_state, _):
+            points, next_state = engine.sample(8, state=qmc_state)
+            return next_state, points
+
+        final_state, batches = jax.lax.scan(
+            step, engine._eager_state(), None, length=3
+        )
+        chunked = batches.reshape(-1, 5)
+
+        # Compiled-vs-compiled must match exactly. The eager path may differ
+        # from the compiled path by XLA FMA fusion at the last bit, so compare
+        # against a compiled single 24-point call instead.
+        jit_whole = jax.jit(
+            lambda s: Halton(
+                d=5,
+                scramble=scramble,
+                key=key,
+                start_index=0,
+                dtype=jnp.float64,
+            ).sample(24, state=s)[0]
+        )(engine._eager_state())
+        chex.assert_trees_all_close(chunked, jit_whole, rtol=0.0, atol=0.0)
+        self.assertEqual(int(final_state.next_index), 24)
+
+    @parameterized.product(scramble=[False, True])
+    def test_explicit_state_is_reproducible(self, scramble):
+        """Repeating a call with the same explicit state must reproduce the
+        result without modifying the engine."""
+        engine = Halton(
+            d=5,
+            scramble=scramble,
+            key=jax.random.PRNGKey(7),
+            start_index=0,
+            dtype=jnp.float64,
+        )
+        state = engine._eager_state()
+        first, next_state = engine.sample(8, state=state)
+        repeated, repeated_state = engine.sample(8, state=state)
+
+        chex.assert_trees_all_close(first, repeated, rtol=0.0, atol=0.0)
+        self.assertEqual(int(next_state.next_index), int(repeated_state.next_index))
+        # The engine's eager counter is untouched by the explicit-state path.
+        self.assertEqual(engine._num_generated, 0)
+
+    def test_explicit_state_does_not_advance_eager_counter(self):
+        engine = Halton(
+            d=5,
+            scramble=False,
+            start_index=0,
+            dtype=jnp.float64,
+        )
+        state = engine._eager_state()
+        engine.sample(8, state=state)
+        self.assertEqual(engine._num_generated, 0)
+        # The eager path still advances the counter.
+        engine.sample(8)
+        self.assertEqual(engine._num_generated, 8)
+
+    @parameterized.parameters(-1, -10)
+    def test_negative_start_index_raises(self, start_index):
+        with pytest.raises(ValueError):
+            Halton(d=2, start_index=start_index)
+
+    @parameterized.parameters(1.5, "10", None, True)
+    def test_noninteger_start_index_raises(self, start_index):
+        with pytest.raises(TypeError):
+            Halton(d=2, start_index=start_index)
+
+    def test_start_index_2_to_32_raises(self):
+        # 2**32 wraps to 0 in uint32, which would silently reproduce the
+        # beginning of the sequence. It must be rejected up front.
+        with pytest.raises(ValueError):
+            Halton(d=2, start_index=2**32)
+
+    def test_block_crossing_index_limit_raises(self):
+        # d=1 uses base 2. With float64, digits_per_dim gives a limit of
+        # 2**53, so a block ending exactly at the limit is allowed but the
+        # next point is rejected. Use tiny batches near the limit rather than
+        # allocating the whole sequence.
+        engine = Halton(d=1, scramble=False, start_index=0, dtype=jnp.float64)
+        limit = engine._index_limit()
+        # A block ending exactly at the limit is permitted.
+        engine._num_generated = limit - 2
+        engine.sample(2)
+        # The next point must be rejected.
+        with pytest.raises(ValueError):
+            engine.sample(1)
+
+    def test_last_valid_indices_match_radical_inverse(self):
+        # Exercise the last valid indices in tiny batches and check them
+        # against an independent radical-inverse calculation, without
+        # allocating the whole sequence.
+        engine = Halton(d=1, scramble=False, start_index=0, dtype=jnp.float64)
+        limit = engine._index_limit()
+        start = limit - 4
+        engine._num_generated = start
+        points = np.asarray(engine.sample(4))
+
+        # Independent radical inverse of the last four indices in base 2.
+        expected = []
+        for idx in range(start, limit):
+            value = 0.0
+            factor = 0.5
+            while idx:
+                value += (idx % 2) * factor
+                idx //= 2
+                factor *= 0.5
+            expected.append(value)
+        chex.assert_trees_all_close(
+            points[:, 0], np.asarray(expected), rtol=0.0, atol=1e-15
+        )
 
 
 class SobolTest(chex.TestCase):
@@ -395,3 +530,224 @@ class SobolTest(chex.TestCase):
     def test_noninteger_sample_size_raises(self, n):
         with pytest.raises(TypeError):
             Sobol(d=2).sample(n)
+
+    @parameterized.product(scramble=[False, True])
+    def test_explicit_state_scan_continues_sequence(self, scramble):
+        """Three continuation calls of 8 points must match one 24-point call.
+
+        The explicit-state path must advance the sequence index on every
+        runtime iteration inside ``jax.lax.scan``, unlike the eager counter
+        which only advances during tracing.
+        """
+        key = jax.random.PRNGKey(42)
+        engine = Sobol(
+            d=5,
+            scramble=scramble,
+            key=key,
+            dtype=jnp.float64,
+        )
+
+        def step(qmc_state, _):
+            points, next_state = engine.sample(8, state=qmc_state)
+            return next_state, points
+
+        final_state, batches = jax.lax.scan(
+            step, engine._eager_state(), None, length=3
+        )
+        chunked = batches.reshape(-1, 5)
+
+        # All Sobol paths go through the same compiled kernel, so the eager
+        # single call and the scan continuation must match exactly.
+        whole = np.asarray(
+            Sobol(
+                d=5,
+                scramble=scramble,
+                key=key,
+                dtype=jnp.float64,
+            ).sample(24)
+        )
+        chex.assert_trees_all_close(chunked, whole, rtol=0.0, atol=0.0)
+        # Sobol drops the origin, so 24 points end at exclusive index 25.
+        self.assertEqual(int(final_state.next_index), 25)
+
+    @parameterized.product(scramble=[False, True])
+    def test_explicit_state_is_reproducible(self, scramble):
+        """Repeating a call with the same explicit state must reproduce the
+        result without modifying the engine."""
+        engine = Sobol(
+            d=5,
+            scramble=scramble,
+            key=jax.random.PRNGKey(7),
+            dtype=jnp.float64,
+        )
+        state = engine._eager_state()
+        first, next_state = engine.sample(8, state=state)
+        repeated, repeated_state = engine.sample(8, state=state)
+
+        chex.assert_trees_all_close(first, repeated, rtol=0.0, atol=0.0)
+        self.assertEqual(int(next_state.next_index), int(repeated_state.next_index))
+        # The engine's eager counter is untouched by the explicit-state path.
+        self.assertEqual(engine._num_generated, 0)
+
+    def test_explicit_state_does_not_advance_eager_counter(self):
+        engine = Sobol(d=5, scramble=False, dtype=jnp.float64)
+        state = engine._eager_state()
+        engine.sample(8, state=state)
+        self.assertEqual(engine._num_generated, 0)
+        # The eager path still advances the counter.
+        engine.sample(8)
+        self.assertEqual(engine._num_generated, 8)
+
+    @parameterized.product(start_index=[0, 1, 4])
+    def test_start_index_controls_first_point(self, start_index):
+        """The first generated index must be ``start_index`` (not always 1)."""
+        engine = Sobol(
+            d=1,
+            scramble=False,
+            dtype=jnp.float64,
+            start_index=start_index,
+        )
+        first = np.asarray(engine.sample(1)[0])
+        # Unscrambled Sobol' point at index i is the radical inverse of the
+        # Gray code of i. Compare against scipy's sequence at that index.
+        scipy_points = qmc.Sobol(d=1, scramble=False, bits=_MAXBITS).random(
+            start_index + 1
+        )
+        expected = scipy_points[start_index]
+        chex.assert_trees_all_close(first, expected, rtol=0.0, atol=0.0)
+
+    def test_start_index_zero_includes_origin(self):
+        """With ``start_index=0`` the first point is the origin (0, ..., 0)."""
+        engine = Sobol(
+            d=2,
+            scramble=False,
+            dtype=jnp.float64,
+            start_index=0,
+        )
+        first = np.asarray(engine.sample(1)[0])
+        chex.assert_trees_all_close(
+            first, np.zeros(2), rtol=0.0, atol=0.0
+        )
+
+    def test_start_index_zero_balanced_strata(self):
+        """Indices 0..3 give one point per first-coordinate quarter."""
+        engine = Sobol(
+            d=1,
+            scramble=False,
+            dtype=jnp.float64,
+            start_index=0,
+        )
+        points = np.asarray(engine.sample(4))
+        # First coordinate strata: [0,1/4), [1/4,1/2), [1/2,3/4), [3/4,1).
+        strata = np.floor(points[:, 0] * 4).astype(int)
+        chex.assert_trees_all_close(
+            np.sort(strata), np.arange(4), rtol=0.0, atol=0.0
+        )
+
+    def test_start_index_one_breaks_balance(self):
+        """Indices 1..4 leave the first quarter empty (the review's example)."""
+        engine = Sobol(
+            d=1,
+            scramble=False,
+            dtype=jnp.float64,
+            start_index=1,
+        )
+        points = np.asarray(engine.sample(4))
+        strata = np.floor(points[:, 0] * 4).astype(int)
+        # The first quarter is empty and the second has two points.
+        self.assertNotIn(0, strata.tolist())
+        self.assertEqual(int(np.sum(strata == 1)), 2)
+
+    def test_balanced_block_validation_passes_for_aligned_power_of_two(self):
+        engine = Sobol(
+            d=2,
+            scramble=False,
+            dtype=jnp.float64,
+            start_index=0,
+        )
+        # start_index=0, n=8: aligned power-of-two block is valid.
+        engine._validate_balanced_block(8)
+
+    def test_balanced_block_validation_rejects_non_power_of_two(self):
+        engine = Sobol(
+            d=2,
+            scramble=False,
+            dtype=jnp.float64,
+            start_index=0,
+        )
+        with pytest.raises(ValueError):
+            engine._validate_balanced_block(6)
+
+    def test_balanced_block_validation_rejects_unaligned_start(self):
+        engine = Sobol(
+            d=2,
+            scramble=False,
+            dtype=jnp.float64,
+            start_index=1,
+        )
+        # start_index=1 is not divisible by n=8, so the block is unaligned.
+        with pytest.raises(ValueError):
+            engine._validate_balanced_block(8)
+
+    @parameterized.parameters(-1, -10)
+    def test_negative_start_index_raises(self, start_index):
+        with pytest.raises(ValueError):
+            Sobol(d=2, start_index=start_index)
+
+    @parameterized.parameters(1.5, "10", None, True)
+    def test_noninteger_start_index_raises(self, start_index):
+        with pytest.raises(TypeError):
+            Sobol(d=2, start_index=start_index)
+
+    @parameterized.product(dtype=[jnp.float32, jnp.float64])
+    def test_float32_high_index_stays_below_one(self, dtype):
+        """At the reported high index, float32 must not round to 1.0."""
+        # Index 715827882 is a valid 30-bit Sobol' index whose first
+        # coordinate is 0.9999999990686774 in float64 and rounds to 1.0 in
+        # float32. Set the counter directly without allocating the prefix.
+        engine = Sobol(d=1, scramble=False, dtype=dtype, start_index=0)
+        engine._num_generated = 715827882
+        points = np.asarray(engine.sample(1))
+        self.assertLess(points[0, 0], 1.0)
+        self.assertGreaterEqual(points[0, 0], 0.0)
+
+    @parameterized.product(dtype=[jnp.float32, jnp.float64])
+    def test_generated_values_stay_below_one(self, dtype):
+        """All generated Sobol' coordinates must satisfy the [0, 1) contract."""
+        engine = Sobol(d=5, scramble=False, dtype=dtype, start_index=0)
+        points = np.asarray(engine.sample(1024))
+        self.assertLess(float(points.max()), 1.0)
+        self.assertGreaterEqual(float(points.min()), 0.0)
+
+    @parameterized.product(dtype=[jnp.float32, jnp.float64])
+    def test_interior_values_unchanged_by_endpoint_policy(self, dtype):
+        """The clipping must not alter interior (non-endpoint) values."""
+        engine = Sobol(d=5, scramble=False, dtype=dtype, start_index=0)
+        points = np.asarray(engine.sample(1024))
+        # No interior value should equal the clipped upper bound unless it was
+        # genuinely rounded to one (which the policy caps). All values strictly
+        # below nextafter(1,0) are untouched.
+        one = np.asarray(1, dtype=np.float32 if dtype == jnp.float32 else np.float64)
+        upper = np.nextafter(one, np.asarray(0, dtype=one.dtype))
+        interior = points[points < upper]
+        # Interior values are all < 1 and >= 0, and none equals the cap.
+        self.assertTrue(np.all(interior < 1.0))
+        self.assertTrue(np.all(interior >= 0.0))
+
+    @parameterized.product(dtype=[jnp.float32, jnp.float64])
+    def test_normal_coordinates_finite_at_boundaries(self, dtype):
+        """Exact zero and rounded-one inputs must give finite normal quantiles."""
+        zero = jnp.asarray(0.0, dtype=dtype)
+        one = jnp.asarray(1.0, dtype=dtype)
+        upper = jnp.nextafter(one, zero)
+        for u in (zero, upper):
+            q = normal_coordinates(u)
+            self.assertTrue(bool(jnp.isfinite(q)))
+
+    @parameterized.product(dtype=[jnp.float32, jnp.float64])
+    def test_normal_coordinates_interior_unchanged(self, dtype):
+        """Interior uniforms map to the standard normal quantile unchanged."""
+        u = jnp.asarray([0.1, 0.5, 0.9], dtype=dtype)
+        q = normal_coordinates(u)
+        expected = jax.scipy.special.ndtri(u)
+        chex.assert_trees_all_close(q, expected, rtol=1e-6, atol=1e-6)

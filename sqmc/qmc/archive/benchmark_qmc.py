@@ -39,7 +39,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy.stats import qmc as scipy_qmc
 
-from sqmc.qmc.qmc import Halton, Sobol, _MAXBITS, _sobol_sample_batched
+from sqmc.qmc.archive.qmc_old import Halton, Sobol, _MAXBITS, _sobol_sample_batched
 
 
 _DEFAULT_N_VALUES = (128, 512, 2_048, 8_192, 32_768, 131_072)

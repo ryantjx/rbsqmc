@@ -46,7 +46,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sqmc.qmc.qmc import Sobol, _MAXBITS, _sobol_sample_batched
+from sqmc.qmc.archive.qmc_old import Sobol, _MAXBITS, _sobol_sample_batched
 from sqmc.hilbert_sort.hilbert_sort import hilbert_sort
 from sqmc.sqmc.sqmc import resample_from_uniform
 

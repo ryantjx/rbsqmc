@@ -299,3 +299,171 @@ class DeterminismTest(chex.TestCase):
         chex.assert_trees_all_close(
             first_particles, second_particles, rtol=0.0, atol=0.0
         )
+
+
+class ResampleBoundaryTest(chex.TestCase):
+    """Task 7: half-open cumulative intervals in ``resample_from_uniform``."""
+
+    def test_zero_uniform_selects_first_positive_weight(self):
+        # Weights [0, 1]: u=0 must select ancestor one (index 1), not zero.
+        idx, _ = resample_from_uniform(
+            jnp.asarray([0.0]), jnp.asarray([-jnp.inf, 0.0])
+        )
+        self.assertEqual(int(idx[0]), 1)
+
+    def test_midpoint_selects_second_positive_weight(self):
+        # Weights [0.5, 0, 0.5]: u=0.5 must select ancestor two (index 2).
+        idx, _ = resample_from_uniform(
+            jnp.asarray([0.5]), jnp.asarray([0.5, -jnp.inf, 0.5])
+        )
+        self.assertEqual(int(idx[0]), 2)
+
+    def test_leading_and_trailing_zero_weights(self):
+        # Weights [0, 1, 0]: u=0 selects the middle ancestor (index 1).
+        idx, _ = resample_from_uniform(
+            jnp.asarray([0.0]), jnp.asarray([-jnp.inf, 0.0, -jnp.inf])
+        )
+        self.assertEqual(int(idx[0]), 1)
+
+    def test_uniform_near_one_selects_last_ancestor(self):
+        idx, _ = resample_from_uniform(
+            jnp.asarray([0.999999]), jnp.asarray([0.0, 0.0])
+        )
+        self.assertEqual(int(idx[0]), 1)
+
+    @chex.variants(with_jit=True, without_jit=True)
+    def test_eager_jit_agreement(self):
+        def compute():
+            return resample_from_uniform(
+                jnp.asarray([0.0, 0.5, 0.999]),
+                jnp.asarray([0.0, -jnp.inf, 0.0]),
+            )
+
+        idx, _ = self.variant(compute)()
+        # logits [0, -inf, 0] -> weights [0.5, 0, 0.5], cdf [0.5, 0.5, 1.0].
+        # u=0 -> index 0 (cdf[0]=0.5 > 0); u=0.5 -> index 2; u=0.999 -> index 2.
+        chex.assert_trees_all_close(
+            idx, jnp.asarray([0, 2, 2]), rtol=0.0, atol=0.0
+        )
+
+
+class FilterPrepareNoConsumeTest(chex.TestCase):
+    """Task 5: ``filter_prepare`` must not consume a QMC batch."""
+
+    def test_filter_prepare_does_not_advance_counter(self):
+        qmc = Sobol(d=2, scramble=False, dtype=jnp.float64)
+        filter_ = _build_rw_filter(64, 0.5, 1.0, qmc)
+
+        filter_.init_prepare({"y": jnp.array(0.0)}, key=jax.random.key(0))
+        self.assertEqual(qmc._num_generated, 64)
+
+        filter_.filter_prepare({"y": jnp.array(0.5)}, key=jax.random.key(1))
+        # Preparation must not consume a batch (task 5).
+        self.assertEqual(qmc._num_generated, 64)
+
+    def test_init_plus_combine_consumes_one_batch_each(self):
+        qmc = Sobol(d=2, scramble=False, dtype=jnp.float64)
+        filter_ = _build_rw_filter(64, 0.5, 1.0, qmc)
+
+        state = filter_.init_prepare(
+            {"y": jnp.array(0.0)}, key=jax.random.key(0)
+        )
+        self.assertEqual(qmc._num_generated, 64)
+        for t in range(1, 4):
+            state = filter_.filter_combine(
+                state,
+                filter_.filter_prepare(
+                    {"y": jnp.array(0.1 * t)}, key=jax.random.key(t)
+                ),
+            )
+        # init (64) + 3 combines (3*64) = 256; preparation consumes nothing.
+        self.assertEqual(qmc._num_generated, 256)
+
+
+class KeyControlledRandomizationTest(chex.TestCase):
+    """Task 6: trajectory keys must control QMC randomization."""
+
+    def _run(self, trajectory_key):
+        qmc = Sobol(
+            d=2, scramble=True, key=jax.random.PRNGKey(0), dtype=jnp.float64
+        )
+        filter_ = _build_rw_filter(128, 0.5, 1.0, qmc)
+        init_key, steps_key = jax.random.split(trajectory_key)
+        step_keys = jax.random.split(steps_key, 4)
+        state = filter_.init_prepare(
+            {"y": jnp.array(0.0)}, key=init_key
+        )
+        state = state._replace(key=step_keys[0])
+        for i, k in enumerate(step_keys[1:]):
+            state = filter_.filter_combine(
+                state,
+                filter_.filter_prepare(
+                    {"y": jnp.array(0.1 * (i + 1))}, key=k
+                ),
+            )
+        return state.log_normalizing_constant, state.particles
+
+    def test_same_key_reproduces(self):
+        ll1, p1 = self._run(jax.random.PRNGKey(0))
+        ll2, p2 = self._run(jax.random.PRNGKey(0))
+        chex.assert_trees_all_close(ll1, ll2, rtol=0.0, atol=0.0)
+        chex.assert_trees_all_close(p1, p2, rtol=0.0, atol=0.0)
+
+    def test_different_keys_produce_different_points(self):
+        _, p1 = self._run(jax.random.PRNGKey(0))
+        _, p2 = self._run(jax.random.PRNGKey(1))
+        self.assertFalse(bool(jnp.array_equal(p1, p2)))
+
+
+class FirstObservationTest(chex.TestCase):
+    """Task 9: the filter must update on the first observation."""
+
+    def test_one_step_loglikelihood_matches_kalman(self):
+        sigma_x, sigma_y = 0.5, 1.0
+        qmc = Sobol(d=2, scramble=False, dtype=jnp.float64)
+        filter_ = _build_rw_filter(65536, sigma_x, sigma_y, qmc)
+
+        observations = jnp.asarray([1.0])
+        trajectory_key = jax.random.PRNGKey(0)
+        init_key, steps_key = jax.random.split(trajectory_key)
+        step_keys = jax.random.split(steps_key, 2)
+
+        state = filter_.init_prepare(
+            {"y": observations[0]}, key=init_key
+        )
+        state = state._replace(key=step_keys[0])
+        for observation, next_key in zip(observations, step_keys[1:]):
+            state = filter_.filter_combine(
+                state,
+                filter_.filter_prepare({"y": observation}, key=next_key),
+            )
+
+        expected = _scalar_kalman_loglikelihood(observations, sigma_x, sigma_y)
+        chex.assert_trees_all_close(
+            state.log_normalizing_constant, expected, rtol=1e-2, atol=1e-2
+        )
+
+    def test_changing_first_observation_changes_result(self):
+        qmc = Sobol(d=2, scramble=False, dtype=jnp.float64)
+        filter_ = _build_rw_filter(1024, 0.5, 1.0, qmc)
+
+        def run(first_y):
+            trajectory_key = jax.random.PRNGKey(0)
+            init_key, steps_key = jax.random.split(trajectory_key)
+            step_keys = jax.random.split(steps_key, 3)
+            state = filter_.init_prepare(
+                {"y": jnp.array(first_y)}, key=init_key
+            )
+            state = state._replace(key=step_keys[0])
+            for i, k in enumerate(step_keys[1:]):
+                state = filter_.filter_combine(
+                    state,
+                    filter_.filter_prepare(
+                        {"y": jnp.array(0.1 * (i + 1))}, key=k
+                    ),
+                )
+            return state.log_normalizing_constant
+
+        ll_a = run(0.0)
+        ll_b = run(5.0)
+        self.assertFalse(bool(jnp.isclose(ll_a, ll_b, atol=1e-6)))
