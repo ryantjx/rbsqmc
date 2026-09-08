@@ -150,7 +150,7 @@ def setup(config, root):
     print("Hardware: " + gpu, flush=True)
 
 
-def run_comparison(config, root):
+def run_comparison(config, root, methods):
     from sqmc_ekf_protocol import now, read_json, validate_run, write_json, make_archive
     status_path = root / "remote_status.json"
     status = read_json(status_path) if status_path.exists() else {"setup": "complete", "run": {"execution": "pending"}}
@@ -166,8 +166,9 @@ def run_comparison(config, root):
                 "--config", str(root / "comparison_config.json"),
                 "--data", str(REPO / "rbsqmc" / "data" / "results.csv"),
                 "--output-dir", str(root),
+                "--methods", "both" if set(methods) == {"ekf", "sqmc"} else methods[0],
             ], timeout=config["colab_timeout"], process_log=process_log)
-        validate_run(root, config)
+        validate_run(root, config, methods=methods)
         run_status["execution"] = "complete"
     except BaseException as error:
         run_status.update(execution="failed", error=f"{type(error).__name__}: {error}")
@@ -187,11 +188,18 @@ def main():
     parser.add_argument("--action", choices=["provision", "setup", "run"], required=True)
     parser.add_argument("--config-json")
     parser.add_argument("--config", type=Path)
+    parser.add_argument("--methods", default="ekf,sqmc",
+                        help="Comma-separated methods to run (default: ekf,sqmc).")
     args = parser.parse_args()
+    methods = tuple(m.strip() for m in args.methods.split(",") if m.strip())
+    if not methods or not set(methods) <= {"ekf", "sqmc"}:
+        raise ValueError("--methods must be a non-empty subset of {ekf, sqmc}")
     config = json.loads(args.config_json) if args.config_json else json.loads(args.config.read_text())
     root = Path("/content/sqmc-ekf-" + config["run_id"])
     root.mkdir(exist_ok=args.action != "provision")
-    os.environ.update(JAX_ENABLE_X64="true", XLA_PYTHON_CLIENT_PREALLOCATE="false", MPLBACKEND="Agg", MPLCONFIGDIR="/tmp/sqmc-matplotlib", PYTHONUNBUFFERED="1")
+    # RBSQMC_PLATFORM must be set before the comparison imports the model
+    # modules, which otherwise pin jax_platforms to cpu (audit finding P1).
+    os.environ.update(JAX_ENABLE_X64="true", XLA_PYTHON_CLIENT_PREALLOCATE="false", MPLBACKEND="Agg", MPLCONFIGDIR="/tmp/sqmc-matplotlib", PYTHONUNBUFFERED="1", RBSQMC_PLATFORM="cuda")
     (root / "comparison_config.json").write_text(json.dumps(config, indent=2) + "\n")
     with (root / "remote_logs.txt").open("a", buffering=1) as log:
         with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
@@ -215,7 +223,7 @@ def main():
                            {"setup": "complete", "run": {"execution": "pending"}})
                 make_archive(root, "root", config)
             if args.action == "run":
-                run_comparison(config, root)
+                run_comparison(config, root, methods)
 
 
 if __name__ == "__main__":

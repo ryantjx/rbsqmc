@@ -177,6 +177,45 @@ def _metrics(records):
                 outcome_accuracy=sum(outcome) / n if n else None)
 
 
+def validate_partial(run_dir, config, method):
+    """Check a single machine's artifacts before collecting or reusing them.
+
+    Cross-method fixture agreement and the combined reports are checked by
+    validate_artifacts after combining; each partial must already be complete.
+    """
+    root = Path(run_dir)
+    results = root / "results"
+    cfg = _json(results / "comparison_config.json")
+    _require(cfg == config, "Effective comparison configuration mismatch")
+    provenance = _json(results / "run_config.json")
+    digest = hashlib.sha256(json.dumps(cfg, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    _require(provenance["config_sha256"] == digest, "Partial config digest mismatch")
+    if "source_commit" in cfg:
+        _require(provenance["source_commit"] == cfg["source_commit"], "Partial source commit mismatch")
+    summary = _json(results / method / "summary.json")
+    history = _json(results / f"{method}_history.json")
+    _require(summary["n_epochs_completed"] == cfg["n_epochs"], f"{method}: incomplete training")
+    _require([row["epoch"] for row in history] == list(range(1, cfg["n_epochs"] + 1)),
+             f"{method}: missing, duplicated or unordered epochs")
+    for field in ("train_logz", "test_logz"):
+        _close(summary[f"final_{field}"], history[-1][field], f"{method} final {field}")
+    metadata = _json(results / "dataset_metadata.json")
+    records = _json(results / f"{method}_predictions.json")
+    _predictions(records, cfg, metadata["prediction_count"])
+    metrics = _json(results / f"{method}_metrics.json")
+    wc = [r for r in records if r["worldcup_eligible"]]
+    _require(len(wc) == metadata["worldcup_count"], f"{method}: World Cup count mismatch")
+    scored_wc = [r for r in wc if min(r["actual_home_score"], r["actual_away_score"]) >= 0]
+    for group, expected in dict(all=_metrics(records), worldcup=_metrics(scored_wc) if scored_wc else None).items():
+        if expected is None:
+            _require(metrics[group] is None, f"{method}: metrics for unscored fixtures")
+        else:
+            for field, value in expected.items():
+                _close(metrics[group][field], value, f"{method} {group} {field}")
+    for suffix in REQUIRED_METHOD_IMAGES:
+        _png(root / "images" / f"{method}_{suffix}")
+
+
 def validate_artifacts(run_dir, config=None):
     """Validate exactly this run; optional config binds it to the launch request."""
     root = Path(run_dir)

@@ -76,6 +76,35 @@ def complete_run(root):
     return cfg
 
 
+def test_partial_validation_checks_epochs_and_probabilities(tmp_path):
+    cfg = complete_run(tmp_path)
+    history = [dict(epoch=1, train_logz=-10., test_logz=-4.),
+               dict(epoch=2, train_logz=-9., test_logz=-5.)]
+    write_json(tmp_path / "results/sqmc_history.json", history)
+    protocol.validate_run(tmp_path, cfg, methods=("sqmc",))
+    write_json(tmp_path / "results/sqmc_history.json", history[:1])
+    with pytest.raises(ValueError, match="epochs"):
+        protocol.validate_run(tmp_path, cfg, methods=("sqmc",))
+    write_json(tmp_path / "results/sqmc_history.json", history)
+    records = json.loads((tmp_path / "results/sqmc_predictions.json").read_text())
+    records[0]["score_probabilities"][0]["probability"] = -1
+    write_json(tmp_path / "results/sqmc_predictions.json", records)
+    with pytest.raises(ValueError, match="probability"):
+        protocol.validate_run(tmp_path, cfg, methods=("sqmc",))
+
+
+def test_combine_allows_added_transport_hash_but_rejects_changed_science(tmp_path):
+    cfg = complete_run(tmp_path)
+    dataset = SimpleNamespace(metadata=json.loads((tmp_path / "results/dataset_metadata.json").read_text()))
+    transport_cfg = dict(cfg, source_bundle_sha256="b" * 64)
+    write_json(tmp_path / "results/comparison_config.json", transport_cfg)
+    comparison._check_partial("sqmc", tmp_path, cfg, dataset)
+    transport_cfg["n_epochs"] += 1
+    write_json(tmp_path / "results/comparison_config.json", transport_cfg)
+    with pytest.raises(ValueError, match="n_epochs"):
+        comparison._check_partial("sqmc", tmp_path, cfg, dataset)
+
+
 def edit_json(root, name, change):
     path = root / "results" / name
     value = json.loads(path.read_text())

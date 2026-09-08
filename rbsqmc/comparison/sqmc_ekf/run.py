@@ -17,6 +17,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import time
@@ -131,6 +132,7 @@ def compute_setup(config):
         "gpu_name_memory_MiB_driver": gpu,
         "nvidia_smi": nvidia_smi,
         "devices": devices,
+        "execution_backend": jax.default_backend(),
         "jax": jax.__version__,
         "jaxlib": jaxlib_version,
         "versions": {
@@ -141,13 +143,27 @@ def compute_setup(config):
     }
 
 
-def run(cfg, data_path, smoke=False, output_dir=None):
-    """Execute the full comparison and return a results dict.
+def run(cfg, data_path, smoke=False, output_dir=None, methods=("ekf", "sqmc")):
+    """Execute the comparison for the requested methods and return a results dict.
 
     When ``output_dir`` is given it is used as the exact run directory (no
     timestamp subdir is appended), so the Colab worker can point it at the VM
     run root and the ``results/``/``images/`` subfolders land directly there.
+
+    ``methods`` selects which methods to train/predict/evaluate. A single-method
+    run persists that method's artifacts (predictions, metrics, history, images)
+    but skips the combined report/plots/CSVs; use :func:`combine` to merge an
+    EKF run and an SQMC run into a complete comparison.
     """
+    # A stored ``smoke`` key in the config is authoritative so that a launcher
+    # writing the effective config to disk reproduces the same subset as the
+    # explicit --smoke CLI flag.
+    smoke = smoke or bool(cfg.get("smoke"))
+    requested = os.environ.get("RBSQMC_PLATFORM")
+    if requested in {"cpu", "cuda"}:
+        expected = "gpu" if requested == "cuda" else "cpu"
+        if jax.default_backend() != expected:
+            raise RuntimeError(f"Requested {expected} execution, got {jax.default_backend()}")
     dataset = data_mod_load_dataset(data_path, cfg, smoke=smoke)
     if output_dir:
         run_dir = output_dir
@@ -166,41 +182,40 @@ def run(cfg, data_path, smoke=False, output_dir=None):
     _save_json(os.path.join(results_dir, "run_config.json"), compute_setup(cfg))
     _save_json(os.path.join(results_dir, "dataset_metadata.json"), dataset.metadata)
 
-    methods = train.Methods(dataset, cfg)
+    methods_obj = train.Methods(dataset, cfg)
     root = jax.random.PRNGKey(cfg["seed"])
 
     results = {"cfg": cfg}
-    results["ekf"] = _run_method("ekf", methods, dataset, cfg, root, results_dir, images_dir)
-    results["sqmc"] = _run_method("sqmc", methods, dataset, cfg, root, results_dir, images_dir)
+    for name in methods:
+        results[name] = _run_method(name, methods_obj, dataset, cfg, root, results_dir, images_dir)
+        # Persist per-method artifacts so a partial run can be combined later.
+        _save_json(os.path.join(results_dir, f"{name}_predictions.json"), results[name]["records"])
+        _save_json(os.path.join(results_dir, f"{name}_metrics.json"), _metrics_flat(results[name]["metrics"]))
+        _save_json(os.path.join(results_dir, f"{name}_history.json"), results[name]["history"])
+        results[name]["summary"]["prediction_sec"] = results[name]["prediction_sec"]
+        _save_json(os.path.join(results_dir, name, "summary.json"), results[name]["summary"])
+        plots_mod.plot_prediction(results[name]["records"], cfg["max_goals"],
+                                  os.path.join(images_dir, f"{name}_predictions"))
 
-    # Comparison plots + report.
+    if set(methods) == {"ekf", "sqmc"}:
+        _write_combined(results_dir, images_dir, dataset, results, cfg, run_dir)
+    else:
+        from rbsqmc.comparison.sqmc_ekf.scripts.sqmc_ekf_protocol import validate_run
+        validate_run(run_dir, cfg, methods=methods)
+        print(f"Partial comparison ({', '.join(methods)}) complete: {run_dir}", flush=True)
+    return results, run_dir
+
+
+def _write_combined(results_dir, images_dir, dataset, results, cfg, run_dir):
+    """Write the combined report, overlay plot, CSVs, metadata and validate."""
     plots_mod.plot_convergence(
         results["ekf"]["history"], results["sqmc"]["history"], images_dir
     )
-    plots_mod.plot_prediction(
-        results["ekf"]["records"], cfg["max_goals"],
-        os.path.join(images_dir, "ekf_predictions")
-    )
-    plots_mod.plot_prediction(
-        results["sqmc"]["records"], cfg["max_goals"],
-        os.path.join(images_dir, "sqmc_predictions")
-    )
     report_mod.write_report(results_dir, dataset, results)
-
-    # Store per-method record/metric artifacts.
-    for name in ("ekf", "sqmc"):
-        _save_json(os.path.join(results_dir, f"{name}_predictions.json"),
-                   results[name]["records"])
-        _save_json(os.path.join(results_dir, f"{name}_metrics.json"),
-                   _metrics_flat(results[name]["metrics"]))
     _save_json(os.path.join(results_dir, "summary.json"), {
         "ekf": results["ekf"]["summary"], "sqmc": results["sqmc"]["summary"]})
-
-    # Performance comparison tables.
     write_performance_metrics_csv(results_dir, results)
     write_logz_history_csv(results_dir, results)
-
-    # Reproducibility metadata: when the run finished and what it produced.
     _save_json(os.path.join(results_dir, "run_metadata.json"), {
         "completed_at_utc": datetime.utcnow().isoformat() + "Z",
         "run_id": os.path.basename(run_dir),
@@ -224,11 +239,103 @@ def run(cfg, data_path, smoke=False, output_dir=None):
             "images/ekf_post_worldcup_rankings.png", "images/sqmc_post_worldcup_rankings.png",
         ],
     })
-
     from rbsqmc.comparison.sqmc_ekf.scripts.validate_sqmc_ekf_outputs import validate_artifacts
     validate_artifacts(run_dir, cfg)
     print(f"Comparison complete: {run_dir}", flush=True)
-    return results, run_dir
+
+
+def _read_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def _unflatten_metrics(flat):
+    """Rebuild a Metrics object from its flattened ``{"all": ..., "worldcup": ...}`` dict."""
+    return eval_mod.Metrics(all=flat["all"], worldcup=flat["worldcup"])
+
+
+# Execution-specific fields that legitimately differ between a local EKF run
+# and a GPU SQMC run; every other field must match for a fair comparison.
+_EXECUTION_FIELDS = frozenset({
+    "gpu", "gpu_type", "colab_timeout", "setup_timeout", "transfer_timeout",
+    "session", "session_name", "run_id", "resolved_utc", "source_bundle_sha256",
+})
+
+
+def _check_partial(name, src, cfg, dataset):
+    """Verify a partial run's config and dataset match the combine request."""
+    src_results = Path(src) / "results"
+    partial_cfg = _read_json(src_results / "comparison_config.json")
+    differing = ((set(partial_cfg) ^ set(cfg)) - _EXECUTION_FIELDS) | {
+        k for k in set(partial_cfg) & set(cfg)
+        if partial_cfg[k] != cfg[k] and k not in _EXECUTION_FIELDS
+    }
+    if differing:
+        raise ValueError(f"{name} run config differs in scientific fields: {sorted(differing)}")
+    metadata = _read_json(src_results / "dataset_metadata.json")
+    for field in ("source_sha256", "train_count", "test_count", "prediction_count", "worldcup_count"):
+        if metadata.get(field) != dataset.metadata.get(field):
+            raise ValueError(f"{name} run used a different dataset ({field} mismatch)")
+    return metadata
+
+
+def combine(ekf_dir, sqmc_dir, output_dir, data_path, cfg, smoke=False):
+    """Merge a local EKF run and a GPU SQMC run into a complete comparison.
+
+    Reads each partial run's persisted per-method artifacts, copies both sets
+    of images, and writes the combined report/plots/CSVs/metadata, then
+    validates the merged run. Both partial runs must share the same scientific
+    configuration and the same frozen dataset.
+    """
+    dataset = data_mod_load_dataset(data_path, cfg, smoke=smoke)
+    results = {"cfg": cfg}
+    metadata = None
+    for name, src in (("ekf", ekf_dir), ("sqmc", sqmc_dir)):
+        partial_metadata = _check_partial(name, src, cfg, dataset)
+        if metadata is not None and partial_metadata != metadata:
+            raise ValueError("The two partial runs used different datasets")
+        metadata = partial_metadata
+        src = Path(src)
+        src_results = src / "results"
+        summary = _read_json(src_results / name / "summary.json")
+        results[name] = {
+            "history": _read_json(src_results / f"{name}_history.json"),
+            "summary": summary,
+            "records": _read_json(src_results / f"{name}_predictions.json"),
+            "metrics": _unflatten_metrics(_read_json(src_results / f"{name}_metrics.json")),
+            "prediction_sec": summary["prediction_sec"],
+        }
+    run_dir = Path(output_dir)
+    results_dir = run_dir / "results"
+    images_dir = run_dir / "images"
+    os.makedirs(results_dir, exist_ok=True)
+    os.makedirs(images_dir, exist_ok=True)
+    # Copy both partial runs' images (the overlay plot is regenerated below).
+    for src in (Path(ekf_dir), Path(sqmc_dir)):
+        for path in (src / "images").rglob("*"):
+            if path.is_file():
+                dest = images_dir / path.relative_to(src / "images")
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, dest)
+    # The validator reads each method's summary from results/<method>/; each
+    # partial run only contains its own method's summary.
+    for name, src in (("ekf", ekf_dir), ("sqmc", sqmc_dir)):
+        dest = results_dir / name / "summary.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(Path(src) / "results" / name / "summary.json", dest)
+    _save_json(results_dir / "comparison_config.json", cfg)
+    _save_json(results_dir / "run_config.json", compute_setup(cfg))
+    # Retain the actual training machines; the combined run itself runs on CPU.
+    for name, src in (("ekf", ekf_dir), ("sqmc", sqmc_dir)):
+        shutil.copyfile(Path(src) / "results" / "run_config.json",
+                        results_dir / name / "run_config.json")
+    _save_json(results_dir / "dataset_metadata.json", dataset.metadata)
+    # Re-persist the per-method artifacts at the combined run's top level.
+    for name in ("ekf", "sqmc"):
+        _save_json(results_dir / f"{name}_predictions.json", results[name]["records"])
+        _save_json(results_dir / f"{name}_metrics.json", _metrics_flat(results[name]["metrics"]))
+    _write_combined(results_dir, images_dir, dataset, results, cfg, run_dir)
+    return results, str(run_dir)
 
 
 def write_performance_metrics_csv(run_dir, results):
@@ -344,6 +451,10 @@ def main():
                         help="Use a smoke subset for a fast run.")
     parser.add_argument("--output-dir", default=None, type=str,
                         help="Optional explicit output directory.")
+    parser.add_argument("--methods", default="both", choices=["both", "ekf", "sqmc"],
+                        help="Which methods to run (default: both).")
+    parser.add_argument("--combine", nargs=2, metavar=("EKF_DIR", "SQMC_DIR"),
+                        help="Merge a local EKF run and a GPU SQMC run into a complete comparison.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -355,7 +466,21 @@ def main():
         cfg["n_reps"] = min(cfg.get("n_reps", 25), 2)
         cfg["n_particles"] = min(cfg.get("n_particles", 512), 64)
 
-    run(cfg, args.data, smoke=args.smoke, output_dir=args.output_dir)
+    if args.combine:
+        if args.methods != "both" or args.smoke:
+            parser.error("--combine cannot be combined with --methods or --smoke")
+        ekf_dir, sqmc_dir = args.combine
+        if not args.output_dir:
+            parser.error("--combine requires --output-dir")
+        # A stored ``smoke`` flag in the config is authoritative: partial runs
+        # trained on the smoke subset whenever their config recorded it, so the
+        # combine step must load the same subset regardless of this CLI flag.
+        combine(ekf_dir, sqmc_dir, args.output_dir, args.data, cfg,
+                smoke=bool(cfg.get("smoke")))
+        return
+
+    methods = ("ekf", "sqmc") if args.methods == "both" else (args.methods,)
+    run(cfg, args.data, smoke=args.smoke, output_dir=args.output_dir, methods=methods)
 
 
 if __name__ == "__main__":

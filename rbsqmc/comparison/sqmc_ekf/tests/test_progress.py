@@ -108,7 +108,7 @@ def test_poll_transport_failure_retries_but_never_completes_on_error(launcher, m
     else:
         launcher.wait_run()
         assert launcher.status["run"]["execution"] == "complete"
-    assert len(calls) == 3
+    assert len(calls) == (5 if persistent else 3)
     assert launcher.proxy_refresh_at == 0
 
 
@@ -160,3 +160,119 @@ def test_launcher_refreshes_before_expiry_using_cli_interpreter(local, launcher,
     launcher.call("download", "third")
     assert len(calls) == 5
     assert calls[3][0] == "/cli-env/bin/python3"
+
+
+@pytest.mark.parametrize("error", [TimeoutError("offline"), RuntimeError("missing snapshot"),
+                                  KeyboardInterrupt(), ValueError("bad archive")])
+def test_monitor_errors_leave_worker_and_remote_state_untouched(launcher, monkeypatch, error):
+    def provision(directory):
+        launcher.attempted = launcher.worker_dispatched = True
+        launcher.endpoint = "owned"
+        launcher.status["run"]["execution"] = "running"
+
+    def wait():
+        raise error
+
+    monkeypatch.setattr(launcher, "provision", provision)
+    monkeypatch.setattr(launcher, "wait_run", wait)
+    monkeypatch.setattr(launcher, "shutdown", lambda: pytest.fail("Stopped a background worker"))
+    monkeypatch.setattr(launcher, "recover", lambda: pytest.fail("Recovery on a disconnected monitor"))
+    assert launcher.launch() != 0
+    saved = protocol.read_json(launcher.output / "status.json")
+    assert saved["status"] == "detached"
+    assert saved["shutdown"] == "deferred"
+    assert saved["run"]["execution"] == "running"
+    assert "error" not in saved["run"]
+    assert "finished_utc" not in saved
+
+
+def test_resume_collects_without_dispatching_again(launcher, monkeypatch):
+    launcher.attempted = launcher.worker_dispatched = True
+    launcher.endpoint = "owned"
+    actions = []
+    monkeypatch.setattr(launcher, "reconnect", lambda: actions.append("reconnect"))
+    monkeypatch.setattr(launcher, "provision", lambda directory: pytest.fail("Reprovisioned"))
+    monkeypatch.setattr(launcher, "start_run", lambda: pytest.fail("Retrained"))
+    monkeypatch.setattr(launcher, "wait_run", lambda: actions.append("wait"))
+    monkeypatch.setattr(launcher, "download", lambda kind: actions.append(kind))
+
+    def stop():
+        actions.append("stop")
+        launcher.status["shutdown"] = "verified_stopped"
+
+    monkeypatch.setattr(launcher, "shutdown", stop)
+    assert launcher.launch(resume=True) == 0
+    assert actions == ["reconnect", "wait", "run", "root", "stop"]
+
+
+def test_hybrid_detach_and_resume_reuses_local_ekf(local, tmp_path, monkeypatch):
+    config = protocol.read_json(Path(protocol.__file__).parent.parent / "config/config.json")
+    config.update(run_id="test", session_name="test", source_commit="a" * 40)
+    actions = []
+    monkeypatch.setattr(local, "ensure_sobol_data", lambda: None)
+    monkeypatch.setattr(local, "_run_ekf_local", lambda *args: actions.append("ekf"))
+    monkeypatch.setattr(local, "command", lambda argv, **kwargs: actions.append("combine"))
+
+    def launch(self, *, resume=False):
+        assert self.methods == ("sqmc",)
+        if resume:
+            assert self.log_offset == 321
+            assert self.config["source_bundle_sha256"] == "b" * 64
+            actions.append("reconnect")
+            self.status["status"] = "complete"
+            return 0
+        actions.append("sqmc")
+        self.config["source_bundle_sha256"] = "b" * 64
+        self.endpoint = "owned"
+        self.worker_dispatched = self.attempted = True
+        self.log_offset = 321
+        self.status.update(status="detached", endpoint=self.endpoint,
+                           config_sha256=protocol.config_digest(self.config))
+        protocol.write_json(self.output / "comparison_config.json", self.config)
+        self.save()
+        return 1
+
+    monkeypatch.setattr(local.Launcher, "launch", launch)
+    assert local.run_hybrid(config, tmp_path) == 1
+    saved = protocol.read_json(tmp_path / "status.json")
+    assert saved["status"] == "detached"
+    assert saved["stages"] == {"ekf": "complete", "sqmc": "detached"}
+    assert "source_bundle_sha256" not in config
+    assert "finished_utc" not in saved
+    assert local._run_hybrid(config, tmp_path, resume=True) == 0
+    assert actions == ["ekf", "sqmc", "reconnect", "combine"]
+
+
+def test_resume_cli_never_resolves_new_configuration(local, tmp_path, monkeypatch):
+    protocol.write_json(tmp_path / "status.json", {"mode": "hybrid"})
+    protocol.write_json(tmp_path / "comparison_config.json", {"saved": True})
+    monkeypatch.setattr(local, "resolve", lambda *args: pytest.fail("Resolved a new run"))
+    monkeypatch.setattr(local, "validate_config", lambda cfg: None)
+    monkeypatch.setattr(local.shutil, "which", lambda name: "/colab")
+    monkeypatch.setattr(local, "_run_hybrid", lambda cfg, output, **kw: 0 if cfg == {"saved": True} and kw["resume"] else 1)
+    assert local.main(["--resume", str(tmp_path)]) == 0
+
+
+def test_ekf_subprocess_is_local_cpu(local, tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setenv("RBSQMC_PLATFORM", "cuda")
+    monkeypatch.setattr(local, "command", lambda argv, **kwargs: calls.append((argv, kwargs)))
+    local._run_ekf_local({}, tmp_path, tmp_path / "config.json", tmp_path / "data.csv")
+    argv, kwargs = calls[0]
+    assert argv[0] == sys.executable
+    assert argv[argv.index("--methods") + 1] == "ekf"
+    assert kwargs["env"]["RBSQMC_PLATFORM"] == "cpu"
+    assert kwargs["env"]["JAX_ENABLE_X64"] == "true"
+
+
+@pytest.mark.parametrize("methods,argument", [(("sqmc",), "sqmc"), (("ekf", "sqmc"), "both")])
+def test_remote_worker_method_argument_and_validation(local, tmp_path, monkeypatch, methods, argument):
+    gpu = importlib.import_module("run_sqmc_ekf_gpu")
+    shared = importlib.import_module("sqmc_ekf_protocol")
+    commands, validations = [], []
+    monkeypatch.setattr(gpu, "run", lambda argv, **kwargs: commands.append(argv))
+    monkeypatch.setattr(shared, "validate_run", lambda root, cfg, methods: validations.append(methods))
+    monkeypatch.setattr(shared, "make_archive", lambda *args: None)
+    gpu.run_comparison({"colab_timeout": 60}, tmp_path, methods)
+    assert commands[0][commands[0].index("--methods") + 1] == argument
+    assert validations == [methods]

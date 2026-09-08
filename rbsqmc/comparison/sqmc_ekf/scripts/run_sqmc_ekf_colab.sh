@@ -2,8 +2,15 @@
 # Activate the desired virtual environment first; colab is discovered on PATH.
 # Falls back to python3 when no venv is active (plain `python` may not exist).
 #
+# The real (default) comparison runs:
+#   1. EKF locally on CPU, then
+#   2. SQMC on a Colab GPU, then
+#   3. combines the two partials locally.
+#
 # Usage:
-#   run_sqmc_ekf_colab.sh [--config overrides.json]   # launch a new run
+#   run_sqmc_ekf_colab.sh [--config overrides.json]   # EKF local + SQMC GPU (real run)
+#   run_sqmc_ekf_colab.sh --smoke [--config overrides.json]  # same, small config
+#   run_sqmc_ekf_colab.sh --local [--smoke]   # everything on this machine's CPU (smoke only)
 #   run_sqmc_ekf_colab.sh --resume <output-dir>       # reconnect to a detached run
 #
 # The Colab session is preserved when local monitoring disconnects; reconnect

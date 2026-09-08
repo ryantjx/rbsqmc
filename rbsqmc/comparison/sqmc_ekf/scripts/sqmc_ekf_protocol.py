@@ -84,10 +84,12 @@ def validate_config(config):
         "gauss_hermite_degree", "gpu", "gpu_type", "colab_timeout",
         "setup_timeout", "transfer_timeout", "session", "repo_url",
         "repo_branch", "source_commit", "run_id", "session_name",
-        "resolved_utc", "source_bundle_sha256", "source_transport",
+        "resolved_utc", "source_bundle_sha256", "source_transport", "smoke",
     }
     if set(config) - allowed:
         raise ValueError(f"Unknown configuration fields: {set(config) - allowed}")
+    if "smoke" in config and type(config["smoke"]) is not bool:
+        raise ValueError("smoke must be a boolean")
     if config["gpu"] not in {"A100", "H100", "T4", "L4", "G4"}:
         raise ValueError("Unsupported GPU")
     for key in ("colab_timeout", "setup_timeout", "transfer_timeout"):
@@ -186,10 +188,15 @@ def unpack_verified(archive, checksum, destination, kind, config):
     return manifest
 
 
-def validate_run(root, config):
+def validate_run(root, config, methods=("ekf", "sqmc")):
     """Use the same content checks before archiving and after downloading."""
     if __package__:
-        from .validate_sqmc_ekf_outputs import validate_artifacts
+        from .validate_sqmc_ekf_outputs import validate_artifacts, validate_partial
     else:
-        from validate_sqmc_ekf_outputs import validate_artifacts
-    validate_artifacts(root, config)
+        from validate_sqmc_ekf_outputs import validate_artifacts, validate_partial
+    if set(methods) == {"ekf", "sqmc"}:
+        validate_artifacts(root, config)
+    elif len(methods) == 1 and methods[0] in {"ekf", "sqmc"}:
+        validate_partial(root, config, methods[0])
+    else:
+        raise ValueError("Invalid methods for artifact validation")

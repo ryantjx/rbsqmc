@@ -31,6 +31,7 @@ from sqmc_ekf_protocol import (REMOTE_REPO, ROOT_FILES, config_digest, digest,
 
 SCRIPTS = Path(__file__).resolve().parent
 REPO = SCRIPTS.parents[2]
+REPO_ROOT = REPO.parent  # repository root: contains the ``sqmc`` package and the frozen data
 
 
 class RemoteRunFailed(RuntimeError):
@@ -60,10 +61,10 @@ class Tee:
             self.write(line)
 
 
-def command(argv, timeout=600, quiet=False):
+def command(argv, timeout=600, quiet=False, cwd=None, env=None):
     if not quiet:
         print("+ " + shlex.join(map(str, argv)), flush=True)
-    child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    child = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, bufsize=1, start_new_session=True)
     expired = threading.Event()
 
@@ -74,8 +75,11 @@ def command(argv, timeout=600, quiet=False):
         except ProcessLookupError:
             pass
 
-    timer = threading.Timer(timeout, kill)
-    timer.start()
+    # A local comparison may legitimately run for hours; timeout=None disables
+    # the watchdog instead of relying on Timer's indefinite wait.
+    timer = threading.Timer(timeout, kill) if timeout else None
+    if timer:
+        timer.start()
     lines = []
     try:
         for line in child.stdout:
@@ -98,7 +102,8 @@ def command(argv, timeout=600, quiet=False):
         child.wait()
         raise
     finally:
-        timer.cancel()
+        if timer:
+            timer.cancel()
         child.stdout.close()
 
 
@@ -135,8 +140,9 @@ def session_map(text):
 
 
 class Launcher:
-    def __init__(self, config, output, *, run=command, sleep=time.sleep, stream_logs=True):
+    def __init__(self, config, output, *, run=command, sleep=time.sleep, stream_logs=True, methods=("ekf", "sqmc")):
         self.config, self.output, self.run, self.sleep = config, Path(output), run, sleep
+        self.methods = tuple(methods)
         self.colab = shutil.which("colab") or "colab"
         self.session = config["session_name"]
         self.remote = Path("/content/sqmc-ekf-" + config["run_id"])
@@ -149,10 +155,12 @@ class Launcher:
         self.status = {"status": "running", "run_id": config["run_id"], "source_commit": config["source_commit"],
                        "config_sha256": config_digest(config), "started_utc": now(),
                        "session": self.session, "shutdown": "pending", "secondary_errors": [],
+                       "methods": list(self.methods),
                        "run": {"execution": "pending", "download": "pending"}}
 
     def save(self):
-        self.status.update(log_offset=self.log_offset, worker_dispatched=self.worker_dispatched)
+        self.status.update(log_offset=self.log_offset, worker_dispatched=self.worker_dispatched,
+                           methods=list(self.methods))
         write_json(self.output / "status.json", self.status)
 
     @classmethod
@@ -168,6 +176,7 @@ class Launcher:
             raise ValueError("Saved run identity or configuration mismatch")
         instance = cls(config, output, **kwargs)
         instance.status = status
+        instance.methods = tuple(status.get("methods") or ("ekf", "sqmc"))
         instance.endpoint = status.get("endpoint")
         instance.log_offset = status.get("log_offset", 0)
         instance.attempted = instance.worker_dispatched = bool(status.get("worker_dispatched"))
@@ -239,8 +248,11 @@ class Launcher:
         self.execute(f"import subprocess, sys\nsubprocess.run([sys.executable, *{args!r}], check=True)\n", timeout=self.config["setup_timeout"])
 
     def worker_command(self, action):
-        return ["/usr/bin/python3", str(REMOTE_REPO / "rbsqmc/comparison/sqmc_ekf/scripts/run_sqmc_ekf_gpu.py"),
-                "--action", action, "--config", str(self.remote / "comparison_config.json")]
+        command = ["/usr/bin/python3", str(REMOTE_REPO / "rbsqmc/comparison/sqmc_ekf/scripts/run_sqmc_ekf_gpu.py"),
+                    "--action", action, "--config", str(self.remote / "comparison_config.json")]
+        if action == "run":
+            command += ["--methods", ",".join(self.methods)]
+        return command
 
     def start_run(self):
         args = self.worker_command("run")
@@ -339,7 +351,7 @@ class Launcher:
                         shutil.copyfile(verified / name, self.output / name)
             else:
                 if not partial:
-                    validate_run(verified, self.config)
+                    validate_run(verified, self.config, methods=self.methods)
                 shutil.copytree(verified / "results", self.output / "results", dirs_exist_ok=True)
                 shutil.copytree(verified / "images", self.output / "images", dirs_exist_ok=True)
                 shutil.copyfile(verified / "run_manifest.json", self.output / "run_manifest.json")
@@ -423,7 +435,7 @@ class Launcher:
                 if self.status.get("status") == "complete" and self.status["run"].get("download") == "complete":
                     # A previous monitor already collected the results; verify
                     # and reuse that completed copy without touching the session.
-                    validate_run(self.output, self.config)
+                    validate_run(self.output, self.config, methods=self.methods)
                     print("Run already complete and collected.", flush=True)
                     return 0
                 if self.status.get("shutdown") == "verified_stopped":
@@ -439,7 +451,7 @@ class Launcher:
             if self.status["run"]["download"] == "complete":
                 # A previous monitor may have finished results but disconnected
                 # while fetching metadata. Verify and reuse that completed copy.
-                validate_run(self.output, self.config)
+                validate_run(self.output, self.config, methods=self.methods)
             else:
                 self.download("run")
             self.download("root")
@@ -495,19 +507,224 @@ class Launcher:
         return code
 
 
+def ensure_sobol_data():
+    """Build the gitignored Sobol direction numbers from the tracked table.
+
+    The SQMC module loads this file at import time, so even the EKF stage
+    (which imports the SQMC filter for scoring) requires it to exist.
+    """
+    data = REPO_ROOT / "sqmc" / "qmc" / "_sobol_direction_numbers.npz"
+    if not data.exists():
+        command([sys.executable, "sqmc/qmc/_generate_sobol_data.py", "--verify-scipy"],
+                cwd=REPO_ROOT)
+
+
+def local_environment():
+    """Match the GPU worker's precision environment, pinned to CPU.
+
+    ``RBSQMC_PLATFORM=cpu`` makes the platform explicit: the model modules pin
+    ``jax_platforms`` from it, and leaving it unset would silently depend on
+    the default rather than the documented CPU execution.
+    """
+    return dict(os.environ, JAX_ENABLE_X64="true", RBSQMC_PLATFORM="cpu",
+                MPLBACKEND="Agg", PYTHONUNBUFFERED="1")
+
+
+def run_local(config, output, *, smoke=False, methods=("ekf", "sqmc")):
+    """Run the whole comparison on this machine (CPU only): EKF then SQMC then combine.
+
+    Intended for smoke/small runs. For the real comparison use
+    :func:`run_hybrid`, which runs SQMC on a Colab GPU. Each stage stores its
+    artifacts under ``output/<stage>`` and its progress in ``status.json``, so
+    a failed SQMC stage never discards completed EKF results; the stored
+    partials can be combined again with ``run.py --combine`` without retraining.
+    """
+    if not smoke and set(methods) == {"ekf", "sqmc"}:
+        print("Note: SQMC will run on CPU. For the real run use the default "
+              "mode (EKF local, SQMC on Colab GPU) or pass --smoke.", flush=True)
+    effective = dict(config)
+    if smoke:
+        effective.update(smoke=True, n_epochs=min(config["n_epochs"], 3),
+                         n_reps=min(config["n_reps"], 2),
+                         n_particles=min(config["n_particles"], 64))
+    config_path = output / "comparison_config.json"
+    write_json(config_path, effective)
+    module = "rbsqmc.comparison.sqmc_ekf.run"
+    data = REPO / "data" / "results.csv"
+    status = {"mode": "local-cpu", "run_id": config["run_id"], "status": "running",
+              "config_sha256": config_digest(effective), "started_utc": now(),
+              "methods": list(methods), "stages": {}}
+    write_json(output / "status.json", status)
+    code, stage = 0, None
+    try:
+        ensure_sobol_data()
+        environment = local_environment()
+        for method in methods:
+            stage = method
+            status["stages"][method] = "running"
+            write_json(output / "status.json", status)
+            command([sys.executable, "-u", "-m", module, "--config", str(config_path),
+                     "--data", str(data), "--methods", method,
+                     "--output-dir", str(output / method)],
+                    timeout=None, cwd=REPO_ROOT, env=environment)
+            status["stages"][method] = "complete"
+            write_json(output / "status.json", status)
+        if set(methods) == {"ekf", "sqmc"}:
+            stage = "combine"
+            status["stages"]["combine"] = "running"
+            write_json(output / "status.json", status)
+            command([sys.executable, "-u", "-m", module, "--config", str(config_path),
+                     "--data", str(data), "--combine", str(output / "ekf"),
+                     str(output / "sqmc"), "--output-dir", str(output / "combined")],
+                    timeout=None, cwd=REPO_ROOT, env=environment)
+            status["stages"]["combine"] = "complete"
+        status["status"] = "complete"
+    except BaseException as error:
+        code = 130 if isinstance(error, KeyboardInterrupt) else 1
+        status["status"] = "failed"
+        status["error"] = f"{type(error).__name__}: {error}"
+        if stage:
+            status["stages"][stage] = "failed"
+        traceback.print_exc()
+    finally:
+        status["finished_utc"] = now()
+        write_json(output / "status.json", status)
+    return code
+
+
+def run_hybrid(config, output, *, smoke=False, methods=("ekf", "sqmc"), stream_logs=True):
+    """The real comparison: EKF runs locally on CPU, SQMC runs on a Colab GPU.
+
+    Stages, in order:
+      1. EKF locally (fast; needs no GPU) -> ``output/ekf``
+      2. SQMC on a provisioned Colab GPU session -> ``output/sqmc``
+      3. Combine the two partials locally -> ``output/combined``
+
+    Progress (including Colab provisioning/download, which the Launcher drives)
+    is recorded in ``output/status.json``. Reconnect a lost monitoring session
+    with ``run_sqmc_ekf_colab.sh --resume <output>``.
+    """
+    if set(methods) < {"ekf", "sqmc"}:
+        raise ValueError("run_hybrid requires both methods")
+    return _run_hybrid(config, output, smoke=smoke, stream_logs=stream_logs)
+
+
+def _run_ekf_local(config, output, config_path, data):
+    """Run the EKF stage on this machine's CPU."""
+    command([sys.executable, "-u", "-m", "rbsqmc.comparison.sqmc_ekf.run",
+             "--config", str(config_path), "--data", str(data),
+             "--methods", "ekf", "--output-dir", str(output / "ekf")],
+            timeout=None, cwd=REPO_ROOT, env=local_environment())
+
+
+def _run_hybrid(config, output, *, smoke=False, resume=False, stream_logs=True):
+    """Drive EKF locally, SQMC on Colab GPU, then combine, with a shared status."""
+    effective = dict(config)
+    if smoke:
+        effective.update(smoke=True, n_epochs=min(config["n_epochs"], 3),
+                         n_reps=min(config["n_reps"], 2),
+                         n_particles=min(config["n_particles"], 64))
+    config_path = output / "comparison_config.json"
+    data = REPO / "data" / "results.csv"
+    module = "rbsqmc.comparison.sqmc_ekf.run"
+    if resume:
+        status = read_json(output / "status.json")
+        if status["config_sha256"] != config_digest(effective):
+            raise ValueError("Saved hybrid configuration mismatch")
+        if status["stages"].get("ekf") != "complete":
+            raise ValueError("No completed local EKF stage to resume from")
+        status.update(status="running", reconnected_utc=now())
+        status.pop("error", None)
+        status.pop("finished_utc", None)
+    else:
+        write_json(config_path, effective)
+        status = {"mode": "hybrid", "run_id": config["run_id"], "status": "running",
+                  "config_sha256": config_digest(effective), "started_utc": now(),
+                  "smoke": bool(smoke), "stages": {}}
+    write_json(output / "status.json", status)
+    code, stage = 0, None
+    try:
+        ensure_sobol_data()
+        # Stage 1: EKF locally on CPU.
+        if not resume:
+            stage = "ekf"
+            status["stages"]["ekf"] = "running"
+            write_json(output / "status.json", status)
+            _run_ekf_local(effective, output, config_path, data)
+            status["stages"]["ekf"] = "complete"
+            write_json(output / "status.json", status)
+
+        # Stage 2: SQMC on a Colab GPU, driven by the single-run Launcher.
+        stage = "sqmc"
+        status["stages"]["sqmc"] = "running"
+        write_json(output / "status.json", status)
+        (output / "sqmc").mkdir(parents=True, exist_ok=True)
+        # The child owns its transport metadata; preserve the parent's frozen
+        # configuration and completed EKF artifacts across reconnect attempts.
+        launcher = (Launcher.from_output(output / "sqmc", stream_logs=stream_logs) if resume
+                    else Launcher(dict(effective), output / "sqmc", stream_logs=stream_logs,
+                                  methods=("sqmc",)))
+        launch_code = launcher.launch(resume=resume)
+        if launch_code:
+            if launcher.status["status"] == "detached":
+                code = launch_code
+                status.update(status="detached", error=launcher.status.get("error"))
+                status["stages"]["sqmc"] = "detached"
+                print("Resume the comparison with: " + shlex.join([
+                    "bash", str(SCRIPTS / "run_sqmc_ekf_colab.sh"), "--resume", str(output)]), flush=True)
+                return code
+            raise RuntimeError(f"Colab SQMC stage returned exit code {launch_code}")
+        status["stages"]["sqmc"] = "complete"
+        write_json(output / "status.json", status)
+
+        # Stage 3: combine the EKF and SQMC partials locally.
+        stage = "combine"
+        status["stages"]["combine"] = "running"
+        write_json(output / "status.json", status)
+        command([sys.executable, "-u", "-m", module, "--config", str(config_path),
+                 "--data", str(data), "--combine", str(output / "ekf"),
+                 str(output / "sqmc"), "--output-dir", str(output / "combined")],
+                timeout=None, cwd=REPO_ROOT, env=local_environment())
+        status["stages"]["combine"] = "complete"
+        status["status"] = "complete"
+    except BaseException as error:
+        code = 130 if isinstance(error, KeyboardInterrupt) else 1
+        status["status"] = "failed"
+        status["error"] = f"{type(error).__name__}: {error}"
+        if stage:
+            status["stages"][stage] = "failed"
+        traceback.print_exc()
+    finally:
+        status["monitor_finished_utc"] = now()
+        if status["status"] != "detached":
+            status["finished_utc"] = now()
+        write_json(output / "status.json", status)
+    return code
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, help="JSON overrides merged into the full profile")
     parser.add_argument("--resume", type=Path, metavar="OUTPUT_DIR",
                         help="Reconnect to a previously detached run and collect its results")
+    parser.add_argument("--local", action="store_true",
+                        help="Run everything on this machine's CPU (for smoke/small runs); "
+                             "the default runs EKF locally and SQMC on a Colab GPU")
+    parser.add_argument("--smoke", action="store_true",
+                        help="Use a small smoke configuration")
+    parser.add_argument("--methods", default="ekf,sqmc",
+                        help="Methods for --local mode (default: ekf,sqmc)")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-stream-logs", action="store_true",
                         help="Do not mirror per-epoch progress from the remote log "
                              "(the full log is still downloaded at the end)")
     args = parser.parse_args(argv)
+    methods = tuple(m.strip() for m in args.methods.split(",") if m.strip())
+    if not methods or not set(methods) <= {"ekf", "sqmc"}:
+        parser.error("--methods must be a non-empty subset of {ekf, sqmc}")
     if args.resume:
-        if args.config or args.dry_run:
-            parser.error("--resume cannot be combined with --config or --dry-run")
+        if args.config or args.dry_run or args.local or args.smoke or args.methods != "ekf,sqmc":
+            parser.error("--resume uses the saved configuration; only --no-stream-logs may accompany it")
         output = Path(args.resume).resolve()
         if not (output / "status.json").is_file():
             raise FileNotFoundError(f"No saved run status at {output}")
@@ -516,7 +733,13 @@ def main(argv=None):
         with (output / "logs.txt").open("a", buffering=1) as log:
             with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
                 print(f"Resuming comparison output: {output}", flush=True)
+                if read_json(output / "status.json").get("mode") == "hybrid":
+                    config = read_json(output / "comparison_config.json")
+                    validate_config(config)
+                    return _run_hybrid(config, output, resume=True, stream_logs=not args.no_stream_logs)
                 return Launcher.from_output(output, stream_logs=not args.no_stream_logs).launch(resume=True)
+    if not args.local and methods != ("ekf", "sqmc"):
+        parser.error("The hybrid comparison requires both methods; --methods is for --local")
     config = resolve(args.config)
     output = SCRIPTS.parents[0] / "outputs" / config["run_id"]
     if output.exists():
@@ -524,20 +747,35 @@ def main(argv=None):
     if args.dry_run:
         print(json.dumps(config, indent=2))
         print(f"Output: {output}")
+        if args.local:
+            print("Local CPU methods: " + ", ".join(methods) + "; combine locally when both finish")
+            return 0
+        print("EKF: local CPU ->", output / "ekf")
+        print("RB-SQMC: Colab GPU, --methods sqmc ->", output / "sqmc")
+        print("Combine and validate locally ->", output / "combined")
         print("git bundle create <temporary source.bundle> refs/heads/" + config["repo_branch"])
         print("colab run --keep --gpu", config["gpu"], "--session", config["session_name"], "--timeout", config["setup_timeout"], "run_sqmc_ekf_gpu.py --action provision --config-json <effective JSON plus bundle SHA-256>")
         print("colab upload <source.bundle>; colab upload <bootstrap.py>; colab exec <setup pinned checkout>")
         print("colab exec --session", config["session_name"], "--file <start run worker>; poll; download and verify run.tar.gz + root.tar.gz")
         print("colab stop --session", config["session_name"], "; colab sessions (verify shutdown)")
         return 0
+    if args.local:
+        # Pure-CPU smoke/small run; the real run places SQMC on a Colab GPU.
+        if args.no_stream_logs:
+            parser.error("--local cannot be combined with --no-stream-logs")
+        output.mkdir(parents=True, exist_ok=False)
+        with (output / "logs.txt").open("w", buffering=1) as log:
+            with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
+                print(f"Local (CPU) comparison output: {output}", flush=True)
+                return run_local(config, output, smoke=args.smoke, methods=methods)
+    # Default real mode: EKF locally, SQMC on Colab GPU, then combine locally.
     if not shutil.which("colab"):
         raise RuntimeError("colab must be available on PATH; activate the local virtual environment")
     output.mkdir(parents=True, exist_ok=False)
     with (output / "logs.txt").open("w", buffering=1) as log:
         with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
-            write_json(output / "comparison_config.json", config)
             print(f"Comparison output: {output}", flush=True)
-            return Launcher(config, output, stream_logs=not args.no_stream_logs).launch()
+            return run_hybrid(config, output, smoke=args.smoke, stream_logs=not args.no_stream_logs)
 
 
 if __name__ == "__main__":

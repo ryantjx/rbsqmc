@@ -19,9 +19,30 @@ The factorial EKF model (from [cuthberto-carlos](https://github.com/state-space-
 The Colab launcher polls every 15 seconds, transferring status and only newly
 completed epoch/compilation lines filtered on the VM. Full logs arrive with the
 verified final artifacts (or during failure recovery). `--no-stream-logs` polls
-status only. Transport failures get up to three attempts; model failures still
+status only. Transport failures get up to five attempts; model failures still
 fail the run. The launcher refreshes the existing session's expiring proxy
 credentials through the installed Colab CLI's Python environment before expiry.
+
+The default shell command runs EKF on the local CPU, RB-SQMC on the Colab GPU,
+then combines and validates both outputs locally. Results are stored in
+`outputs/DDMMYYYY_HHMM/{ekf,sqmc,combined}/`; each method's hardware metadata is
+also retained under `combined/results/{ekf,sqmc}/run_config.json`.
+
+After worker dispatch, a monitoring failure or Ctrl+C leaves the Colab session
+untouched and records `detached`, preserving the last observed execution state.
+Reconnect with the parent output directory to collect SQMC and combine it with
+the completed EKF results, without retraining:
+
+```bash
+bash rbsqmc/comparison/sqmc_ekf/scripts/run_sqmc_ekf_colab.sh --resume rbsqmc/comparison/sqmc_ekf/outputs/DDMMYYYY_HHMM
+```
+
+The session is stopped after verified collection, or after a confirmed worker
+failure and successful diagnostic recovery. While detached, the worker's original
+timeout still applies; the VM remains assigned until collection or an explicit
+`colab stop --session <saved-session-name>`. Reconnection requires that Colab
+still retains the same runtime. `--local --smoke` exercises the pipeline on CPU;
+it does not verify GPU execution.
 
 ## Reference scripts
 
