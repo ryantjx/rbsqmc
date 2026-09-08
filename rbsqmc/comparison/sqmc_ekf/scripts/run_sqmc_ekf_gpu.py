@@ -116,6 +116,10 @@ def setup(config, root):
     if any(importlib.metadata.version(name) != version for name, version in protected.items()):
         raise RuntimeError("Preinstalled JAX/CUDA packages changed")
 
+    # The Sobol direction numbers are generated data (gitignored); build them
+    # from the tracked Joe--Kuo table so the SQMC module can import.
+    run([sys.executable, "sqmc/qmc/_generate_sobol_data.py", "--verify-scipy"])
+
     import jax
     import jaxlib
     jax.config.update("jax_enable_x64", True)
