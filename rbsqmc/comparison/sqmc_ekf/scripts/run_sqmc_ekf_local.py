@@ -26,7 +26,7 @@ import traceback
 import uuid
 
 from sqmc_ekf_protocol import (REMOTE_REPO, ROOT_FILES, config_digest, digest,
-                               now, read_json, unpack_verified, validate_config,
+                               now, read_json, unpack_verified, validate_config, validate_run,
                                write_json)
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -48,8 +48,9 @@ class Tee:
         self.log.flush()
 
 
-def command(argv, timeout=600):
-    print("+ " + shlex.join(map(str, argv)), flush=True)
+def command(argv, timeout=600, quiet=False):
+    if not quiet:
+        print("+ " + shlex.join(map(str, argv)), flush=True)
     child = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, bufsize=1, start_new_session=True)
     expired = threading.Event()
@@ -66,12 +67,18 @@ def command(argv, timeout=600):
     lines = []
     try:
         for line in child.stdout:
-            print(line, end="", flush=True)
+            if not quiet:
+                print(line, end="", flush=True)
             lines.append(line)
         code = child.wait()
         if expired.is_set():
             raise TimeoutError(f"Local command exceeded {timeout}s: {argv[0:2]}")
         if code:
+            # A failing command is never quiet: surface what went wrong.
+            if quiet:
+                print("+ " + shlex.join(map(str, argv)), flush=True)
+                sys.stdout.writelines(lines)
+                sys.stdout.flush()
             raise subprocess.CalledProcessError(code, argv)
         return "".join(lines)
     except BaseException:
@@ -135,8 +142,8 @@ class Launcher:
     def save(self):
         write_json(self.output / "status.json", self.status)
 
-    def call(self, *args, timeout=None):
-        return self.run([self.colab, *map(str, args)], timeout=timeout or self.config["transfer_timeout"])
+    def call(self, *args, timeout=None, quiet=True):
+        return self.run([self.colab, *map(str, args)], timeout=timeout or self.config["transfer_timeout"], quiet=quiet)
 
     def sessions(self):
         return session_map(self.call("sessions"))
@@ -213,10 +220,13 @@ class Launcher:
         raise TimeoutError("Run worker did not finish and archive within its deadline")
 
     def download(self, kind, *, partial=False):
-        if self.status["run"]["download"] == "complete":
-            raise RuntimeError("Refusing to overwrite a complete download")
-        self.status["run"]["download"] = "downloading"
-        self.save()
+        # Root metadata is refreshed after results arrive. Its lifecycle must
+        # not reset or reject the completed results download.
+        if kind == "run":
+            if self.status["run"]["download"] == "complete":
+                raise RuntimeError("Refusing to overwrite a complete download")
+            self.status["run"]["download"] = "downloading"
+            self.save()
         with tempfile.TemporaryDirectory(prefix="sqmc-download-") as temp:
             temp = Path(temp)
             archive, checksum = temp / f"{kind}.tar.gz", temp / f"{kind}.tar.gz.sha256"
@@ -235,8 +245,8 @@ class Launcher:
                     if (verified / name).exists():
                         shutil.copyfile(verified / name, self.output / name)
             else:
-                if self.status["run"]["download"] == "complete":
-                    raise RuntimeError("Refusing to overwrite a complete download")
+                if not partial:
+                    validate_run(verified, self.config)
                 shutil.copytree(verified / "results", self.output / "results", dirs_exist_ok=True)
                 shutil.copytree(verified / "images", self.output / "images", dirs_exist_ok=True)
                 shutil.copyfile(verified / "run_manifest.json", self.output / "run_manifest.json")
@@ -278,6 +288,8 @@ class Launcher:
         code = 0
         source_temp = tempfile.TemporaryDirectory(prefix="sqmc-source-")
         try:
+            print(f"[1/6] Verifying source commit {self.config['source_commit'][:12]} "
+                  f"is pushed to {self.config['repo_branch']}...", flush=True)
             available = self.sessions()
             if self.session in available:
                 raise RuntimeError("Session name already exists; refusing to reuse it")
@@ -286,6 +298,8 @@ class Launcher:
                 raise RuntimeError("Push the exact source commit to repo_branch before provisioning")
             bundle = self.prepare_source(source_temp.name)
             self.attempted = True
+            print(f"[2/6] Provisioning {self.config['gpu']} session "
+                  f"'{self.session}'...", flush=True)
             self.call("run", "--keep", "--gpu", self.config["gpu"], "--session", self.session,
                       "--timeout", self.config["setup_timeout"], SCRIPTS / "run_sqmc_ekf_gpu.py",
                       "--action", "provision", "--config-json", json.dumps(self.config),
@@ -294,15 +308,21 @@ class Launcher:
             if not self.endpoint:
                 raise RuntimeError("Provisioned session missing from server session list")
             self.status["endpoint"] = self.endpoint
+            print("[3/6] Uploading source bundle and pinning the checkout "
+                  "(installs deps, asserts GPU)...", flush=True)
             self.setup_from_bundle(bundle)
+            print("[4/6] Verifying remote metadata...", flush=True)
             self.download("root")
             self.status["run"].update(execution="running", started_utc=now())
             self.save()
+            print("[5/6] Running the comparison (this is the long step; "
+                  "use --stream-logs to mirror the remote log live)...", flush=True)
             self.start_run()
             self.wait_run()
             # One final fetch so the local transcript ends with the run's
             # closing output, without re-downloading the log on every poll.
             self.secondary("Remote log download", self.stream_log)
+            print("[6/6] Downloading and verifying run artifacts...", flush=True)
             self.download("run")
             self.download("root")
             self.status["status"] = "complete"

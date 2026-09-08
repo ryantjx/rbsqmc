@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 import jax
+import numpy as np
 
 from rbsqmc.src.data.data_ekf import load_dataset as data_mod_load_dataset
 from rbsqmc.comparison.sqmc_ekf.scripts import evaluate as eval_mod
@@ -224,6 +225,8 @@ def run(cfg, data_path, smoke=False, output_dir=None):
         ],
     })
 
+    from rbsqmc.comparison.sqmc_ekf.scripts.validate_sqmc_ekf_outputs import validate_artifacts
+    validate_artifacts(run_dir, cfg)
     print(f"Comparison complete: {run_dir}", flush=True)
     return results, run_dir
 
@@ -324,6 +327,10 @@ def _ekf_states(dataset, params, num_teams):
     mean, cov = ekf.synchronized_moments(
         dataset.inputs, history, params, num_teams
     )
+    # synchronized_moments returns post-match states only. Restore the prior
+    # so both methods' index i means "before match i", including the WC split.
+    mean = np.concatenate([np.asarray(history["mean"][:1]), np.asarray(mean)])
+    cov = np.concatenate([np.asarray(history["cov"][:1]), np.asarray(cov)])
     return plots_mod.MeanFilterStates(mean, cov), None
 
 

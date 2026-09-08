@@ -75,7 +75,7 @@ Both models share the **same statistical core**: an OU state-space model with a 
   "training_start_date": "1980-01-01",
   "test_start_date": "2024-01-01",
   "prediction_start_date": "2026-06-11",
-  "n_particles": 512,
+  "n_particles": 256,
   "max_goals": 8,
   "seed": 0,
   "n_epochs": 100,

@@ -164,17 +164,9 @@ def unpack_verified(archive, checksum, destination, kind, config):
 
 
 def validate_run(root, config):
-    """Check the run bundle has the expected results/images artifacts."""
-    root = Path(root)
-    for d in RUN_DIRS:
-        if not (root / d).is_dir():
-            raise ValueError(f"Missing run subfolder: {d}")
-    for name in ("results/summary.json", "results/performance_metrics.csv",
-                 "results/logz_history.csv", "results/REPORT.md", "results/DRAFT.md"):
-        if not (root / name).is_file():
-            raise ValueError(f"Missing run artifact: {name}")
-    for method in ("ekf", "sqmc"):
-        for suffix in ("top5_strengths.png", "timeseries_states.png",
-                       "pre_worldcup_rankings.png", "post_worldcup_rankings.png"):
-            if not (root / "images" / f"{method}_{suffix}").is_file():
-                raise ValueError(f"Missing image: {method}_{suffix}")
+    """Use the same content checks before archiving and after downloading."""
+    if __package__:
+        from .validate_sqmc_ekf_outputs import validate_artifacts
+    else:
+        from validate_sqmc_ekf_outputs import validate_artifacts
+    validate_artifacts(root, config)
