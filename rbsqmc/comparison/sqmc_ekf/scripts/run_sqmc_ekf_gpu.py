@@ -44,6 +44,10 @@ class Tee:
         self.stream.flush()
         self.log.flush()
 
+    def writelines(self, lines):
+        for line in lines:
+            self.write(line)
+
 
 def run(command, *, timeout=None, process_log=None):
     print("Running: " + repr(command), flush=True)

@@ -41,6 +41,29 @@ def read_json(path):
     return json.loads(Path(path).read_text())
 
 
+def progress_snapshot(root, offset=0, stream_logs=True):
+    """Read on the VM; return status and only newly appended progress lines."""
+    root = Path(root)
+    state = read_json(root / "remote_status.json")["run"]
+    lines = []
+    if stream_logs:
+        pattern = re.compile(r"^(?:ekf|sqmc)(?:: compiled in| epoch \d+/\d+:)|^Comparison complete")
+        with (root / "remote_logs.txt").open("rb") as log:
+            if offset < 0 or offset > log.seek(0, 2):
+                raise ValueError("Remote log shrank or progress offset is invalid")
+            log.seek(offset)
+            # Leave an unfinished line for the next poll, including a UTF-8
+            # character split across writes. Never advance past unseen bytes.
+            for raw in log:
+                if not raw.endswith(b"\n"):
+                    break
+                offset += len(raw)
+                line = raw.decode("utf-8", errors="replace")
+                if pattern.search(line):
+                    lines.append(line)
+    return {"run": state, "offset": offset, "lines": lines}
+
+
 def digest(path):
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()

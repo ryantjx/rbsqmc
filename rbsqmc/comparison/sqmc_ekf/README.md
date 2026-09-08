@@ -16,6 +16,13 @@ The factorial EKF model (from [cuthberto-carlos](https://github.com/state-space-
 4. **Evaluate** both models (see [Evaluation](#evaluation)).
 5. **Write the draft** based on the evaluation results.
 
+The Colab launcher polls every 15 seconds, transferring status and only newly
+completed epoch/compilation lines filtered on the VM. Full logs arrive with the
+verified final artifacts (or during failure recovery). `--no-stream-logs` polls
+status only. Transport failures get up to three attempts; model failures still
+fail the run. The launcher refreshes the existing session's expiring proxy
+credentials through the installed Colab CLI's Python environment before expiry.
+
 ## Reference scripts
 
 | Purpose | Script |

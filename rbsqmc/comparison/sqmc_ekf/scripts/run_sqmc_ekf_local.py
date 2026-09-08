@@ -33,6 +33,14 @@ SCRIPTS = Path(__file__).resolve().parent
 REPO = SCRIPTS.parents[2]
 
 
+class RemoteRunFailed(RuntimeError):
+    """The remote worker explicitly reported a terminal training failure."""
+
+
+class ReconnectFailed(RuntimeError):
+    """The saved Colab session is gone; the run cannot be reconnected."""
+
+
 class Tee:
     def __init__(self, stream, log):
         self.stream, self.log = stream, log
@@ -46,6 +54,10 @@ class Tee:
     def flush(self):
         self.stream.flush()
         self.log.flush()
+
+    def writelines(self, lines):
+        for line in lines:
+            self.write(line)
 
 
 def command(argv, timeout=600, quiet=False):
@@ -79,7 +91,7 @@ def command(argv, timeout=600, quiet=False):
                 print("+ " + shlex.join(map(str, argv)), flush=True)
                 sys.stdout.writelines(lines)
                 sys.stdout.flush()
-            raise subprocess.CalledProcessError(code, argv)
+            raise subprocess.CalledProcessError(code, argv, output="".join(lines))
         return "".join(lines)
     except BaseException:
         kill()
@@ -129,10 +141,10 @@ class Launcher:
         self.session = config["session_name"]
         self.remote = Path("/content/sqmc-ekf-" + config["run_id"])
         self.attempted = False
+        self.worker_dispatched = False
         self.endpoint = None
         self.log_offset = 0
-        # Streaming re-downloads the whole (growing) remote log on every poll;
-        # keep it opt-in so the default polling loop stays cheap.
+        self.proxy_refresh_at = 0
         self.stream_logs = stream_logs
         self.status = {"status": "running", "run_id": config["run_id"], "source_commit": config["source_commit"],
                        "config_sha256": config_digest(config), "started_utc": now(),
@@ -140,10 +152,62 @@ class Launcher:
                        "run": {"execution": "pending", "download": "pending"}}
 
     def save(self):
+        self.status.update(log_offset=self.log_offset, worker_dispatched=self.worker_dispatched)
         write_json(self.output / "status.json", self.status)
 
+    @classmethod
+    def from_output(cls, output, **kwargs):
+        """Restore identity and progress without resolving a new run/config."""
+        output = Path(output).resolve()
+        config = read_json(output / "comparison_config.json")
+        status = read_json(output / "status.json")
+        validate_config(config)
+        expected = {"run_id": config["run_id"], "session": config["session_name"],
+                    "source_commit": config["source_commit"], "config_sha256": config_digest(config)}
+        if any(status.get(key) != value for key, value in expected.items()):
+            raise ValueError("Saved run identity or configuration mismatch")
+        instance = cls(config, output, **kwargs)
+        instance.status = status
+        instance.endpoint = status.get("endpoint")
+        instance.log_offset = status.get("log_offset", 0)
+        instance.attempted = instance.worker_dispatched = bool(status.get("worker_dispatched"))
+        return instance
+
+    def reconnect(self):
+        if self.sessions().get(self.session) != self.endpoint:
+            raise ReconnectFailed("Saved Colab session is unavailable or its endpoint changed")
+        with tempfile.TemporaryDirectory(prefix="sqmc-reconnect-") as temp:
+            target = Path(temp) / "comparison_config.json"
+            self.call("download", "--session", self.session, self.remote / target.name, target)
+            if read_json(target) != self.config:
+                raise ValueError("Remote effective configuration mismatch")
+        self.status.update(status="running", shutdown="pending", reconnected_utc=now())
+        for key in ("error", "finished_utc", "detached_utc", "failure_kind"):
+            self.status.pop(key, None)
+        self.save()
+        print(f"Reconnected to {self.session}; continuing from saved progress.", flush=True)
+
     def call(self, *args, timeout=None, quiet=True):
+        if self.endpoint and args[0] in {"exec", "upload", "download"}:
+            self.refresh_proxy()
         return self.run([self.colab, *map(str, args)], timeout=timeout or self.config["transfer_timeout"], quiet=quiet)
+
+    def refresh_proxy(self):
+        if time.monotonic() < self.proxy_refresh_at:
+            return
+        # Use Colab's own Python environment: the launcher needs only stdlib,
+        # and the CLI may be installed in a separate uv/pipx environment.
+        with Path(self.colab).open() as entrypoint:
+            shebang = entrypoint.readline().strip()
+        if not shebang.startswith("#!") or "python" not in shebang:
+            raise RuntimeError("Expected a Python colab entrypoint for credential refresh")
+        response = self.run([*shlex.split(shebang[2:]), str(SCRIPTS / "refresh_colab_proxy.py"),
+                             self.session, self.endpoint],
+                            timeout=self.config["transfer_timeout"], quiet=True)
+        lifetime = json.loads(response)["expires_in_seconds"]
+        if not isinstance(lifetime, (int, float)) or not 0 < lifetime < float("inf"):
+            raise ValueError("Invalid Colab proxy credential lifetime")
+        self.proxy_refresh_at = time.monotonic() + min(1200, lifetime / 2)
 
     def sessions(self):
         return session_map(self.call("sessions"))
@@ -189,42 +253,61 @@ class Launcher:
         if not re.search(r"Started worker \d+", response):
             raise RuntimeError("Colab did not acknowledge starting the run worker")
 
-    def remote_json(self, name):
-        with tempfile.TemporaryDirectory(prefix="sqmc-status-") as temp:
-            target = Path(temp) / name
-            self.call("download", "--session", self.session, self.remote / name, target)
-            return read_json(target)
+    def poll_run(self):
+        # Filter on the VM and transfer only new complete progress lines plus
+        # status. A failed request leaves the byte offset unchanged for retry.
+        scripts = REMOTE_REPO / "rbsqmc/comparison/sqmc_ekf/scripts"
+        prefix = "SQMC_EKF_PROGRESS="
+        response = self.execute(
+            "import sys, json\n"
+            f"sys.path.insert(0, {str(scripts)!r})\n"
+            "from sqmc_ekf_protocol import progress_snapshot\n"
+            f"print({prefix!r} + json.dumps(progress_snapshot("
+            f"{str(self.remote)!r}, {self.log_offset}, {self.stream_logs!r})))\n"
+        )
+        packets = [line[len(prefix):] for line in response.splitlines() if line.startswith(prefix)]
+        if len(packets) != 1:
+            raise RuntimeError(f"Colab returned no unique progress snapshot: {response}")
+        packet = json.loads(packets[0])
+        state = packet["run"]
+        for line in packet["lines"]:
+            print(line, end="", flush=True)
+        self.log_offset = packet["offset"]
+        self.status["run"].update(state)
+        self.save()
+        return state
 
-    # Remote-log lines worth showing during the run: per-epoch training
-    # progress, compilation, and any failure. Everything else (git/pip/setup
-    # chatter) is captured to the local log file but not echoed.
-    PROGRESS_PATTERN = re.compile(
-        r"compiled in|epoch \d+/\d+:|Comparison complete|Traceback|Error|error:"
-    )
-
-    def stream_log(self):
+    def download_log(self):
+        # Full diagnostics are fetched once on failure; successful runs carry
+        # them in the verified root archive instead of each progress poll.
         with tempfile.TemporaryDirectory(prefix="sqmc-log-") as temp:
             target = Path(temp) / "remote_logs.txt"
             self.call("download", "--session", self.session, self.remote / "remote_logs.txt", target)
-            data = target.read_bytes()
-            fresh = data[self.log_offset:].decode(errors="replace")
-            for line in fresh.splitlines(keepends=True):
-                if self.PROGRESS_PATTERN.search(line):
-                    print(line, end="", flush=True)
-            self.log_offset = len(data)
-            (self.output / "remote_logs.txt").write_bytes(data)
+            shutil.copyfile(target, self.output / "remote_logs.txt")
 
     def wait_run(self):
-        deadline = time.monotonic() + self.config["colab_timeout"] + self.config["transfer_timeout"]
+        # The worker enforces its own colab_timeout; the monitor polls until the
+        # worker reports archive_ready (or the session disappears), with a buffer
+        # so a slow final archive/transfer is not mistaken for a dead run.
+        deadline = time.monotonic() + self.config["colab_timeout"] + 2 * self.config["transfer_timeout"]
+        failures = 0
         while time.monotonic() < deadline:
-            state = self.remote_json("remote_status.json")["run"]
-            if self.stream_logs:
-                self.stream_log()
+            try:
+                state = self.poll_run()
+            except (subprocess.CalledProcessError, TimeoutError) as error:
+                failures += 1
+                self.proxy_refresh_at = 0  # force credential refresh on the next call
+                if failures >= 5:
+                    raise
+                print(f"Progress poll failed ({failures}/5); retrying in 15s: {error}", flush=True)
+                self.sleep(15)
+                continue
+            failures = 0
             if state.get("archive_ready"):
                 self.status["run"].update(state)
                 self.save()
                 if state["execution"] != "complete":
-                    raise RuntimeError(f"run: {state.get('error', state['execution'])}")
+                    raise RemoteRunFailed(f"run: {state.get('error', state['execution'])}")
                 return
             self.sleep(15)
         raise TimeoutError("Run worker did not finish and archive within its deadline")
@@ -267,16 +350,18 @@ class Launcher:
     def secondary(self, label, action):
         try:
             action()
+            return True
         except Exception as error:
             message = f"{label}: {type(error).__name__}: {error}"
             print(message, flush=True)
             self.status["secondary_errors"].append(message)
             self.save()
+            return False
 
     def recover(self):
-        self.secondary("Root metadata download", lambda: self.download("root", partial=True))
-        if self.stream_logs:
-            self.secondary("Remote log download", self.stream_log)
+        metadata = self.secondary("Root metadata download", lambda: self.download("root", partial=True))
+        logs = self.secondary("Remote log download", self.download_log)
+        return metadata and logs
 
     def shutdown(self):
         sessions = self.sessions()
@@ -293,86 +378,145 @@ class Launcher:
         self.status["shutdown_utc"] = now()
         self.save()
 
-    def launch(self):
+    def provision(self, source_directory):
+        print(f"[1/6] Verifying source commit {self.config['source_commit'][:12]} "
+              f"is pushed to {self.config['repo_branch']}...", flush=True)
+        available = self.sessions()
+        if self.session in available:
+            raise RuntimeError("Session name already exists; refusing to reuse it")
+        remote_ref = self.run(["git", "ls-remote", self.config["repo_url"], "refs/heads/" + self.config["repo_branch"]], timeout=60)
+        if not remote_ref.split() or remote_ref.split()[0] != self.config["source_commit"]:
+            raise RuntimeError("Push the exact source commit to repo_branch before provisioning")
+        bundle = self.prepare_source(source_directory)
+        self.attempted = True
+        print(f"[2/6] Provisioning {self.config['gpu']} session "
+              f"'{self.session}'...", flush=True)
+        self.call("run", "--keep", "--gpu", self.config["gpu"], "--session", self.session,
+                  "--timeout", self.config["setup_timeout"], SCRIPTS / "run_sqmc_ekf_gpu.py",
+                  "--action", "provision", "--config-json", json.dumps(self.config),
+                  timeout=self.config["setup_timeout"] + 120)
+        self.endpoint = self.sessions().get(self.session)
+        if not self.endpoint:
+            raise RuntimeError("Provisioned session missing from server session list")
+        self.status["endpoint"] = self.endpoint
+        print("[3/6] Uploading source bundle and pinning the checkout "
+              "(installs deps, asserts GPU)...", flush=True)
+        self.setup_from_bundle(bundle)
+        print("[4/6] Verifying remote metadata...", flush=True)
+        self.download("root")
+        self.status["run"].update(execution="running", started_utc=now())
+        self.save()
+        print("[5/6] Running the comparison (per-epoch progress is mirrored "
+              "below; use --no-stream-logs to silence it)...", flush=True)
+        # Persist dispatch intent before the RPC: the worker may start even
+        # if its acknowledgement is lost. Reconnection must never start it twice.
+        self.worker_dispatched = True
+        self.save()
+        self.start_run()
+
+    def launch(self, *, resume=False):
         self.save()
         code = 0
-        source_temp = tempfile.TemporaryDirectory(prefix="sqmc-source-")
+        stop_session = False
         try:
-            print(f"[1/6] Verifying source commit {self.config['source_commit'][:12]} "
-                  f"is pushed to {self.config['repo_branch']}...", flush=True)
-            available = self.sessions()
-            if self.session in available:
-                raise RuntimeError("Session name already exists; refusing to reuse it")
-            remote_ref = self.run(["git", "ls-remote", self.config["repo_url"], "refs/heads/" + self.config["repo_branch"]], timeout=60)
-            if not remote_ref.split() or remote_ref.split()[0] != self.config["source_commit"]:
-                raise RuntimeError("Push the exact source commit to repo_branch before provisioning")
-            bundle = self.prepare_source(source_temp.name)
-            self.attempted = True
-            print(f"[2/6] Provisioning {self.config['gpu']} session "
-                  f"'{self.session}'...", flush=True)
-            self.call("run", "--keep", "--gpu", self.config["gpu"], "--session", self.session,
-                      "--timeout", self.config["setup_timeout"], SCRIPTS / "run_sqmc_ekf_gpu.py",
-                      "--action", "provision", "--config-json", json.dumps(self.config),
-                      timeout=self.config["setup_timeout"] + 120)
-            self.endpoint = self.sessions().get(self.session)
-            if not self.endpoint:
-                raise RuntimeError("Provisioned session missing from server session list")
-            self.status["endpoint"] = self.endpoint
-            print("[3/6] Uploading source bundle and pinning the checkout "
-                  "(installs deps, asserts GPU)...", flush=True)
-            self.setup_from_bundle(bundle)
-            print("[4/6] Verifying remote metadata...", flush=True)
-            self.download("root")
-            self.status["run"].update(execution="running", started_utc=now())
-            self.save()
-            print("[5/6] Running the comparison (per-epoch progress is mirrored "
-                  "below; use --no-stream-logs to silence it)...", flush=True)
-            self.start_run()
+            if resume:
+                if self.status.get("status") == "complete" and self.status["run"].get("download") == "complete":
+                    # A previous monitor already collected the results; verify
+                    # and reuse that completed copy without touching the session.
+                    validate_run(self.output, self.config)
+                    print("Run already complete and collected.", flush=True)
+                    return 0
+                if self.status.get("shutdown") == "verified_stopped":
+                    raise ValueError("The saved session was stopped; its worker cannot be reconnected")
+                if not self.worker_dispatched or not self.endpoint:
+                    raise ValueError("No saved worker dispatch and endpoint to reconnect")
+                self.reconnect()
+            else:
+                with tempfile.TemporaryDirectory(prefix="sqmc-source-") as directory:
+                    self.provision(directory)
             self.wait_run()
-            # One final fetch so the local transcript ends with the run's
-            # closing output, without re-downloading the log on every poll.
-            self.secondary("Remote log download", self.stream_log)
             print("[6/6] Downloading and verifying run artifacts...", flush=True)
-            self.download("run")
+            if self.status["run"]["download"] == "complete":
+                # A previous monitor may have finished results but disconnected
+                # while fetching metadata. Verify and reuse that completed copy.
+                validate_run(self.output, self.config)
+            else:
+                self.download("run")
             self.download("root")
             self.status["status"] = "complete"
+            stop_session = True
         except BaseException as error:
             code = 130 if isinstance(error, KeyboardInterrupt) else getattr(error, "returncode", 1)
             code = code if isinstance(code, int) and 1 <= code <= 255 else 1
-            self.status.update(status="failed", error=f"{type(error).__name__}: {error}", exit_code=code)
-            if self.status["run"]["execution"] == "running":
-                self.status["run"]["execution"] = "failed"
-            self.status["run"]["error"] = self.status["error"]
+            self.status.update(error=f"{type(error).__name__}: {error}", exit_code=code)
             traceback.print_exc()
-            self.save()
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-            signal.signal(signal.SIGTERM, signal.SIG_IGN)
-            if self.attempted:
-                self.recover()
+            if self.worker_dispatched:
+                if isinstance(error, ReconnectFailed):
+                    # The saved session is gone; there is nothing to preserve or
+                    # reconnect to. Mark the run failed and stop.
+                    self.status.update(status="failed", failure_kind="monitoring",
+                                       shutdown="failed", finished_utc=now())
+                    self.save()
+                else:
+                    # A monitoring/transport failure says nothing about whether
+                    # training failed. Preserve the last remote execution state
+                    # and leave the session running so it can be reconnected.
+                    self.status.update(status="detached", shutdown="deferred",
+                                       detached_utc=now(), failure_kind="monitoring")
+                    if isinstance(error, RemoteRunFailed):
+                        self.status.update(status="failed", failure_kind="training")
+                        stop_session = self.recover()
+                    self.save()
+                    if not stop_session:
+                        script = SCRIPTS / "run_sqmc_ekf_colab.sh"
+                        print("Local monitoring ended; the Colab session was left untouched.\n"
+                              "Reconnect with: " + shlex.join([str(script), "--resume", str(self.output)]),
+                              flush=True)
+            else:
+                self.status.update(status="failed", failure_kind="local")
+                if self.attempted:
+                    self.recover()
+                stop_session = self.attempted
         finally:
-            if self.attempted:
+            if stop_session:
                 self.secondary("Shutdown", self.shutdown)
                 if self.status["shutdown"] != "verified_stopped":
                     self.status["shutdown"] = "failed"
                     if code == 0:
                         code = 1
-                        self.status.update(status="failed", error="Shutdown verification failed")
-            else:
+                        self.status.update(status="detached", error="Shutdown verification failed")
+            elif not self.attempted:
                 self.status["shutdown"] = "not_provisioned"
-            self.status.update(finished_utc=now(), exit_code=code)
+            # This timestamp ends the local monitoring attempt, not the worker.
+            self.status.update(monitor_finished_utc=now(), exit_code=code)
+            if stop_session or not self.worker_dispatched:
+                self.status["finished_utc"] = now()
             self.save()
-            source_temp.cleanup()
         return code
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, help="JSON overrides merged into the full profile")
+    parser.add_argument("--resume", type=Path, metavar="OUTPUT_DIR",
+                        help="Reconnect to a previously detached run and collect its results")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-stream-logs", action="store_true",
                         help="Do not mirror per-epoch progress from the remote log "
                              "(the full log is still downloaded at the end)")
     args = parser.parse_args(argv)
+    if args.resume:
+        if args.config or args.dry_run:
+            parser.error("--resume cannot be combined with --config or --dry-run")
+        output = Path(args.resume).resolve()
+        if not (output / "status.json").is_file():
+            raise FileNotFoundError(f"No saved run status at {output}")
+        if not shutil.which("colab"):
+            raise RuntimeError("colab must be available on PATH; activate the local virtual environment")
+        with (output / "logs.txt").open("a", buffering=1) as log:
+            with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
+                print(f"Resuming comparison output: {output}", flush=True)
+                return Launcher.from_output(output, stream_logs=not args.no_stream_logs).launch(resume=True)
     config = resolve(args.config)
     output = SCRIPTS.parents[0] / "outputs" / config["run_id"]
     if output.exists():

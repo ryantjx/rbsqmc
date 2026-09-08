@@ -338,13 +338,14 @@ class HaltonTest(chex.TestCase):
 
 class SobolTest(chex.TestCase):
     def test_known_first_points(self):
-        # ``Sobol.sample`` drops the first point (the origin) by convention, so
-        # the first returned point is the second Sobol' point.
+        # ``Sobol.sample`` retains the origin by default (``start_index=0``),
+        # so the first returned point is the origin.
         actual = np.asarray(
             Sobol(d=2, scramble=False, dtype=jnp.float64).sample(8)
         )
         expected = np.array(
             [
+                [0.0, 0.0],
                 [0.5, 0.5],
                 [0.75, 0.25],
                 [0.25, 0.75],
@@ -352,7 +353,6 @@ class SobolTest(chex.TestCase):
                 [0.875, 0.875],
                 [0.625, 0.125],
                 [0.125, 0.625],
-                [0.1875, 0.3125],
             ],
             dtype=np.float64,
         )
@@ -365,10 +365,9 @@ class SobolTest(chex.TestCase):
         actual = np.asarray(
             Sobol(d=d, scramble=False, dtype=jnp.float64).sample(n)
         )
-        # scipy includes the origin; our implementation drops it, so compare
-        # against scipy's sequence with the first point removed.
-        scipy_points = qmc.Sobol(d=d, scramble=False, bits=_MAXBITS).random(n + 1)
-        expected = scipy_points[1:]
+        # scipy also retains the origin, so the sequences agree directly.
+        scipy_points = qmc.Sobol(d=d, scramble=False, bits=_MAXBITS).random(n)
+        expected = scipy_points
         chex.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
 
     @parameterized.product(scramble=[False, True])
@@ -492,12 +491,11 @@ class SobolTest(chex.TestCase):
             dtype=jnp.float64,
         )
 
-        # ``Sobol.sample`` drops the origin, so the first returned point is
-        # index 1: the first direction integer XOR the digital shift.
+        # ``Sobol.sample`` retains the origin, so the first returned point is
+        # index 0: the digital shift alone (no direction integer).
         actual = np.asarray(engine.sample(1)[0])
-        first_direction = engine._direction_integers[:, 0]
         expected = (
-            np.asarray(first_direction ^ engine._digital_shift, dtype=np.float64)
+            np.asarray(engine._digital_shift, dtype=np.float64)
             * 2.0 ** -_MAXBITS
         )
         chex.assert_trees_all_close(actual, expected, rtol=0.0, atol=0.0)
@@ -567,8 +565,8 @@ class SobolTest(chex.TestCase):
             ).sample(24)
         )
         chex.assert_trees_all_close(chunked, whole, rtol=0.0, atol=0.0)
-        # Sobol drops the origin, so 24 points end at exclusive index 25.
-        self.assertEqual(int(final_state.next_index), 25)
+        # Sobol retains the origin, so 24 points end at exclusive index 24.
+        self.assertEqual(int(final_state.next_index), 24)
 
     @parameterized.product(scramble=[False, True])
     def test_explicit_state_is_reproducible(self, scramble):

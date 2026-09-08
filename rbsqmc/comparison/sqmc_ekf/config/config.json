@@ -7,7 +7,7 @@
   "seed": 0,
   "n_epochs": 50,
   "learning_rate": 0.02,
-  "n_reps": 25,
+  "n_reps": 15,
   "include_friendly": true,
   "teams": "worldcup2026",
   "match_scale": 1,

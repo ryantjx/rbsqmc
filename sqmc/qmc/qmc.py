@@ -364,7 +364,7 @@ class Sobol(QMC):
         scramble: bool = False,
         key: jax.Array = jax.random.PRNGKey(0),
         dtype: jnp.dtype = jnp.float64,
-        start_index: int = 1
+        start_index: int = 0
     ):
         max_dimension = _DIRECTION_INTEGERS.shape[0]
 
@@ -481,8 +481,8 @@ class Sobol(QMC):
         """Return the current sampling state for the eager path.
 
         The first generated index is ``start_index + _num_generated``. The
-        default ``start_index=1`` drops the origin for backward compatibility;
-        balanced-net experiments should use ``start_index=0``.
+        default ``start_index=0`` retains the origin, matching the balanced-net
+        convention used throughout the SQMC experiments.
         """
         return QMCState(
             next_index=jnp.asarray(

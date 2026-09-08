@@ -92,15 +92,21 @@ so that the transition density need not be evaluated when computing the weights.
 
 QMC (Quasi-Monte Carlo) is an alternative to Monte Carlo (MC) methods for approximating integrals. The idea is to replace Monte Carlo random samples with a low-discrepancy point set $\{\mathbf{u}^n\}_{n=1}^N \subset [0,1)^d$ to estimate our integral of interest,
 
+% \begin{equation}
+%     \mathbb{E}\left[\frac{1}{N}\sum_{n=1}^N f(\mathbf{u}_t^n)\right] \approx \frac{1}{N} \sum_{n=1}^N (\mathbf{u}_t^n) \nonumber
+% \end{equation}
+
 \begin{equation}
-    \mathbb{E}\left[\frac{1}{N}\sum_{n=1}^N f(\mathbf{u}_t^n)\right] \approx \frac{1}{N} \sum_{n=1}^N (\mathbf{u}_t^n) \nonumber
+    \mathbb{E}[f(U)] = \int_{[0,1)^d} f(\mathbf{u}) \, d\mathbf{u}
+    \approx \frac{1}{N} \sum_{n=1}^N f(\mathbf{u}^n),
+    \qquad U \sim \mathcal{U}[0,1)^d \nonumber
 \end{equation}
 
-where $\mathbf{u}^n$ is a vector with low-discrepancy. Informally, $\mathbf{u}^n$ is spread more evenly over the unit cube than random points. This means that we are able to cover the entire support of a function with lesser values, obtaining a better estimate. The quality of a point set is quantified by its \emph{discrepancy}, a measure of how far its empirical distribution departs from uniformity \citep{niederreiter1992qmc}. The relevance of discrepancy to integration is given by the Koksma--Hlawka inequality, which bounds the integration error by the product of the variation of the integrand and the discrepancy of the point set,
+where $\mathbf{u}^n$ is a vector with low-discrepancy. Informally, $\mathbf{u}^n$ is spread more evenly over the unit cube than random points. This means that we are able to cover the entire support of a function with lesser values, obtaining a better estimate for any function of interest. The quality of a point set is quantified by its \emph{discrepancy}, a measure of how far its empirical distribution departs from uniformity \citep{niederreiter1992qmc}. The relevance of discrepancy to integration is given by the Koksma--Hlawka inequality, which bounds the integration error by the product of the variation of the integrand and the discrepancy of the point set,
 
 \begin{equation}
     \left| \frac{1}{N}\sum_{n=1}^N f(\mathbf{u}^n) - \int_{[0,1]^d} f(\mathbf{u}) \, d\mathbf{u} \right|
-    \leq V(f) \, D^*(\{\mathbf{u}^n\}_{n=1}^N),
+    \leq V(f) \, D^*(\{\mathbf{u}^n\}_{n=1}^N) \nonumber
 \end{equation}
 
 where $V(f)$ is the variation of $f$ in the sense of Hardy and Krause and $D^*$ is the star discrepancy \citep{niederreiter1992qmc}. Low-discrepancy point sets therefore reduce the bound on the integration error, and for well-behaved integrands QMC can achieve an error close to $\mathcal{O}(N^{-1})$, compared with the Monte Carlo rate $\mathcal{O}_P(N^{-1/2})$.
@@ -116,22 +122,22 @@ Figure~\ref{fig:qmc-vs-mc} illustrates the difference between the two constructi
 \label{fig:qmc-vs-mc}
 \end{figure}
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=\textwidth]{qmc_vs_mc_highdim.png}
-\caption{First two coordinates of 256-point sets in dimension $d$: independent uniform random points (top) and the Sobol' sequence (bottom), for $d \in \{2, 5, 10, 30\}$.}
-\label{fig:qmc-highdim}
-\end{figure}
+% \begin{figure}[t]
+% \centering
+% \includegraphics[width=\textwidth]{qmc_vs_mc_highdim.png}
+% \caption{First two coordinates of 256-point sets in dimension $d$: independent uniform random points (top) and the Sobol' sequence (bottom), for $d \in \{2, 5, 10, 30\}$.}
+% \label{fig:qmc-highdim}
+% \end{figure}
 
 \subsubsection{Randomized Quasi-Monte Carlo (RQMC)}
 \label{sec:rqmc}
-RQMC randomises a QMC point set while preserving its low-discrepancy structure. One advantage of RQMC over QMC is that it yields an unbiased estimator for our integral of interest,
+RQMC randomises a QMC point set while preserving its low-discrepancy structure. The first advantage of RQMC over QMC is that it yields an unbiased estimator for our integral of interest,
 
 \begin{equation}
     \mathbb{E}\left[\frac{1}{N}\sum_{n=1}^N f(\mathbf{u}_t^n)\right] = \int_{[0,1)^d} f(\mathbf{u}_n) d\mathbf{u} \nonumber
 \end{equation}
 
-making it possible to evaluate the approximation error through independent simulations. This unbiased property carries over to SQMC: when the point sets are randomised, SQMC provides an unbiased estimator of the normalising constant $Z_t$, and hence of the likelihood of the state-space model \citep{chopingerber2015sqmc,delmoral1996}. The next advantage of RQMC over QMC is that, for any scrambling that preserves the net structure, the variance of the RQMC estimator is $\mathcal{O}(N^{-2} (\log N)^{d-1})$ for square-integrable integrands \citep{owen1997scrambling}. Under the stronger nested scrambling of Owen, the mean squared error (MSE) of RQMC improves to $\mathcal{O}(N^{-3+\epsilon})$ for smooth integrands and $\mathcal{O}(N^{-2+\epsilon})$ for non-smooth integrands, for any $\epsilon > 0$ \citep{owen1997scrambling,owen1998scrambling}. Both rates are a significant improvement over the Monte Carlo rate of $\mathcal{O}(N^{-1})$.
+making it possible to evaluate the approximation error through independent simulations. This unbiased property carries over to SQMC: when the point sets are randomised, SQMC provides an unbiased estimator of the normalising constant $Z_t$, and hence of the likelihood of the state-space model \citep{chopingerber2015sqmc,delmoral1996}. The second advantage of RQMC over QMC is that, for any scrambling that preserves the low-discrepancy structure, the variance of the RQMC estimator is $\mathcal{O}(N^{-2} (\log N)^{d-1})$ for square-integrable integrands \citep{owen1997scrambling}. Under the stronger nested scrambling of Owen, the mean squared error (MSE) of RQMC improves to $\mathcal{O}(N^{-3+\epsilon})$ for smooth integrands and $\mathcal{O}(N^{-2+\epsilon})$ for non-smooth integrands, for any $\epsilon > 0$ \citep{owen1997scrambling,owen1998scrambling}. Both rates are a significant improvement over the Monte Carlo rate of $\mathcal{O}(N^{-1})$.
 
 % In the implementation of SQMC, we use RQMC to generate the low-discrepancy point set $\{\mathbf{u}^n\}_{n=1}^N$ at each iteration. This allows us to obtain an unbiased estimate of the filtering expectation and evaluate the approximation error through independent simulations.
 
@@ -160,7 +166,11 @@ The \emph{Sobol' sequence} \citep{sobol1967distribution} is a digital $(t,s)$-se
     z_j = C_j a(n) (\text{mod } 2), \qquad u_j^n = \sum_{r = 1}^{m} z_j 2^{-r}, \qquad \mathbf{u}^n = (u_1^n, \ldots, u_d^n) \in [0,1)^d
 \end{equation}
 
-This multiplication is a bitwise XOR operation, and the Sobol' sequence can be generated efficiently with bit-level operations. The Sobol' sequence has good low-dimensional projections and is often the standard choice for high-dimensional QMC. However, it is limited to dimensions $d \leq 1111$ with the direction numbers of \citet{joekuo2008sobol}. Following standard practice, we also drop the first Sobol' point, which is the origin \citep{owen2020droppingfirstsobol}. Moreover, our Sobol' implementation uses a left linear matrix scramble followed by a digital shift (LMS+shift) \citep{matousek1998l2discrepancy}, which is cheaper than nested scrambling but attains only the general RQMC variance rate $\mathcal{O}(N^{-2} (\log N)^{d-1})$ \citep{owen1997scrambling}, rather than the faster rates $\mathcal{O}(N^{-3+\epsilon})$ and $\mathcal{O}(N^{-2+\epsilon})$ available to nested scrambling for smooth and non-smooth integrands respectively. 
+This multiplication is a bitwise XOR operation, and the Sobol' sequence can be generated efficiently with bit-level operations. The Sobol' sequence has good low-dimensional projections and is often the standard choice for high-dimensional QMC. However, it is limited to dimensions $d \leq 1111$ with the direction numbers of \citet{joekuo2008sobol}. Moreover, our Sobol' implementation uses a left linear matrix scramble followed by a digital shift (LMS+shift) \citep{matousek1998l2discrepancy}, which is cheaper than nested scrambling but attains only the general RQMC variance rate $\mathcal{O}(N^{-2} (\log N)^{d-1})$ \citep{owen1997scrambling}, rather than the faster rates $\mathcal{O}(N^{-3+\epsilon})$ and $\mathcal{O}(N^{-2+\epsilon})$ available to nested scrambling for smooth and non-smooth integrands respectively. 
+
+% Following standard practice, we also drop the first Sobol' point, which is the origin \citep{owen2020droppingfirstsobol}. 
+
+% Our Sobol' implementation retains the first point of the sequence in all experiments; \citet{owen2020droppingfirstsobol} notes that the common convention of dropping this point can destroy the balanced-net structure of the point set. 
 
 Both sequences are implemented in our codebase, but the Sobol' sequence is the default for the SQMC experiments because of its favourable projections and its efficient bit-level generation.
 
@@ -236,19 +246,18 @@ SQMC offers a stronger guarantee over time than SMC. Recent literature suggests 
 
 % The error rate of SMC at iteration $t$ is $C_t N^{-1/2}$, where $C_t$ is a time-dependent constant. Many works focus on the first factor $C_t$, either by establishing that the error is bounded uniformly in time \citep{delmoral2004feynman,whiteley2013stability}, or by reducing $C_t$ through more efficient algorithmic designs, such as better proposal kernels or resampling schemes \citep{delmoraldoucetjasra2012smcsamplers}. However, recent literature suggests that a time-uniform almost-sure guarantee cannot exist for SMC: a fixed-size particle filter's error exceeds any fixed threshold infinitely often. SQMC improves the second factor in the error rate, $N^{-1/2}$, so that its error is of the same order as SMC's but with a smaller constant \citep{chopingerber2015sqmc}. Furthermore, SQMC retains the time-uniform almost-sure guarantee, making it attractive for long-horizon filtering.
 
-\section{Why SQMC maps naturally onto accelerators}
+% \section{Why SQMC maps naturally onto accelerators}
 
-SQMC adds two operations that are not present in a standard bootstrap particle filter: the generation of the low-discrepancy point set and the Hilbert sort used for resampling. Both are well suited to accelerator hardware, although for different reasons.
+% SQMC adds two operations that are not present in a standard bootstrap particle filter: the generation of the low-discrepancy point set and the Hilbert sort used for resampling. Both are well suited to accelerator hardware, although for different reasons.
 
-\paragraph{QMC point generation is compute-bound, not latency-bound.}
-The Halton and Sobol' sequences in Section~\ref{sec:qmc-sequences} are both constructed by operations that are computed in integer arithmetic before a single conversion to floating point, avoiding floating-point cancellation \citep{kellerwachterbinder2023qmcgraphics}. The Sobol' generator in particular is "solely computed by XOR operations" \citep{kellerwachterbinder2023qmcgraphics}. Because each point's coordinates are a function of its index alone, the whole batch can be generated independently in parallel, and Quasi-Monte Carlo methods in general "do not require intermediate synchronization" \citep{kellerwachterbinder2023qmcgraphics}. In our implementation both generators are written in JAX so that \texttt{sample} is a vectorised operation over the batch of particles, and the Sobol' points are produced by a parallel XOR prefix scan.
+% \paragraph{QMC point generation is compute-bound, not latency-bound.}
+% The Halton and Sobol' sequences in Section~\ref{sec:qmc-sequences} are both constructed by operations that are computed in integer arithmetic before a single conversion to floating point, avoiding floating-point cancellation \citep{kellerwachterbinder2023qmcgraphics}. The Sobol' generator in particular is "solely computed by XOR operations" \citep{kellerwachterbinder2023qmcgraphics}. Because each point's coordinates are a function of its index alone, the whole batch can be generated independently in parallel, and Quasi-Monte Carlo methods in general "do not require intermediate synchronization" \citep{kellerwachterbinder2023qmcgraphics}. In our implementation both generators are written in JAX so that \texttt{sample} is a vectorised operation over the batch of particles, and the Sobol' points are produced by a parallel XOR prefix scan.
 
-\paragraph{Hilbert index computation and the residual sort cost.}
-The resampling step of SQMC orders the particles along a Hilbert curve, which maps nearby states to nearby positions in the ordering and thereby preserves the low-discrepancy structure of the particle cloud \citep{chopingerber2015sqmc}. Computing the Hilbert index of a point is a purely local, index-based operation that requires no lookup tables \citep{kellerwachterbinder2022hilbertcurve}, and deterministic index computations of this kind "can be reliably parallelized and results are exactly reproducible" \citep{kellerwachterbinder2022hilbertcurve}. This makes the per-particle index computation cheap and embarrassingly parallel.
+% \paragraph{Hilbert index computation and the residual sort cost.} Computing the Hilbert index of a point is a purely local, index-based operation that requires no lookup tables \citep{kellerwachterbinder2022hilbertcurve}, and deterministic index computations of this kind "can be reliably parallelized and results are exactly reproducible" \citep{kellerwachterbinder2022hilbertcurve}. This makes the per-particle index computation cheap and embarrassingly parallel.
 
-Our implementation follows the reference Hilbert-ordering routine of the \texttt{particles} library \citep{chopinpapaspiliopoulos020introtosmc}, computing the packed index from bit interleaving and Gray-code reflection, so that the ordering used here is consistent with the standard SQMC formulation. The subsequent ordering of those indices, however, is a separate global sort of $\mathcal{O}(N \log N)$ operations and remains the main synchronisation point of the filter; the GPU accelerates the index computation and point generation but does not remove this global sort.
+% The resampling step of SQMC orders the particles along a Hilbert curve, which maps nearby states to nearby positions in the ordering and thereby preserves the low-discrepancy structure of the particle cloud \citep{chopingerber2015sqmc}.
 
-Exact implementations are documented in the repository \href{https://github.com/ryantjx/sqmc-cuthbert}{\texttt{ryantjx/sqmc-cuthbert}} and will be integrated into \texttt{state-space-models/cuthbert} under the issue \href{https://github.com/state-space-models/cuthbert/issues/255}{Implement Sequential Quasi Monte Carlo \#255}.
+% Our implementation follows the reference Hilbert-ordering routine of the \texttt{particles} library \citep{chopinpapaspiliopoulos020introtosmc}, computing the packed index from bit interleaving and Gray-code reflection, so that the ordering used here is consistent with the standard SQMC formulation. The subsequent ordering of those indices, however, is a separate global sort of $\mathcal{O}(N \log N)$ operations and remains the main synchronisation point of the filter; the GPU accelerates the index computation and point generation but does not remove this global sort.
 
 % Previous writeup (kept for reference):
 % SQMC adds two operations that are not present in a standard bootstrap particle filter: the generation of the low-discrepancy point set and the Hilbert sort used for resampling. Both are well suited to accelerator hardware, although for different reasons. Table~\ref{tab:accelerator} summarises the specific operations in our implementation, the code that performs them, and why each benefits from the GPU.
@@ -279,46 +288,68 @@ Exact implementations are documented in the repository \href{https://github.com/
 
 \section{Empirical evaluation---CPU and GPU performance}
 \label{sec:empirical-cpu-gpu}
+Exact implementations are documented in the repository \href{https://github.com/ryantjx/sqmc-cuthbert}{\texttt{ryantjx/sqmc-cuthbert}} and will be integrated into \texttt{state-space-models/cuthbert} under the issue \href{https://github.com/state-space-models/cuthbert/issues/255}{Implement Sequential Quasi Monte Carlo \#255}.
 
-The experiments evaluate GPU acceleration at three levels: freshly scrambled QMC point generation, Hilbert sorting of QMC-generated inputs, and complete SQMC filtering trajectories. QMC generation compares the shared JAX implementation on CPU and GPU with an additional SciPy CPU reference. Hilbert sorting and SQMC compare the same shared implementation on the two devices. The principal filtering question is whether the GPU processes the same particle count and observation sequence faster while preserving accuracy. Runtime-budget selection then illustrates how that acceleration can support larger particle counts. These experiments assess implementations and hardware; an SQMC--SMC comparison would require a separate algorithmic baseline.
+The experiments evaluate GPU acceleration at three levels: QMC point generation, Hilbert sorting of QMC-generated inputs, and complete SQMC filtering trajectories.
+
+% QMC generation compares the shared JAX implementation on CPU and GPU with an additional SciPy CPU reference. Hilbert sorting and SQMC compare the same shared implementation on the two devices. The principal filtering question is whether the GPU processes the same particle count and observation sequence faster while preserving accuracy. Runtime-budget selection then illustrates how that acceleration can support larger particle counts. These experiments assess implementations and hardware; an SQMC--SMC comparison would require a separate algorithmic baseline.
 
 \subsection{Experimental design and measurement}
 \label{sec:empirical-design}
 
-The results are taken from run \texttt{08092026\_0048} in the repository's comparison outputs, using source commit \texttt{e7363f8fa53c}. All three stages completed in one Colab session. Their saved configurations, source identifiers and file checksums agree, and the downloaded artifacts passed numerical validation. Each stage's outputs and logs were retained before the next stage began; session shutdown was verified after the final download. The run used an NVIDIA A100-SXM4 with 40\,GB of device memory and a host exposing 12 logical CPUs, identified as Intel Xeon at 2.20\,GHz. The JAX backends used JAX and JAXlib 0.11.1; the additional SciPy CPU baseline used SciPy 1.16.3. JAX used double precision and the \texttt{threefry2x32} random-number implementation.
+TO DO: INCLUDE RESULTS SOURCE
 
-We consider dimensions $d\in\{2,5,10,30,60\}$. The QMC point counts are
-\[
-    N\in\{128,512,2048,8192,32768,131072\},
-\]
-with an additional $N=256$ for Hilbert sorting. The SQMC particle grid is $N\in\{128,256,512,1024,2048\}$. Each timing is the median of seven executions after two warm-ups. JAX outputs are explicitly synchronised before stopping the timer; SciPy returns its CPU result synchronously. The initial call is recorded separately and excluded from the median; for JAX it includes tracing, compilation and execution. Inputs are placed on the requested device before timing, and QMC execution order rotates among JAX CPU, JAX GPU and SciPy CPU; Hilbert and SQMC alternate CPU/GPU order across configurations. JAX measurements use device-resident inputs; they exclude host--device transfer, figure generation and result-file output.
+The experiments were completed on an NVIDIA A100-SXM4 with 40\,GB of device memory and 12 logical Indtel Xeon CPUs. More information about the hardware and software is available in the Appendix.
 
-The QMC experiment compares freshly scrambled Sobol' and Halton generation using JAX on CPU, JAX on GPU, and SciPy on CPU. All three use \texttt{scramble=True} and generate an index-zero block. The JAX paths call the shared public \texttt{sample()} methods in \texttt{qmc.py}; scrambling array operations and point generation execute within each timed compiled call. SciPy creates a new random-number generator and scrambled engine within each timed call, then generates the points. Thus SciPy's constructor cost is included, while JAX's tracing and compilation are excluded from steady-state timing. This compares the implemented generation paths, rather than isolated identical scrambling kernels. SciPy uses no point-set optimisation and one worker for Halton. Sobol' uses 30 direction bits and power-of-two block sizes on all three paths; index zero is retained. Timed repetitions have distinct reproducible seeds, with matching JAX CPU/GPU keys. Equal seeds do not imply identical SciPy/JAX randomisations.
+% The results are taken from run \texttt{08092026\_0048} in the repository's comparison outputs, using source commit \texttt{e7363f8fa53c}. All three stages completed in one Colab session. Their saved configurations, source identifiers and file checksums agree, and the downloaded artifacts passed numerical validation. Each stage's outputs and logs were retained before the next stage began; session shutdown was verified after the final download. 
 
-The Hilbert experiment applies the shared finite normal-quantile transformation to scrambled QMC points, saves the resulting array, and transfers that identical array to both backends. Input generation is excluded from sorting time. The timed sort includes standardisation, coordinate transformation, quantisation, Hilbert-index construction and the final ordering.
+% The run used an NVIDIA A100-SXM4 with 40\,GB of device memory and a host exposing 12 logical CPUs, identified as Intel Xeon at 2.20\,GHz. The JAX backends used JAX and JAXlib 0.11.1; the additional SciPy CPU baseline used SciPy 1.16.3. JAX used double precision and the \texttt{threefry2x32} random-number implementation.
 
-For SQMC, we use the linear Gaussian model
-\begin{align}
-    X_0 &\sim \mathcal{N}(0,I_d), \\
-    X_t\mid X_{t-1} &\sim \mathcal{N}(X_{t-1},0.25I_d), \\
-    Y_t\mid X_t &\sim \mathcal{N}(X_t,I_d), \qquad t=1,\ldots,100.
-\end{align}
-One observation dataset is generated for each dimension. The CPU and GPU receive the same observations and matching replicate keys. The benchmark uses the shared SQMC filter builder, shared Hilbert ordering and freshly scrambled Sobol' points of dimension $d+1$ at each update, with separate initialisation and update randomisations. A timed trajectory includes initialisation and all 100 filtering updates, including scrambling, sorting, resampling, propagation, weighting, filtering-mean calculation and likelihood accumulation.
+% We consider dimensions $d\in\{2,5,10,30,60\}$. The QMC point counts are
+% \[
+%     N\in\{128,512,2048,8192,32768,131072\},
+% \]
+% with an additional $N=256$ for Hilbert sorting. The SQMC particle grid is $N\in\{128,256,512,1024,2048\}$. Each timing is the median of seven executions after two warm-ups. JAX outputs are explicitly synchronised before stopping the timer; SciPy returns its CPU result synchronously. The initial call is recorded separately and excluded from the median; for JAX it includes tracing, compilation and execution. Inputs are placed on the requested device before timing, and QMC execution order rotates among JAX CPU, JAX GPU and SciPy CPU; Hilbert and SQMC alternate CPU/GPU order across configurations. JAX measurements use device-resident inputs; they exclude host--device transfer, figure generation and result-file output.
 
-An independent NumPy Kalman calculation supplies the exact filtering means $\mu_{tj}$ and marginal variances $P_{tj}$. For $R$ randomised SQMC trajectories, the reported normalised filtering error is
-\begin{equation}
-    E_{d,N}=\left[
-    \frac{1}{RTd}\sum_{r=1}^{R}\sum_{t=1}^{T}\sum_{j=1}^{d}
-    \frac{(\widehat\mu^{(r)}_{tj}-\mu_{tj})^2}{P_{tj}}
-    \right]^{1/2},\qquad T=100.
-    \label{eq:normalised-mean-error}
-\end{equation}
-This measures numerical approximation error relative to the filtering distribution, rather than prediction error against a realised latent state. Eight selection replicates choose the particle count under each budget; sixteen independent validation replicates estimate its error. The 95\% intervals use 500 bootstrap resamples of complete replicate errors. With one dataset per dimension, they are conditional on that dataset and do not quantify between-dataset variation, runtime uncertainty or uncertainty in the selection decision.
+% The QMC experiment compares freshly scrambled Sobol' and Halton generation using JAX on CPU, JAX on GPU, and SciPy on CPU. All three use \texttt{scramble=True} and generate an index-zero block. The JAX paths call the shared public \texttt{sample()} methods in \texttt{qmc.py}; scrambling array operations and point generation execute within each timed compiled call. SciPy creates a new random-number generator and scrambled engine within each timed call, then generates the points. Thus SciPy's constructor cost is included, while JAX's tracing and compilation are excluded from steady-state timing. This compares the implemented generation paths, rather than isolated identical scrambling kernels. SciPy uses no point-set optimisation and one worker for Halton. Sobol' uses 30 direction bits and power-of-two block sizes on all three paths; index zero is retained. Timed repetitions have distinct reproducible seeds, with matching JAX CPU/GPU keys. Equal seeds do not imply identical SciPy/JAX randomisations.
+
+% The Hilbert experiment applies the shared finite normal-quantile transformation to scrambled QMC points, saves the resulting array, and transfers that identical array to both backends. Input generation is excluded from sorting time. The timed sort includes standardisation, coordinate transformation, quantisation, Hilbert-index construction and the final ordering.
+
+% For SQMC, we use the linear Gaussian model
+% \begin{align}
+%     X_0 &\sim \mathcal{N}(0,I_d), \\
+%     X_t\mid X_{t-1} &\sim \mathcal{N}(X_{t-1},0.25I_d), \\
+%     Y_t\mid X_t &\sim \mathcal{N}(X_t,I_d), \qquad t=1,\ldots,100.
+% \end{align}
+% One observation dataset is generated for each dimension. The CPU and GPU receive the same observations and matching replicate keys. The benchmark uses the shared SQMC filter builder, shared Hilbert ordering and freshly scrambled Sobol' points of dimension $d+1$ at each update, with separate initialisation and update randomisations. A timed trajectory includes initialisation and all 100 filtering updates, including scrambling, sorting, resampling, propagation, weighting, filtering-mean calculation and likelihood accumulation.
+
+% An independent NumPy Kalman calculation supplies the exact filtering means $\mu_{tj}$ and marginal variances $P_{tj}$. For $R$ randomised SQMC trajectories, the reported normalised filtering error is
+% \begin{equation}
+%     E_{d,N}=\left[
+%     \frac{1}{RTd}\sum_{r=1}^{R}\sum_{t=1}^{T}\sum_{j=1}^{d}
+%     \frac{(\widehat\mu^{(r)}_{tj}-\mu_{tj})^2}{P_{tj}}
+%     \right]^{1/2},\qquad T=100.
+%     \label{eq:normalised-mean-error}
+% \end{equation}
+% This measures numerical approximation error relative to the filtering distribution, rather than prediction error against a realised latent state. Eight selection replicates choose the particle count under each budget; sixteen independent validation replicates estimate its error. The 95\% intervals use 500 bootstrap resamples of complete replicate errors. With one dataset per dimension, they are conditional on that dataset and do not quantify between-dataset variation, runtime uncertainty or uncertainty in the selection decision.
 
 \subsection{QMC generation}
 \label{sec:microbenchmarks}
 
-Figure~\ref{fig:comparison-qmc} reports 180 fresh-scramble timing configurations: two sequences, five dimensions, six point counts and three implementations. The left column shows median runtime for JAX CPU, JAX GPU and SciPy CPU. The right column gives two separate speedups, JAX CPU/JAX GPU and SciPy CPU/JAX GPU. Values above one favour JAX GPU. The JAX CPU/JAX GPU ratio measures the effect of changing the execution backend within the shared implementation. The SciPy CPU/JAX GPU ratio additionally includes a change of library and execution model.
+For the QMC point generation, we consider We consider dimensions $d\in\{2,5,10,30,60\}$ and the point counts of $N\in\{128,512,2048,8192,32768,131072\}$. Each timing is the median of seven executions after two warm-up runs. This is to ensure that the timing measurements are stable and not affected by any initial overheads such as JAX tracing or compilation.
+
+There are three implementations being compared for the Sobol and Halton sequence generation: JAX on CPU, JAX on GPU and SciPy on CPU. A benefit of implementing the QMC generators in JAX is that all randomness is expressed through explicit key arrays: the random key arrays can be passed explicity to the generator functions, which is deterministic and reproducible. In constrast, SciPy draws from a stateful \texttt{numpy.random.Generator} during engine construction, so a fresh randomisation requires constructing new Python objects, and the resulting state cannot be carried through compiled code, incurring additional construction cost included in the timing for SciPy.
+
+% Each timing is the median of seven executions after two warm-ups. JAX outputs are explicitly synchronised before stopping the timer; SciPy returns its CPU result synchronously. The initial call is recorded separately and excluded from the median; for JAX it includes tracing, compilation and execution. Inputs are placed on the requested device before timing, and QMC execution order rotates among JAX CPU, JAX GPU and SciPy CPU; Hilbert and SQMC alternate CPU/GPU order across configurations. JAX measurements use device-resident inputs; they exclude host--device transfer, figure generation and result-file output.
+
+% The QMC experiment compares freshly scrambled Sobol' and Halton generation using JAX on CPU, JAX on GPU, and SciPy on CPU. All three use \texttt{scramble=True} and generate an index-zero block. The JAX paths call the shared public \texttt{sample()} methods in \texttt{qmc.py}; scrambling array operations and point generation execute within each timed compiled call. SciPy creates a new random-number generator and scrambled engine within each timed call, then generates the points. Thus SciPy's constructor cost is included, while JAX's tracing and compilation are excluded from steady-state timing. This compares the implemented generation paths, rather than isolated identical scrambling kernels. SciPy uses no point-set optimisation and one worker for Halton. Sobol' uses 30 direction bits and power-of-two block sizes on all three paths; index zero is retained. Timed repetitions have distinct reproducible seeds, with matching JAX CPU/GPU keys. Equal seeds do not imply identical SciPy/JAX randomisations.
+
+
+Figure~\ref{fig:comparison-qmc} reports 180 fresh-scramble timing configurations. The JAX CPU/JAX GPU ratio measures the effect of changing the execution backend within the shared implementation. Values above one favour JAX GPU. 
+
+% The SciPy CPU/JAX GPU ratio additionally includes a change of library and execution model. 
+
+% : two sequences, five dimensions, six point counts and three implementations. The left column shows median runtime for JAX CPU, JAX GPU and SciPy CPU. The right column gives two separate speedups, JAX CPU/JAX GPU and SciPy CPU/JAX GPU.
 
 \begin{figure}[t]
     \centering
@@ -327,30 +358,55 @@ Figure~\ref{fig:comparison-qmc} reports 180 fresh-scramble timing configurations
     \label{fig:comparison-qmc}
 \end{figure}
 
-For Sobol' generation, the first measured point count at which JAX GPU is faster than JAX CPU is $N=8192$ for $d=2,5$, $N=2048$ for $d=10$, $N=512$ for $d=30$, and $N=128$ for $d=60$. Against SciPy CPU, JAX GPU is already faster at the smallest tested count in every dimension. At $N=131072$, the speedups are $5.34$--$45.59\times$ relative to JAX CPU and $4.42$--$31.05\times$ relative to SciPy CPU. The choice of CPU reference therefore changes both the apparent crossover and the magnitude of the speedup.
+For Sobol' generation, the first measured point count at which JAX GPU is faster than JAX CPU is $N=8192$ for $d=2,5$, $N=2048$ for $d=10$, $N=512$ for $d=30$, and $N=128$ for $d=60$. Against SciPy CPU, JAX GPU is already faster at the smallest tested count in every dimension. For Halton generation, the first observed JAX GPU advantage over JAX CPU occurs at $N=32768$ for $d=2,5,10$, $N=8192$ for $d=30$, and $N=2048$ for $d=60$. Against SciPy CPU, the first observed advantage occurs at $N=2048$ in every dimension.
 
-For Halton generation, the first observed JAX GPU advantage over JAX CPU occurs at $N=32768$ for $d=2,5,10$, $N=8192$ for $d=30$, and $N=2048$ for $d=60$. Against SciPy CPU, the first observed advantage occurs at $N=2048$ in every dimension. At $N=131072$, JAX GPU is $8.82$--$12.29\times$ faster than JAX CPU and $86.57$--$103.48\times$ faster than SciPy CPU. The much larger SciPy-relative ratios include differences between the generator implementations and cannot be attributed entirely to hardware acceleration.
+% For Sobol' generation, the first measured point count at which JAX GPU is faster than JAX CPU is $N=8192$ for $d=2,5$, $N=2048$ for $d=10$, $N=512$ for $d=30$, and $N=128$ for $d=60$. Against SciPy CPU, JAX GPU is already faster at the smallest tested count in every dimension. At $N=131072$, the speedups are $5.34$--$45.59\times$ relative to JAX CPU and $4.42$--$31.05\times$ relative to SciPy CPU. The choice of CPU reference therefore changes both the apparent crossover and the magnitude of the speedup.
 
-These ratios describe the specified fresh-scramble timing boundary. In particular, SciPy includes Python engine construction, whereas the JAX paths perform compiled array operations after warm-up. Fresh scrambling is part of every measured generation call, as required when the randomisation is renewed during SQMC filtering. The reported crossovers are the first GPU-favouring counts on the measured grid, rather than estimates of an exact crossover or a guarantee for other machines.
+% For Halton generation, the first observed JAX GPU advantage over JAX CPU occurs at $N=32768$ for $d=2,5,10$, $N=8192$ for $d=30$, and $N=2048$ for $d=60$. Against SciPy CPU, the first observed advantage occurs at $N=2048$ in every dimension. At $N=131072$, JAX GPU is $8.82$--$12.29\times$ faster than JAX CPU and $86.57$--$103.48\times$ faster than SciPy CPU. The much larger SciPy-relative ratios include differences between the generator implementations and cannot be attributed entirely to hardware acceleration.
+% These ratios describe the specified fresh-scramble timing boundary. In particular, SciPy includes Python engine construction, whereas the JAX paths perform compiled array operations after warm-up. Fresh scrambling is part of every measured generation call, as required when the randomisation is renewed during SQMC filtering. The reported crossovers are the first GPU-favouring counts on the measured grid, rather than estimates of an exact crossover or a guarantee for other machines.
 
 \subsection{Hilbert sorting}
 \label{sec:hilbert-benchmark}
 
+The Hilbert Sort experiment is performed on the same 5 dimensions and 7 point counts as the QMC generation. Input generation is excluded from sorting time. The timed sort includes standardisation, coordinate transformation, quantisation, Hilbert-index construction and the final ordering. The CPU implmentation uses the same shared JAX sorter as the GPU, so the CPU/GPU ratio measures the effect of changing the execution backend within the same implementation.
+
 Figure~\ref{fig:comparison-hilbert} separates Sobol'-generated and Halton-generated inputs. The 140 configurations compare the same shared JAX sorter on CPU and GPU, using identical normal-transformed arrays within each pair. SciPy and the \texttt{particles} library are not timed sorting baselines.
+
+% The Hilbert experiment applies the shared finite normal-quantile transformation to scrambled QMC points, saves the resulting array, and transfers that identical array to both backends. Input generation is excluded from sorting time. The timed sort includes standardisation, coordinate transformation, quantisation, Hilbert-index construction and the final ordering.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{comparison_hilbert_08092026_0048.pdf}
-    \caption{JAX CPU/JAX GPU median-runtime ratios for shared Hilbert sorting. Left: normal-transformed scrambled Sobol' inputs; right: normal-transformed scrambled Halton inputs. Colours identify dimensions. Point generation and input transfer are excluded from sorting time; the horizontal line marks equal runtime.}
+    \caption{JAX CPU/JAX GPU median-runtime ratios for shared Hilbert sorting. Left: normal-transformed scrambled Sobol' inputs; right: normal-transformed scrambled Halton inputs. Colours identify dimensions. Point generation and input transfer are excluded from sorting time; the horizontal line marks equal runtime. Points above the horizontal line favour the GPU.}
     \label{fig:comparison-hilbert}
 \end{figure}
 
-The GPU is slower at $N=128$ in every tested dimension for both input families. For Sobol' inputs, the first measured GPU advantage occurs at $N=2048$ for $d=2,5$, $N=512$ for $d=10,30$, and $N=256$ for $d=60$. For Halton inputs, the corresponding counts are $2048,512,512,256,256$ in increasing dimension order. Thus the benefit of parallel sorting emerges only after sufficient points are processed. At $N=131072$, speedups reach $79.42$--$107.93\times$ for Sobol' inputs and $78.30$--$109.14\times$ for Halton inputs.
+The GPU is slower at $N=128$ in every tested dimension for both input families. For Sobol' inputs, the first measured GPU advantage occurs at $N=2048$ for $d=2,5$, $N=512$ for $d=10,30$, and $N=256$ for $d=60$. For Halton inputs, the corresponding counts are $2048,512,512,256,256$ in increasing dimension order. Thus the benefit of parallel sorting emerges only after sufficient points are processed. 
 
-All 70 paired configurations produce identical CPU/GPU permutations and matching saved input hashes. This confirms that the reported sorting ratios use the same input arrays and agree on their ordering. It does not establish equivalence for every possible input or Hilbert-index representation, nor does it establish that the full SQMC trajectory attains the same speedup as its sorting component.
+% At $N=131072$, speedups reach $79.42$--$107.93\times$ for Sobol' inputs and $78.30$--$109.14\times$ for Halton inputs.
+
+% All 70 paired configurations produce identical CPU/GPU permutations and matching saved input hashes. This confirms that the reported sorting ratios use the same input arrays and agree on their ordering. It does not establish equivalence for every possible input or Hilbert-index representation, nor does it establish that the full SQMC trajectory attains the same speedup as its sorting component.
 
 \subsection{SQMC on CPU and GPU at a fixed iteration count}
 \label{sec:empirical-results}
+
+% For SQMC, we use the linear Gaussian model
+% \begin{align}
+%     X_0 &\sim \mathcal{N}(0,I_d), \\
+%     X_t\mid X_{t-1} &\sim \mathcal{N}(X_{t-1},0.25I_d), \\
+%     Y_t\mid X_t &\sim \mathcal{N}(X_t,I_d), \qquad t=1,\ldots,100.
+% \end{align}
+% One observation dataset is generated for each dimension. The CPU and GPU receive the same observations and matching replicate keys. The benchmark uses the shared SQMC filter builder, shared Hilbert ordering and freshly scrambled Sobol' points of dimension $d+1$ at each update, with separate initialisation and update randomisations. A timed trajectory includes initialisation and all 100 filtering updates, including scrambling, sorting, resampling, propagation, weighting, filtering-mean calculation and likelihood accumulation.
+
+% An independent NumPy Kalman calculation supplies the exact filtering means $\mu_{tj}$ and marginal variances $P_{tj}$. For $R$ randomised SQMC trajectories, the reported normalised filtering error is
+% \begin{equation}
+%     E_{d,N}=\left[
+%     \frac{1}{RTd}\sum_{r=1}^{R}\sum_{t=1}^{T}\sum_{j=1}^{d}
+%     \frac{(\widehat\mu^{(r)}_{tj}-\mu_{tj})^2}{P_{tj}}
+%     \right]^{1/2},\qquad T=100.
+%     \label{eq:normalised-mean-error}
+% \end{equation}
+% This measures numerical approximation error relative to the filtering distribution, rather than prediction error against a realised latent state. Eight selection replicates choose the particle count under each budget; sixteen independent validation replicates estimate its error. The 95\% intervals use 500 bootstrap resamples of complete replicate errors. With one dataset per dimension, they are conditional on that dataset and do not quantify between-dataset variation, runtime uncertainty or uncertainty in the selection decision.
 
 The fixed-work comparison asks how much faster the GPU executes the same SQMC trajectory while preserving filtering accuracy. Each trajectory processes the same $T=100$ observations, with the same particle count $N$, dimension $d$, model and double precision on both backends. The five dimensions and five particle counts therefore give 25 matched CPU/GPU configurations. Here an iteration means one filtering update for an observation. Increasing the number of updates changes the inference problem; the seven timing repetitions measure runtime variability and do not improve the estimator from an individual trajectory.
 
