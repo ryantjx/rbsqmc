@@ -4,11 +4,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from rbsqmc.src.model.predict import (
+from rbsqmc.src.model.rbsmc.predict import (
     evaluate_match_predictions,
     run_sequential_predict,
 )
-from rbsqmc.src.model.predict_rbsqmc import run_sequential_predict_rbsqmc
+from rbsqmc.src.model.rbsqmc.predict_rbsqmc import run_sequential_predict_rbsqmc
 from rbsqmc.src.utils.type import EMParams, FootballResults, Matches
 
 

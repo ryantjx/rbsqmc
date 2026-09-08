@@ -31,7 +31,7 @@ Results are written to ``rbsqmc/outputs/parameter_sweep/YYYYMMDD_HHMM/`` by
 default (override with ``--output_root``).
 
 Usage:
-    python -m rbsqmc.scripts.sqmc_smc.sweep_start_dates \
+    python -m rbsqmc.comparison.sqmc_smc.sweep_start_dates \
         --start-dates 1950-01-01 1970-01-01 1990-01-01 \
         --n_particles 250 500 --n_reps 20 30 --n_epochs 100 --patience 15 \
         --test_start_date 2024-01-01 --prediction_start_date 2026-06-11
@@ -48,7 +48,7 @@ import numpy as np
 import pandas as pd
 
 from rbsqmc.src.data.data import get_training_data, concat_football_results
-from rbsqmc.src.model.optimization import logmarginal_maximize, run_filter_unbiased
+from rbsqmc.src.model.rbsmc.optimization import logmarginal_maximize, run_filter_unbiased
 from rbsqmc.src.utils.helpers import default_init_params, resolve_teams, save_params
 
 logger = logging.getLogger("rbsqmc.sweep")
@@ -281,7 +281,7 @@ def run_one(cfg: dict, start_date: str, prior_tag: str, gamma_0_prior_params,
 
 def _predict(cfg, params, train_inputs, test_inputs, pred_inputs, team_id_to_name, run_dir, log_path) -> dict:
     """Sequential prediction on the upcoming-match split (left to last stage)."""
-    from rbsqmc.src.model.predict import run_sequential_predict
+    from rbsqmc.src.model.rbsmc.predict import run_sequential_predict
     from rbsqmc.src.utils.helpers import build_match_predictions, save_match_predictions
 
     key = jax.random.PRNGKey(cfg["seed"] + 1)

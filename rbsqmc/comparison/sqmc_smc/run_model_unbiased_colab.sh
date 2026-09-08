@@ -14,8 +14,8 @@
 #   8. Validates all downloaded + generated artifacts.
 #
 # Usage:
-#   bash rbsqmc/scripts/sqmc_smc/run_model_unbiased_colab.sh
-#   bash rbsqmc/scripts/sqmc_smc/run_model_unbiased_colab.sh --dry-run
+#   bash rbsqmc/comparison/sqmc_smc/run_model_unbiased_colab.sh
+#   bash rbsqmc/comparison/sqmc_smc/run_model_unbiased_colab.sh --dry-run
 #
 # Environment overrides:
 #   GPU_TYPE       e.g. A100, T4 (default: from config)

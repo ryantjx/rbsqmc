@@ -8,7 +8,7 @@ constant, using the same stop-gradient / Fisher-identity gradient approach
 as the SMC version.
 
 Usage:
-    python -m rbsqmc.src.model.train_model_rbsqmc
+    python -m rbsqmc.src.model.rbsqmc.train_model_rbsqmc
 
 Or directly:
     python rbsqmc/src/model/train_model_rbsqmc.py
@@ -25,8 +25,8 @@ from datetime import datetime
 from functools import partial
 
 from rbsqmc.src.data.data import get_results, get_training_data, concat_football_results
-from rbsqmc.src.model.model_rbsqmc import run_filter_sqmc, run_filter_sqmc_logz
-from rbsqmc.src.model.model import compute_gamma_trajectory, generate_rbpf_trajectory
+from rbsqmc.src.model.rbsqmc.model_rbsqmc import run_filter_sqmc, run_filter_sqmc_logz
+from rbsqmc.src.model.rbsmc.model import compute_gamma_trajectory, generate_rbpf_trajectory
 from rbsqmc.src.utils.helpers import (
     default_init_params,
     resolve_teams,
@@ -407,7 +407,7 @@ def main():
 
     ############### Run Sequential Prediction for Upcoming Matches ###############
     key, pred_key = jax.random.split(key, 2)
-    from rbsqmc.src.model.predict_rbsqmc import run_sequential_predict_rbsqmc
+    from rbsqmc.src.model.rbsqmc.predict_rbsqmc import run_sequential_predict_rbsqmc
     from rbsqmc.src.utils.helpers import (
         build_match_predictions,
         save_match_predictions,
@@ -438,7 +438,7 @@ def main():
     )
 
     ############### Observe team states over time (post-prediction) ###############
-    from rbsqmc.src.model.train_model_gpu import run_observe
+    from rbsqmc.src.model.rbsmc.train_model_gpu import run_observe
 
     run_observe(
         cfg=cfg,

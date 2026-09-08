@@ -21,7 +21,7 @@ from rbsqmc.src.utils.helpers import (
     log_inverse_wishart_kernel,
 )
 from rbsqmc.src.data.data import get_results, WORLDCUP_2026_TEAMS, ACTIVE_TEAMS
-from rbsqmc.src.model.model import init_sample, propagate_sample, _log_potential, compute_gamma_trajectory, generate_rbpf_trajectory
+from rbsqmc.src.model.rbsmc.model import init_sample, propagate_sample, _log_potential, compute_gamma_trajectory, generate_rbpf_trajectory
 
 @partial(jax.jit, static_argnames=("n_particles", "max_goals"))
 def run_filter_unbiased(

@@ -14,7 +14,7 @@ from jax.scipy.special import logsumexp
 
 from rbsqmc.src.data.bivariate_poisson import loglik_grid
 from rbsqmc.src.data.data import concat_football_results, unpack_football_results
-from rbsqmc.src.model.optimization import run_filter_unbiased
+from rbsqmc.src.model.rbsmc.optimization import run_filter_unbiased
 from rbsqmc.src.utils.type import EMParams, Matches, RBPFState, FootballResults
 
 

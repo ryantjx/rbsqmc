@@ -17,7 +17,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from rbsqmc.src.data.data import get_results, get_training_data, concat_football_results
-from rbsqmc.src.model.optimization import (
+from rbsqmc.src.model.rbsmc.optimization import (
     run_filter_unbiased,
     logmarginal_maximize,
 )
@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-DEFAULT_CONFIG_PATH = "rbsqmc/scripts/sqmc_smc/config/model_unbiased_gpu_config.json"
+DEFAULT_CONFIG_PATH = "rbsqmc/comparison/sqmc_smc/config/model_unbiased_gpu_config.json"
 
 
 def load_config(config_path: str | None = None) -> dict:
@@ -270,7 +270,7 @@ def _write_timeseries_states(filtered_states, team_id_to_name, full_dates, outpu
 
 def run_predict(cfg: dict, params, output_dir: str):
     """Local phase: sequential prediction on the upcoming-match split."""
-    from rbsqmc.src.model.predict import run_sequential_predict
+    from rbsqmc.src.model.rbsmc.predict import run_sequential_predict
     from rbsqmc.src.utils.helpers import (
         build_match_predictions,
         save_match_predictions,
@@ -373,7 +373,7 @@ def main(argv=None) -> int:
         output_dir = args.out or os.path.join(cfg.get("output_dir") or _default_output_dir(), "observe")
         # Lazy import avoids a circular dependency: observe.py imports
         # prepare_data from this module.
-        from rbsqmc.src.model.observe import run_observe
+        from rbsqmc.src.model.rbsmc.observe import run_observe
 
         run_observe(cfg, load_params(args.params), output_dir)
         return 0

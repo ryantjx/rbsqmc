@@ -5,7 +5,7 @@ inputs, optimizer settings, and root PRNG key. The comparison records train
 and held-out test log Z after every optimization epoch.
 
 Usage:
-    python -m rbsqmc.scripts.sqmc_smc.compare_smc_sqmc
+    python -m rbsqmc.comparison.sqmc_smc.compare_smc_sqmc
 """
 
 import json
@@ -25,15 +25,15 @@ from rbsqmc.src.data.data import (
     get_training_data,
     unpack_football_results,
 )
-from rbsqmc.src.model.model_rbsqmc import run_filter_sqmc
-from rbsqmc.src.model.optimization import logmarginal_maximize, run_filter_unbiased
-from rbsqmc.src.model.predict import (
+from rbsqmc.src.model.rbsqmc.model_rbsqmc import run_filter_sqmc
+from rbsqmc.src.model.rbsmc.optimization import logmarginal_maximize, run_filter_unbiased
+from rbsqmc.src.model.rbsmc.predict import (
     evaluate_match_predictions,
     run_sequential_predict,
 )
-from rbsqmc.src.model.predict_rbsqmc import run_sequential_predict_rbsqmc
-from rbsqmc.src.model.observe import run_observe
-from rbsqmc.src.model.train_model_rbsqmc import logmarginal_maximize_sqmc
+from rbsqmc.src.model.rbsqmc.predict_rbsqmc import run_sequential_predict_rbsqmc
+from rbsqmc.src.model.rbsmc.observe import run_observe
+from rbsqmc.src.model.rbsqmc.train_model_rbsqmc import logmarginal_maximize_sqmc
 from rbsqmc.src.utils.graphic import (
     plot_all,
     plot_gradient_norm_curve,

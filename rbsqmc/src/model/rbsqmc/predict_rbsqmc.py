@@ -6,8 +6,8 @@ import jax
 import jax.numpy as jnp
 
 from rbsqmc.src.data.data import concat_football_results, unpack_football_results
-from rbsqmc.src.model.model_rbsqmc import run_filter_sqmc
-from rbsqmc.src.model.predict import predict_match_score
+from rbsqmc.src.model.rbsqmc.model_rbsqmc import run_filter_sqmc
+from rbsqmc.src.model.rbsmc.predict import predict_match_score
 from rbsqmc.src.utils.type import EMParams, FootballResults
 
 

@@ -21,9 +21,9 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 
 from rbsqmc.src.data.data import concat_football_results
-from rbsqmc.src.model.model_rbsqmc import run_filter_sqmc
-from rbsqmc.src.model.optimization import run_filter_unbiased
-from rbsqmc.src.model.train_model_gpu import prepare_data
+from rbsqmc.src.model.rbsqmc.model_rbsqmc import run_filter_sqmc
+from rbsqmc.src.model.rbsmc.optimization import run_filter_unbiased
+from rbsqmc.src.model.rbsmc.train_model_gpu import prepare_data
 from rbsqmc.src.utils.graphic import plot_all
 from rbsqmc.src.utils.type import RBPFState
 

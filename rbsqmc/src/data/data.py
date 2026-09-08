@@ -49,8 +49,9 @@ def filter_teams(
     ]
     # filter data by max_goals
     data = data[
-        (data["home_score"] <= max_goals) & (data["away_score"] <= max_goals)
-    ]
+        (data["home_score"].isna() | (data["home_score"] <= max_goals))
+        & (data["away_score"].isna() | (data["away_score"] <= max_goals))
+    ].copy()
     # filter out friendly matches if include_friendly is False
     data["friendly"] = data["tournament"].str.contains(
         "Friendly", case=False, na=False
@@ -64,19 +65,19 @@ def filter_teams(
         data = data[~data["friendly"]]
     data = data.reset_index(drop=True)
     # Fix dates
-    if data["date"].min() >= pd.Timestamp("2026-01-18"):
-        data.loc[
-            (data["home_team"] == "Morocco")
-            & (data["away_team"] == "Senegal")
-            & (data["date"] == "2026-01-18"),
-            ["home_score", "away_score"],
-        ] = [0, 1]
+    data.loc[
+        (data["home_team"] == "Morocco")
+        & (data["away_team"] == "Senegal")
+        & (data["date"] == pd.Timestamp("2026-01-18")),
+        ["home_score", "away_score"],
+    ] = [0, 1]
 
     # future games have nan scores - fill with -1
     data[["home_score", "away_score"]] = (
         data[["home_score", "away_score"]].fillna(-1).astype(int)
     )
-    data = _drop_duplicate_teams_per_day(data)
+    # Match-level filters process repeated appearances sequentially at dt=0.
+    # Removing these rows changes the dataset, rather than fixing propagation.
     return data
 
 def generate_team_id_mapping(data: pd.DataFrame) -> tuple[dict[str, int], dict[int, str]]:

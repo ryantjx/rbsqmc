@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from rbsqmc.scripts.sqmc_smc.compare_smc_sqmc import (
+from rbsqmc.comparison.sqmc_smc.compare_smc_sqmc import (
     _comparison_output_dir,
     _format_5sf,
     _history_summary,

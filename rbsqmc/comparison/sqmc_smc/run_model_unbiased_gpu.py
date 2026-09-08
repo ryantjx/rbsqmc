@@ -6,17 +6,17 @@ This script runs inside the Colab VM (uploaded by ``colab run``). It:
   3. Loads the config JSON (model_unbiased_gpu_config.json).
   4. Asserts a GPU is active.
   5. Runs the optimization-only phase via ``train_model_gpu.main(['optimize'])``
-     from ``rbsqmc.src.model.train_model_gpu``.
+     from ``rbsqmc.src.model.rbsmc.train_model_gpu``.
 
 Only the backward-gradient optimization runs on the GPU; filtering, plotting,
 and prediction run locally (driven by the orchestrator).
 
 Usage (local dry-run):
-    python rbsqmc/scripts/sqmc_smc/run_model_unbiased_gpu.py \
-        --config rbsqmc/scripts/sqmc_smc/config/model_unbiased_gpu_config.json --dry-run
+    python rbsqmc/comparison/sqmc_smc/run_model_unbiased_gpu.py \
+        --config rbsqmc/comparison/sqmc_smc/config/model_unbiased_gpu_config.json --dry-run
 
 Usage (Colab, via the orchestrator):
-    bash rbsqmc/scripts/sqmc_smc/run_model_unbiased_colab.sh
+    bash rbsqmc/comparison/sqmc_smc/run_model_unbiased_colab.sh
 """
 
 from __future__ import annotations
@@ -189,13 +189,13 @@ def load_config(repo_root: Path, override: str | None = None) -> dict:
     validation (positive particle/epoch counts and learning rate).
     """
     if override and not Path(override).is_absolute() and not Path(override).parent.parts:
-        override = str(repo_root / "rbsqmc/scripts/sqmc_smc/config" / override)
+        override = str(repo_root / "rbsqmc/comparison/sqmc_smc/config" / override)
     # Lazy import: the local dry-run may run under a system python without jax,
     # so we only import the pipeline module once we actually need its config.
     # The script may be executed by path (sys.path[0] = scripts/), so ensure the
     # repo root is importable.
     sys.path.insert(0, str(repo_root))
-    from rbsqmc.src.model.train_model_gpu import load_config as _load_train_config
+    from rbsqmc.src.model.rbsmc.train_model_gpu import load_config as _load_train_config
     config = _load_train_config(override)
 
     positive_integer = (
@@ -262,9 +262,9 @@ def main(argv=None) -> int:
         log(f"Wrote resolved config to {resolved_path}")
         config_path = resolved_path
     else:
-        config_path = Path(args.config) if args.config else repo_root / "rbsqmc/scripts/sqmc_smc/config/model_unbiased_gpu_config.json"
+        config_path = Path(args.config) if args.config else repo_root / "rbsqmc/comparison/sqmc_smc/config/model_unbiased_gpu_config.json"
         if not config_path.is_absolute():
-            config_path = repo_root / "rbsqmc/scripts/sqmc_smc/config" / config_path
+            config_path = repo_root / "rbsqmc/comparison/sqmc_smc/config" / config_path
 
     log(f"output_dir={config['output_dir']}")
     log(f"Writing remote outputs to {repo_root / config['output_dir']}")
@@ -282,7 +282,7 @@ def main(argv=None) -> int:
     run([
         py, "-c",
         "import sys; sys.path.insert(0, '.'); "
-        "from rbsqmc.src.model.train_model_gpu import main; "
+        "from rbsqmc.src.model.rbsmc.train_model_gpu import main; "
         "sys.exit(main(['optimize']))",
     ], cwd=repo_root, forward_raw=True)
 

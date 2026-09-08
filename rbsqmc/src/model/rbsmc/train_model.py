@@ -4,7 +4,7 @@ import pandas as pd
 import json
 
 from rbsqmc.src.data.data import get_results, get_training_data, concat_football_results
-from rbsqmc.src.model.optimization import (
+from rbsqmc.src.model.rbsmc.optimization import (
     run_filter_unbiased,
     logmarginal_maximize,
 )
@@ -134,7 +134,7 @@ def main():
 
     ############### Run Sequential Prediction for Upcoming Matches ###############
     key, pred_key = jax.random.split(key, 2)
-    from rbsqmc.src.model.predict import run_sequential_predict
+    from rbsqmc.src.model.rbsmc.predict import run_sequential_predict
     from rbsqmc.src.utils.helpers import (
         build_match_predictions,
         save_match_predictions,
@@ -171,7 +171,7 @@ def main():
     # full train+test+prediction sequence, with vertical lines at each match in
     # the prediction window. Defaults to Spain/England/France/Argentina; override
     # with cfg["observe_teams"] = [...]. Writes into pred_dir.
-    from rbsqmc.src.model.observe import run_observe
+    from rbsqmc.src.model.rbsmc.observe import run_observe
 
     run_observe(
         cfg=cfg,

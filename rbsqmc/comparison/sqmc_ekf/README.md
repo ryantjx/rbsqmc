@@ -8,11 +8,11 @@ The factorial EKF model (from [cuthberto-carlos](https://github.com/state-space-
 
 ## Task
 
-1. **Replicate** the factorial EKF model in `rbsqmc/src/model_ekf` — filtering via the `cuthbert` package, gradient descent via `optax`, and forward filtering of individual games.
+1. **Replicate** the factorial EKF model in `rbsqmc/src/model/ekf` — filtering via the `cuthbert` package, gradient descent via `optax`, and forward filtering of individual games.
 2. **Compare** SQMC vs EKF under **identical configurations**:
    - Same train / test / predict date splits.
    - Same optimization steps (gradient descent, epochs, learning rate, seed).
-3. **Deploy** to Colab, using GPU wherever available. Outputs go to `rbsqmc/scripts/sqmc_ekf/outputs/DDMMYYYY_HHMM/`.
+3. **Deploy** to Colab, using GPU wherever available. Outputs go to `rbsqmc/comparison/sqmc_ekf/outputs/DDMMYYYY_HHMM/`.
 4. **Evaluate** both models (see [Evaluation](#evaluation)).
 5. **Write the draft** based on the evaluation results.
 
@@ -20,14 +20,14 @@ The factorial EKF model (from [cuthberto-carlos](https://github.com/state-space-
 
 | Purpose | Script |
 |---|---|
-| Colab orchestrator (template) | `rbsqmc/scripts/sqmc_smc/run_model_unbiased_colab.sh` |
-| Colab GPU bootstrap (template) | `rbsqmc/scripts/sqmc_smc/run_model_unbiased_gpu.py` |
-| Config (template) | `rbsqmc/scripts/sqmc_smc/config/model_unbiased_gpu_config.json` |
-| Output validator (template) | `rbsqmc/scripts/sqmc_smc/validate_model_unbiased_outputs.py` |
-| **SMC-vs-SQMC comparison** (model for this task) | `rbsqmc/scripts/sqmc_smc/compare_smc_sqmc.py` |
-| Sequential prediction (RB-SQMC) | `rbsqmc/src/model/predict_rbsqmc.py` |
-| Sequential prediction (SMC) | `rbsqmc/src/model/predict.py` |
-| Filter / predict pipeline | `rbsqmc/src/model/train_model_gpu.py` |
+| Colab orchestrator (template) | `rbsqmc/comparison/sqmc_smc/run_model_unbiased_colab.sh` |
+| Colab GPU bootstrap (template) | `rbsqmc/comparison/sqmc_smc/run_model_unbiased_gpu.py` |
+| Config (template) | `rbsqmc/comparison/sqmc_smc/config/model_unbiased_gpu_config.json` |
+| Output validator (template) | `rbsqmc/comparison/sqmc_smc/validate_model_unbiased_outputs.py` |
+| **SMC-vs-SQMC comparison** (model for this task) | `rbsqmc/comparison/sqmc_smc/compare_smc_sqmc.py` |
+| Sequential prediction (RB-SQMC) | `rbsqmc/src/model/rbsqmc/predict_rbsqmc.py` |
+| Sequential prediction (SMC) | `rbsqmc/src/model/rbsmc/predict.py` |
+| Filter / predict pipeline | `rbsqmc/src/model/rbsmc/train_model_gpu.py` |
 | Plotting utilities | `rbsqmc/src/utils/graphic.py` |
 
 Follow `predict_rbsqmc.py` for the sequential prediction used to evaluate model performance at the end.
@@ -58,7 +58,9 @@ Both models share the **same statistical core**: an OU state-space model with a 
 
 3. **Same dynamics.** The OU transition `x_t | x_{t-1} ~ N(mu + phi(x_{t-1} - mu), Q_t)` with `phi = exp(-kappa * dt)` and `Q_t = (1 - phi^2) * Sigma_0` appears in both. The reference uses a **diagonal** `Sigma_0` (factorial, teams independent); our RB-SQMC uses a **non-diagonal** `Sigma_0 = Gamma_0 ⊗ B` (correlated teams). This is the core modelling difference the comparison tests.
 
-4. **The EKF is the factorial filter.** The reference's `cuthbert.gaussian.moments` filter is exactly the EKF we replicate in `rbsqmc/src/model_ekf`. It propagates each team's Gaussian marginal independently and linearises the observation around the current mean — the "factorial" approximation our RB-SQMC relaxes.
+4. **The EKF is the factorial filter.** The reference's `cuthbert.gaussian.moments` filter is exactly the EKF we replicate in `rbsqmc/src/model/ekf`. It propagates each team's Gaussian marginal independently and linearises the observation around the current mean — the "factorial" approximation our RB-SQMC relaxes.
+
+> **Reference fidelity.** The EKF in `rbsqmc/src/model/ekf` replicates the original factorial moment-based model from [`state-space-models/cuthberto-carlos`](https://github.com/state-space-models/cuthberto-carlos) (revision `f79147e`), matching the OU dynamics, the bivariate-Poisson observation moments, and the Gauss–Hermite score-grid prediction exactly. The sole deliberate deviation is that Cuthbert's explicit `init_prepare` initial state is used in place of the reference's ``add_dummy_initial_input`` prepended dummy input; this is the API's documented replacement for the outdated dummy initialisation and does not change the model.
 
 5. **Prediction interface.** The reference's `predict_match(skills_mean, skills_cov, alpha, beta, scale, max_goals)` returns a score grid + result probabilities. Our `predict_rbsqmc.py` / `predict.py` produce the same per-match forecast structure, so both models can be scored with the same evaluation metrics (Brier, exact/outcome accuracy, log-likelihood).
 
@@ -73,7 +75,7 @@ Both models share the **same statistical core**: an OU state-space model with a 
   "training_start_date": "1980-01-01",
   "test_start_date": "2024-01-01",
   "prediction_start_date": "2026-06-11",
-  "n_particles": 500,
+  "n_particles": 512,
   "max_goals": 8,
   "seed": 0,
   "n_epochs": 100,

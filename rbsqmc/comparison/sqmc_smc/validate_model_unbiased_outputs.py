@@ -6,7 +6,7 @@ summary satisfies the acceptance criteria (improvement over baseline, histories
 matching ``n_epochs``).
 
 Usage:
-    python rbsqmc/scripts/sqmc_smc/validate_model_unbiased_outputs.py <output_dir>
+    python rbsqmc/comparison/sqmc_smc/validate_model_unbiased_outputs.py <output_dir>
 
 Uses only the standard library (plus numpy if available for .npz / array
 checks). Exits non-zero if any check fails.

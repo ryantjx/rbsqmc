@@ -43,7 +43,7 @@ from rbsqmc.src.utils.type import (
     EMParams,
     FootballResults,
 )
-from rbsqmc.src.model.model import compute_gamma_trajectory
+from rbsqmc.src.model.rbsmc.model import compute_gamma_trajectory
 
 # SQMC building blocks
 from sqmc.hilbert_sort.hilbert_sort import hilbert_sort
@@ -109,12 +109,16 @@ def _log_match_potential_batched(
     alpha: float,
     beta: float,
     max_goals: int,
+    scale: jax.Array = 1.0,
 ) -> jnp.ndarray:
     """Return one match's log-likelihood for every particle."""
-    y = jnp.array([home_score, away_score])
+    known = (home_score >= 0) & (away_score >= 0)
+    # Keep both branches on the likelihood's support so missing observations
+    # cannot create undefined gamma-function derivatives.
+    y = jnp.where(known, jnp.array([home_score, away_score]), jnp.zeros(2, dtype=int))
     x_i = particles_x[:, home_id, :]
     x_j = particles_x[:, away_id, :]
-    return jax.vmap(
+    potential = jax.vmap(
         lambda xi, xj: loglik(
             y,
             xi,
@@ -122,9 +126,10 @@ def _log_match_potential_batched(
             alpha=alpha,
             beta=beta,
             max_goals=max_goals,
-            scale=1.0,
+            scale=scale,
         )
     )(x_i, x_j)
+    return jnp.where(known, potential, 0.0)
 
 
 def propagate_match_transform(
@@ -249,6 +254,8 @@ def run_filter_sqmc(
     params: EMParams,
     n_particles: int,
     max_goals: int,
+    *,
+    match_scales: jax.Array | None = None,
 ) -> tuple[dict, RBPFFootballResults]:
     """Run the RB-SQMC forward filter.
 
@@ -268,6 +275,8 @@ def run_filter_sqmc(
         and the augmented model_inputs_rbpf.
     """
     _, filter_key = jax.random.split(key)
+    if match_scales is None:
+        match_scales = jnp.ones_like(model_inputs.match_mask, dtype=float)
 
     # Precompute the deterministic Gamma trajectory (shared across particles)
     gamma, gamma_pred, gamma_observed, kalman_gain = compute_gamma_trajectory(
@@ -313,7 +322,7 @@ def run_filter_sqmc(
 
         def match_step(match_carry, match):
             x, log_w, log_z, key = match_carry
-            K, home_id, away_id, gamma_OO, home_score, away_score, valid = match
+            K, home_id, away_id, gamma_OO, home_score, away_score, valid, scale = match
 
             def update_valid(valid_carry):
                 x, log_w, log_z, key = valid_carry
@@ -368,6 +377,7 @@ def run_filter_sqmc(
                     alpha=params.alpha,
                     beta=params.beta,
                     max_goals=max_goals,
+                    scale=scale,
                 )
                 log_w_unnorm = log_w_resampled + log_potential
                 log_z_new = log_z + jax.scipy.special.logsumexp(log_w_unnorm)
@@ -387,6 +397,7 @@ def run_filter_sqmc(
             model_input_t.matches.home_score,
             model_input_t.matches.away_score,
             model_input_t.match_mask,
+            match_scales[t],
         )
         (x_new, log_w_new, log_z_new, key), _ = jax.lax.scan(
             match_step,
@@ -436,6 +447,8 @@ def run_filter_sqmc_logz(
     params: EMParams,
     n_particles: int,
     max_goals: int,
+    *,
+    match_scales: jax.Array | None = None,
 ) -> jnp.ndarray:
     """Run the RB-SQMC filter and return the final log-normalizing constant."""
     result, _ = run_filter_sqmc(
@@ -444,6 +457,7 @@ def run_filter_sqmc_logz(
         params=params,
         n_particles=n_particles,
         max_goals=max_goals,
+        match_scales=match_scales,
     )
     return result['log_normalizing_constant'][-1]
 

@@ -17,7 +17,7 @@ trained run (see ``PARAMS_PATH`` / ``OUT_DIR`` below). Point them at a newer
 run if you retrain.
 
 Usage:
-    python rbsqmc/scripts/sqmc_smc/observe_team_states.py [--teams Spain Argentina]
+    python rbsqmc/comparison/sqmc_smc/observe_team_states.py [--teams Spain Argentina]
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 
 from rbsqmc.src.data.data import get_training_data, concat_football_results
-from rbsqmc.src.model.optimization import run_filter_unbiased
+from rbsqmc.src.model.rbsmc.optimization import run_filter_unbiased
 from rbsqmc.src.utils.graphic import plot_all
 from rbsqmc.src.utils.helpers import load_params, resolve_teams
 

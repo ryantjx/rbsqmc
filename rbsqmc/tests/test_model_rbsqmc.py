@@ -4,8 +4,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-import rbsqmc.src.model.model_rbsqmc as model_rbsqmc
-from rbsqmc.src.model.model_rbsqmc import (
+import rbsqmc.src.model.rbsqmc.model_rbsqmc as model_rbsqmc
+from rbsqmc.src.model.rbsqmc.model_rbsqmc import (
     _differentiable_resampled_log_weights,
     _log_match_potential_batched,
     hilbert_resample,
