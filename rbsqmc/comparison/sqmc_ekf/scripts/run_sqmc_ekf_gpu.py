@@ -197,8 +197,15 @@ def main():
                     traceback.print_exc()
                     raise
             sys.path.insert(0, str(REPO / "rbsqmc/comparison/sqmc_ekf/scripts"))
-            from sqmc_ekf_protocol import validate_config
+            from sqmc_ekf_protocol import validate_config, make_archive, write_json
             validate_config(config)
+            if args.action == "setup":
+                # The orchestrator polls remote_status.json and downloads the
+                # root bundle right after setup, so write the initial status
+                # and archive the metadata (config, run_config, status, logs).
+                write_json(root / "remote_status.json",
+                           {"setup": "complete", "run": {"execution": "pending"}})
+                make_archive(root, "root", config)
             if args.action == "run":
                 run_comparison(config, root)
 
