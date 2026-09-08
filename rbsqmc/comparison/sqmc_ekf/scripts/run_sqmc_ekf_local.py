@@ -123,7 +123,7 @@ def session_map(text):
 
 
 class Launcher:
-    def __init__(self, config, output, *, run=command, sleep=time.sleep, stream_logs=False):
+    def __init__(self, config, output, *, run=command, sleep=time.sleep, stream_logs=True):
         self.config, self.output, self.run, self.sleep = config, Path(output), run, sleep
         self.colab = shutil.which("colab") or "colab"
         self.session = config["session_name"]
@@ -195,12 +195,22 @@ class Launcher:
             self.call("download", "--session", self.session, self.remote / name, target)
             return read_json(target)
 
+    # Remote-log lines worth showing during the run: per-epoch training
+    # progress, compilation, and any failure. Everything else (git/pip/setup
+    # chatter) is captured to the local log file but not echoed.
+    PROGRESS_PATTERN = re.compile(
+        r"compiled in|epoch \d+/\d+:|Comparison complete|Traceback|Error|error:"
+    )
+
     def stream_log(self):
         with tempfile.TemporaryDirectory(prefix="sqmc-log-") as temp:
             target = Path(temp) / "remote_logs.txt"
             self.call("download", "--session", self.session, self.remote / "remote_logs.txt", target)
             data = target.read_bytes()
-            print(data[self.log_offset:].decode(errors="replace"), end="", flush=True)
+            fresh = data[self.log_offset:].decode(errors="replace")
+            for line in fresh.splitlines(keepends=True):
+                if self.PROGRESS_PATTERN.search(line):
+                    print(line, end="", flush=True)
             self.log_offset = len(data)
             (self.output / "remote_logs.txt").write_bytes(data)
 
@@ -315,8 +325,8 @@ class Launcher:
             self.download("root")
             self.status["run"].update(execution="running", started_utc=now())
             self.save()
-            print("[5/6] Running the comparison (this is the long step; "
-                  "use --stream-logs to mirror the remote log live)...", flush=True)
+            print("[5/6] Running the comparison (per-epoch progress is mirrored "
+                  "below; use --no-stream-logs to silence it)...", flush=True)
             self.start_run()
             self.wait_run()
             # One final fetch so the local transcript ends with the run's
@@ -359,9 +369,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, help="JSON overrides merged into the full profile")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--stream-logs", action="store_true",
-                        help="Re-download the remote log on every poll (slower; "
-                             "off by default so polling stays cheap)")
+    parser.add_argument("--no-stream-logs", action="store_true",
+                        help="Do not mirror per-epoch progress from the remote log "
+                             "(the full log is still downloaded at the end)")
     args = parser.parse_args(argv)
     config = resolve(args.config)
     output = SCRIPTS.parents[0] / "outputs" / config["run_id"]
@@ -383,7 +393,7 @@ def main(argv=None):
         with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
             write_json(output / "comparison_config.json", config)
             print(f"Comparison output: {output}", flush=True)
-            return Launcher(config, output, stream_logs=args.stream_logs).launch()
+            return Launcher(config, output, stream_logs=not args.no_stream_logs).launch()
 
 
 if __name__ == "__main__":
