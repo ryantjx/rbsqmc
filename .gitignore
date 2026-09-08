@@ -69,5 +69,16 @@ src/scripts/qmc/qmc_archive/outputs/images/
 # Logs
 *.log
 
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.toc
+*.synctex
+*.synctex.gz
+
 # v2 local test outputs
 rbpf_ou_v2/outputs_cpu_small/

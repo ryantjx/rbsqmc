@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-DEFAULT_CONFIG_PATH = "rbsqmc/scripts/config/model_unbiased_gpu_config.json"
+DEFAULT_CONFIG_PATH = "rbsqmc/scripts/sqmc_smc/config/model_unbiased_gpu_config.json"
 
 
 def load_config(config_path: str | None = None) -> dict:

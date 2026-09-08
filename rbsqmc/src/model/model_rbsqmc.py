@@ -28,6 +28,7 @@ import os
 import jax
 import jax.numpy as jnp
 from functools import partial
+from typing import cast
 
 from rbsqmc.src.data.bivariate_poisson import loglik
 from rbsqmc.src.data.data import get_results, WORLDCUP_2026_TEAMS
@@ -46,7 +47,7 @@ from rbsqmc.src.model.model import compute_gamma_trajectory
 
 # SQMC building blocks
 from sqmc.hilbert_sort.hilbert_sort import hilbert_sort
-from sqmc.qmc.qmc import Sobol
+from sqmc.qmc.qmc import Sobol, normal_coordinates
 
 # Default to CPU locally, but allow the GPU pipeline to force a device via
 # the RBSQMC_PLATFORM env var (e.g. RBSQMC_PLATFORM=cuda on a Colab T4).
@@ -77,8 +78,21 @@ def generate_rqmc_points(
     Returns:
         Array of shape (n, d) in [0, 1]^d.
     """
-    sobol = Sobol(d=d, scramble=True, key=key, dtype=jnp.float64)
-    return sobol.sample(n)
+    # A fresh scrambled engine is constructed from ``key`` so each call
+    # produces an independent randomization starting at index zero, matching
+    # the generic SQMC filter in ``sqmc/sqmc/sqmc.py``. ``start_index=0``
+    # keeps the point set a balanced net (Owen, 2020); the open-interval
+    # policy for the Gaussian quantile is handled by ``normal_coordinates``.
+    sobol = Sobol(
+        d=d,
+        scramble=True,
+        key=key,
+        dtype=jnp.float64,
+        start_index=0,
+    )
+    # ``sample`` is typed as returning ``(points, next_state)`` when an
+    # explicit ``state`` is passed; without one it returns only ``points``.
+    return cast(jnp.ndarray, sobol.sample(n))
 
 
 # ---------------------------------------------------------------------------
@@ -138,11 +152,10 @@ def propagate_match_transform(
     )
     L_t = jnp.linalg.cholesky(Sigma_OO)
 
-    # Scrambled digital nets can very rarely contain an exact endpoint. Avoid
-    # passing 0 or 1 to the Gaussian quantile, which would produce infinities.
-    eps = jnp.finfo(v_t.dtype).eps
-    v_t = jnp.clip(v_t, eps, 1.0 - eps)
-    z = jax.scipy.stats.norm.ppf(v_t)
+    # ``normal_coordinates`` applies the 30-bit Sobol' open-interval policy
+    # (clip to [2^-31, 1 - 2^-31] and nextafter(1, 0)) before the Gaussian
+    # quantile, so exact-zero and rounded-one RQMC coordinates stay finite.
+    z = normal_coordinates(v_t)
     x_O_flat = mu_O.reshape(n_particles, 4) + z @ L_t.T
     x_O = x_O_flat.reshape(n_particles, 2, 2)
 

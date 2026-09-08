@@ -169,3 +169,61 @@ class HilbertSortTest(chex.TestCase):
     def test_invalid_shape_is_rejected(self, shape):
         with pytest.raises(ValueError):
             hilbert_sort(jnp.ones(shape, dtype=jnp.float64))
+
+    @chex.variants(with_jit=True, without_jit=True)
+    def test_large_finite_inputs_do_not_overflow(self):
+        """The review's four-point example must sort identically at 1e200."""
+        points = jnp.asarray(
+            [[3.0, 1.0], [-2.0, 5.0], [0.0, -4.0], [1.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        base_order = self.variant(lambda: hilbert_sort(points))()
+
+        scaled = points * 1e200
+        scaled_order = self.variant(lambda: hilbert_sort(scaled))()
+
+        chex.assert_trees_all_close(
+            scaled_order, base_order, rtol=0.0, atol=0.0
+        )
+
+    @chex.variants(with_jit=True, without_jit=True)
+    def test_very_small_finite_inputs_do_not_overflow(self):
+        """Very small finite magnitudes must not collapse the ordering."""
+        points = jnp.asarray(
+            [[3.0, 1.0], [-2.0, 5.0], [0.0, -4.0], [1.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        base_order = self.variant(lambda: hilbert_sort(points))()
+
+        scaled = points * 1e-200
+        scaled_order = self.variant(lambda: hilbert_sort(scaled))()
+
+        chex.assert_trees_all_close(
+            scaled_order, base_order, rtol=0.0, atol=0.0
+        )
+
+    @chex.variants(with_jit=True, without_jit=True)
+    def test_all_zero_column_maps_to_interval_centre(self):
+        """A constant (all-zero) column must not produce NaN-dependent order."""
+        points = jnp.asarray(
+            [[1.0, 0.0], [2.0, 0.0], [3.0, 0.0], [4.0, 0.0]],
+            dtype=jnp.float64,
+        )
+        order = self.variant(lambda: hilbert_sort(points))()
+        # The constant column contributes no ordering information; the result
+        # must be a valid permutation (no NaN collapse).
+        chex.assert_trees_all_close(
+            jnp.sort(order), jnp.arange(4), rtol=0.0, atol=0.0
+        )
+
+    @chex.variants(with_jit=True, without_jit=True)
+    def test_mixed_magnitude_columns_are_handled(self):
+        """Columns with very different magnitudes must not overflow."""
+        points = jnp.asarray(
+            [[1e200, 1.0], [-1e200, 2.0], [0.0, 3.0], [1e-200, 4.0]],
+            dtype=jnp.float64,
+        )
+        order = self.variant(lambda: hilbert_sort(points))()
+        chex.assert_trees_all_close(
+            jnp.sort(order), jnp.arange(4), rtol=0.0, atol=0.0
+        )

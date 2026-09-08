@@ -31,7 +31,7 @@ Note: Implementation is based on scipy.stats.qmc (https://docs.scipy.org/doc/sci
 
 from abc import abstractmethod
 from functools import partial
-from typing import ClassVar, NamedTuple
+from typing import ClassVar
 import math
 
 import jax
@@ -43,29 +43,12 @@ jax.config.update("jax_enable_x64", True)
 # jax.config.update('jax_platform_name', 'cpu')
 
 _MAX_DIMENSION_HALTON = 10000
-
-
-class QMCState(NamedTuple):
-    """Explicit sampling state for a QMC engine.
-
-    ``next_index`` is the next sequence index to generate (the exclusive end of
-    the previously generated block). It is stored as a ``uint32`` array so the
-    state is a valid JAX pytree that can be carried through ``jax.lax.scan``.
-    """
-
-    next_index: jax.Array
-
-
 class QMC:
     """
     Interface for QMC classs.
 
     Args:
     """
-    # Declared on the base so subclasses and consumers can rely on them.
-    scramble: bool
-    dtype: jnp.dtype
-
     def __init__(self, d: int) -> None:
         self._initialize(d=d)
     
@@ -73,11 +56,8 @@ class QMC:
         self.d = d
     
     @abstractmethod
-    def sample(
-        self, n: int, *, state: QMCState | None = None
-    ) -> jnp.ndarray | tuple[jnp.ndarray, QMCState]:
+    def sample(self, n: int) -> jnp.ndarray:
         raise NotImplementedError("sample method must be implemented in subclasses.")
-
 
 class Halton(QMC):
     """The Halton sequence uses a radical-inverse sequence in a distinct prime base for each dimension [1]_. When scrambling is enabled, an independent random permutation is applied to the digits at each digit position and in each dimension, following the randomized Halton algorithm of Owen [2]_.
@@ -113,11 +93,6 @@ class Halton(QMC):
         if not isinstance(d, int):
             raise TypeError("d must be a Python integer.")
 
-        if isinstance(start_index, bool) or not isinstance(start_index, int):
-            raise TypeError("start_index must be a Python integer.")
-        if start_index < 0:
-            raise ValueError("start_index must be nonnegative.")
-
         super().__init__(d=d)
         self.scramble = bool(scramble)
         self._bases = tuple(int(p) for p in _PRIMES[:d])
@@ -136,14 +111,6 @@ class Halton(QMC):
             self._permutations = None
             self._tail_corrections = None
             self._digits_per_dim = self._initialize_digits_per_dim()
-
-        # A start at or beyond the index limit would wrap in uint32 and
-        # silently reproduce the beginning of the sequence. Reject it up front.
-        if start_index >= self._index_limit():
-            raise ValueError(
-                f"start_index must be below the index limit "
-                f"{self._index_limit()}, but got {start_index}."
-            )
 
     def _initialize_digits_per_dim(self):
         precision_bits = 23 if self.dtype == jnp.float32 else 53
@@ -216,39 +183,29 @@ class Halton(QMC):
         _, values, _ = final_state
         return values
         # return values + tail_correction
-    def _index_limit(self) -> int:
-        """Maximum exclusive index representable without wraparound.
+    def sample(self, n: int) -> jnp.ndarray:
+        """Halton sequence generator.
 
-        The minimum of ``2**32`` (the ``uint32`` index dtype) and the supported
-        digit range of every active coordinate. A final block may end exactly
-        at this limit, but the next point is rejected.
+        Args:
+            n (int): Number of samples to generate.
+
+        Returns:
+            jnp.ndarray: An array of shape (n, d) containing the Halton sequence samples.
         """
-        return min(
-            2**32,
-            *(base**digits for base, digits in zip(self._bases, self._digits_per_dim)),
-        )
+        if not isinstance(n, int):
+            raise TypeError("n must be a Python integer.")
+        
+        if n <= 0:
+            raise ValueError("Number of samples n must be positive.")
+        first_index = self.start_index + self._num_generated
+        stop_index = first_index + n
 
-    def _eager_state(self) -> QMCState:
-        """Return the current sampling state for the eager path."""
-        return QMCState(
-            next_index=jnp.asarray(
-                self.start_index + self._num_generated, dtype=jnp.uint32
-            )
-        )
+        # first dim use base 2 and determines max number of digits needed for all dimensions
+        sequence_limit = self._bases[0] ** self._digits_per_dim[0]
+        if stop_index > sequence_limit:
+            raise ValueError(f"Requested points exceed configured Halton digit precision. Maximum exclusive index is {sequence_limit}, but requested {stop_index}. Consider reducing n or increasing precision.")
 
-    def _sample_from_state(self, n: int, state: QMCState):
-        """Generate ``n`` points continuing from ``state``.
-
-        Pure computation shared by the eager and explicit-state paths. It does
-        not read or update ``_num_generated`` or any other captured Python
-        attribute, so it is safe to trace inside ``jax.lax.scan``.
-
-        Returns ``(points, next_state)``.
-        """
-        first_index = state.next_index
-        # Offset form keeps the batch size static while allowing a dynamic
-        # (traced) start index inside a compiled scan.
-        indices = jnp.arange(n, dtype=jnp.uint32) + first_index
+        indices = jnp.arange(first_index, stop_index, dtype=jnp.uint32)
 
         coordinates = []
 
@@ -269,51 +226,6 @@ class Halton(QMC):
             coordinates.append(coordinate)
 
         points = jnp.stack(coordinates, axis=-1).astype(self.dtype)
-        return points, QMCState(next_index=first_index + n)
-
-    def sample(
-        self, n: int, *, state: QMCState | None = None
-    ) -> jnp.ndarray | tuple[jnp.ndarray, QMCState]:
-        """Halton sequence generator.
-
-        Args:
-            n (int): Number of samples to generate.
-            state (QMCState | None): Optional explicit sampling state. When
-                provided, returns ``(points, next_state)`` and does not mutate
-                the engine's internal counter, so it can be used inside a
-                compiled ``jax.lax.scan``. When ``None`` (default), returns
-                only ``points`` and advances the engine's counter.
-
-        Returns:
-            jnp.ndarray: An array of shape (n, d) containing the Halton
-            sequence samples, or ``(points, next_state)`` when ``state`` is
-            given.
-        """
-        if not isinstance(n, int):
-            raise TypeError("n must be a Python integer.")
-
-        if n <= 0:
-            raise ValueError("Number of samples n must be positive.")
-
-        if state is not None:
-            return self._sample_from_state(n, state)
-
-        # Eager path: validate bounds before generating. Use wrap-safe
-        # arithmetic so an overflowing start cannot silently wrap to a small
-        # index and reproduce the beginning of the sequence.
-        first_index = self.start_index + self._num_generated
-        stop_index = first_index + n
-
-        limit = self._index_limit()
-        if first_index < 0 or n > limit or first_index > limit - n:
-            raise ValueError(
-                f"Requested Halton block exceeds the index range. "
-                f"Maximum exclusive index is {limit}, but requested "
-                f"[{first_index}, {stop_index}). Consider reducing n or "
-                f"increasing precision."
-            )
-
-        points, _ = self._sample_from_state(n, self._eager_state())
         self._num_generated += n
         return points
 
@@ -363,8 +275,7 @@ class Sobol(QMC):
         d: int, 
         scramble: bool = False,
         key: jax.Array = jax.random.PRNGKey(0),
-        dtype: jnp.dtype = jnp.float64,
-        start_index: int = 1
+        dtype: jnp.dtype = jnp.float64
     ):
         max_dimension = _DIRECTION_INTEGERS.shape[0]
 
@@ -379,16 +290,10 @@ class Sobol(QMC):
         if dtype not in (jnp.float32, jnp.float64):
             raise ValueError("dtype must be jnp.float32 or jnp.float64.")
 
-        if isinstance(start_index, bool) or not isinstance(start_index, int):
-            raise TypeError("start_index must be a Python integer.")
-        if start_index < 0:
-            raise ValueError("start_index must be nonnegative.")
-
         super().__init__(d=d)
         self.scramble = bool(scramble)
         self.key=key
         self.dtype = dtype
-        self.start_index = start_index
         self._num_generated = 0
 
         self._direction_integers = jnp.asarray(_DIRECTION_INTEGERS[0:d, 0:_MAXBITS], dtype=jnp.uint32)
@@ -477,29 +382,29 @@ class Sobol(QMC):
 
         return jnp.sum(shift_bits * bit_weights[None, :], axis=-1, dtype=jnp.uint32)
     
-    def _eager_state(self) -> QMCState:
-        """Return the current sampling state for the eager path.
-
-        The first generated index is ``start_index + _num_generated``. The
-        default ``start_index=1`` drops the origin for backward compatibility;
-        balanced-net experiments should use ``start_index=0``.
+    def sample(self, n: int) -> jnp.ndarray:
         """
-        return QMCState(
-            next_index=jnp.asarray(
-                self.start_index + self._num_generated, dtype=jnp.uint32
-            )
-        )
+        Generate n samples from the Sobol sequence.
 
-    def _sample_from_state(self, n: int, state: QMCState):
-        """Generate ``n`` points continuing from ``state``.
-
-        Pure computation shared by the eager and explicit-state paths. It does
-        not read or update ``_num_generated`` or any other captured Python
-        attribute, so it is safe to trace inside ``jax.lax.scan``.
-
-        Returns ``(points, next_state)``.
+        Args:
+            n (int): Number of samples to generate.
+        Returns:
+            jnp.ndarray: An array of shape (n, d) containing the Sobol sequence samples.
         """
-        first_index = state.next_index
+        if not isinstance(n, int):
+            raise TypeError("n must be a Python integer.")
+
+        if n <= 0:
+            raise ValueError("Number of samples n must be positive.")
+
+        # Start at index 1 to drop the first Sobol' point, which is the origin.
+        # The origin is a poor sample in practice, so it is conventionally
+        # omitted (Owen, 2020).
+        first_index = self._num_generated + 1
+        stop_index = first_index + n
+
+        if stop_index > MAX_POINTS:
+            raise ValueError(f"Requested points exceed maximum number of Sobol points ({MAX_POINTS}). Consider reducing n.")
         points = _sobol_sample_batched(
             first_index=first_index,
             n=n,
@@ -508,63 +413,8 @@ class Sobol(QMC):
             num_bits=_MAXBITS,
             dtype=self.dtype,
         )
-        return points, QMCState(next_index=first_index + n)
-
-    def sample(
-        self, n: int, *, state: QMCState | None = None
-    ) -> jnp.ndarray | tuple[jnp.ndarray, QMCState]:
-        """
-        Generate n samples from the Sobol sequence.
-
-        Args:
-            n (int): Number of samples to generate.
-            state (QMCState | None): Optional explicit sampling state. When
-                provided, returns ``(points, next_state)`` and does not mutate
-                the engine's internal counter, so it can be used inside a
-                compiled ``jax.lax.scan``. When ``None`` (default), returns
-                only ``points`` and advances the engine's counter.
-        Returns:
-            jnp.ndarray: An array of shape (n, d) containing the Sobol
-            sequence samples, or ``(points, next_state)`` when ``state`` is
-            given.
-        """
-        if not isinstance(n, int):
-            raise TypeError("n must be a Python integer.")
-
-        if n <= 0:
-            raise ValueError("Number of samples n must be positive.")
-
-        if state is not None:
-            return self._sample_from_state(n, state)
-
-        # Eager path: validate bounds before generating.
-        # Keep aligned power-of-two blocks for balanced-net experiments.
-        # Dropping index zero can destroy balance (Owen, 2020).
-        # With scrambling, the first point is generally not the origin.
-        # Handle inverse-CDF endpoints without dropping an entire point.
-        first_index = self.start_index + self._num_generated
-        stop_index = first_index + n
-
-        if stop_index > MAX_POINTS:
-            raise ValueError(f"Requested points exceed maximum number of Sobol points ({MAX_POINTS}). Consider reducing n.")
-        points, _ = self._sample_from_state(n, self._eager_state())
         self._num_generated += n
         return points
-
-    def _validate_balanced_block(self, n: int) -> None:
-        """Validate that ``n`` points form a balanced power-of-two block.
-
-        A balanced Sobol' block requires a power-of-two count ``n`` and a start
-        index divisible by ``n``. This is only required where a benchmark
-        claims balanced-net sampling; ordinary sequence requests are not
-        restricted.
-        """
-        if n <= 0 or n & (n - 1):
-            raise ValueError("Balanced Sobol blocks require a power-of-two count.")
-        first_index = self.start_index + self._num_generated
-        if first_index % n:
-            raise ValueError("Balanced Sobol blocks require an aligned start.")
-
     def reset(self):
         """Reset the Sobol sequence generator to its initial state."""
         self._num_generated = 0
@@ -647,18 +497,7 @@ def _sobol_sample_batched(
 
     scale = jnp.asarray(2.0**(-num_bits), dtype=dtype,)
 
-    points = integer_points.astype(dtype) * scale
-
-    # Preserve the generator's [0, 1) contract. A 30-bit coordinate can round
-    # up to exactly 1.0 in float32 (e.g. index 715827882), which would make a
-    # normal inverse CDF infinite. Cap any rounded-one value at nextafter(1, 0)
-    # in the requested dtype. Exact zero remains valid. Note that float32
-    # cannot represent every distinct 30-bit coordinate, so clipping prevents
-    # an invalid endpoint but does not restore lost precision; use float64 for
-    # the principal comparison.
-    zero = jnp.asarray(0, dtype=dtype)
-    one = jnp.asarray(1, dtype=dtype)
-    return jnp.minimum(points, jnp.nextafter(one, zero))
+    return integer_points.astype(dtype) * scale
 
     # NOTE: jax.lax.scan iterates over 30 step.
     # def _sobol_sample_batched(
@@ -686,31 +525,6 @@ def _sobol_sample_batched(
     #     integer_points, _ = jax.lax.scan(add_direction_number, initial_values, jnp.arange(num_bits, dtype=jnp.uint32))
     #     scale = jnp.asarray(2.0 ** (-num_bits), dtype=dtype)
     #     return integer_points.astype(dtype) * scale
-
-
-def normal_coordinates(u: jax.Array) -> jax.Array:
-    """Standard-normal quantile with an explicit open-interval policy.
-
-    Applies the 30-bit Sobol' boundary policy before the Gaussian inverse CDF:
-    coordinates are clipped to ``[2^-31, 1 - 2^-31]`` (and additionally to
-    ``nextafter(1, 0)`` in the requested dtype). This keeps the normal quantile
-    finite for exact zero and rounded-one inputs, at the cost of a documented
-    finite-precision approximation. Interior values are unchanged.
-
-    Use this for initialization and propagation coordinates in both SMC and
-    SQMC. Resampling coordinates need the separate cumulative-probability
-    convention (see ``resample_from_uniform``).
-    """
-    zero = jnp.asarray(0, dtype=u.dtype)
-    one = jnp.asarray(1, dtype=u.dtype)
-    lower = jnp.asarray(2.0**-31, dtype=u.dtype)
-    upper = jnp.minimum(
-        jnp.asarray(1.0 - 2.0**-31, dtype=u.dtype),
-        jnp.nextafter(one, zero),
-    )
-    return jax.scipy.special.ndtri(jnp.clip(u, lower, upper))
-
-
 def main():
     from scipy.stats import qmc
 

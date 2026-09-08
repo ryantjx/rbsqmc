@@ -300,14 +300,23 @@ def hilbert_sort(x: jax.Array) -> jax.Array:
     grid_size = 1 << bits_per_dimension  # power-of-two grid (not a speed lever; see module docstring)
 
     work = x.astype(_FLOAT_DTYPE)
-    means = jnp.mean(work, axis=0, keepdims=True)
-    standard_deviations = jnp.std(work, axis=0, keepdims=True)
+    # Scale each column by its maximum absolute value before the reductions.
+    # This bounds the values used in the mean/variance calculations and
+    # prevents square-overflow on large finite inputs (e.g. 1e200), which
+    # would otherwise collapse the normalized coordinates. Constant columns
+    # (scale zero) are replaced with a scale of one so they still map to the
+    # interval centre.
+    scale = jnp.max(jnp.abs(work), axis=0, keepdims=True)
+    scale = jnp.where(scale > _FLOAT_DTYPE(0), scale, jnp.ones_like(scale))
+    scaled = work / scale
+    means = jnp.mean(scaled, axis=0, keepdims=True)
+    standard_deviations = jnp.std(scaled, axis=0, keepdims=True)
     safe_standard_deviations = jnp.where(
         standard_deviations > _FLOAT_DTYPE(0),
         standard_deviations,
         jnp.ones_like(standard_deviations),
     )
-    standardized = (work - means) / safe_standard_deviations
+    standardized = (scaled - means) / safe_standard_deviations
     unit_coordinates = invlogit(standardized)
 
     integer_coordinates = jnp.clip(

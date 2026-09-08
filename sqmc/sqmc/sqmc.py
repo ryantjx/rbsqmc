@@ -37,7 +37,7 @@ import jax
 import jax.numpy as jnp
 from jax import random
 
-from typing import Protocol
+from typing import Protocol, cast
 
 def resample_from_uniform(sorted_uniforms, logits):
     """Inverse-CDF ancestor selection from sorted RQMC uniforms and Hilbert-ordered logits.
@@ -48,15 +48,57 @@ def resample_from_uniform(sorted_uniforms, logits):
     ``numba/core/typing/npydecl.py``). The pure-JAX path is what the GPU
     branch of ``inverse_cdf`` uses and is correct for sorted uniforms.
 
+    Adopts half-open cumulative intervals (task 7): for ``u`` in ``[0, 1)``,
+    selects the first cumulative probability strictly greater than ``u`` via
+    a right-sided ``searchsorted``. The cumulative weights are normalised by
+    their final value so the upper endpoint is exactly one, which keeps a
+    trailing zero-weight plateau at one. A rounded input of exactly one is
+    mapped to ``nextafter(1, 0)``.
+
     Returns ``(idx, logits_out)``. ``idx`` indexes into the *Hilbert-ordered*
     particle ordering, so the caller must map back with ``h_order[idx]``.
     """
-    weights = jnp.exp(logits - jax.nn.logsumexp(logits))
-    cs = jnp.cumsum(weights)
-    idx = jnp.searchsorted(cs, sorted_uniforms, method="sort")
-    idx = jnp.clip(idx, 0, weights.shape[0] - 1).astype(int)
+    # Accept a trailing singleton dimension (the filter carries (N, 1) log
+    # weights); squeeze it so the cumulative search is one-dimensional.
+    if logits.ndim == 2 and logits.shape[1] == 1:
+        logits = logits[:, 0]
+    if logits.ndim != 1 or sorted_uniforms.ndim != 1:
+        raise ValueError("logits and sorted_uniforms must be one-dimensional.")
+    if logits.shape[0] == 0:
+        raise ValueError("logits must be nonempty.")
+
+    weights = jax.nn.softmax(logits)
+    cdf = jnp.cumsum(weights)
+    cdf = cdf / cdf[-1]
+    one = jnp.asarray(1, dtype=sorted_uniforms.dtype)
+    zero = jnp.asarray(0, dtype=sorted_uniforms.dtype)
+    # Explicit policy: tolerate a rounded input of exactly one, but reject
+    # values outside [0, 1] (the caller is responsible for finite uniforms).
+    u = jnp.minimum(sorted_uniforms, jnp.nextafter(one, zero))
+    idx = jnp.searchsorted(cdf, u, side="right", method="sort")
     logits_out = jnp.zeros_like(sorted_uniforms)
     return idx, logits_out
+
+
+def _sample_points(qmc: QMC, key: KeyArray, n: int) -> jnp.ndarray:
+    """Sample ``n`` QMC points, scrambling with ``key`` when enabled.
+
+    When ``qmc.scramble`` is True, a fresh scrambled engine is constructed
+    from ``key`` so each call produces an independent randomization starting at
+    index zero (task 6). When False, the captured engine's deterministic
+    sequence is used and ``key`` is ignored.
+    """
+    if qmc.scramble:
+        engine = Sobol(
+            d=qmc.d,
+            scramble=True,
+            key=key,
+            dtype=qmc.dtype,
+            start_index=0,
+        )
+        return cast(jnp.ndarray, engine.sample(n))
+    return cast(jnp.ndarray, qmc.sample(n))
+
 
 class InitTransform(Protocol):
     def __call__(self, u: Array, model_inputs: ArrayTreeLike) -> ArrayTree:
@@ -73,11 +115,11 @@ def build_filter(
     n_filter_particles: int,
     qmc: QMC
 ) -> Filter:
-    # init_sample ignores the key and uses fixed RQMC points -> deterministic.
+    # init_sample uses the key to scramble the RQMC points when enabled.
     # The QMC point set has dimension du + 1 (resampling + state); init only
     # needs the first du coordinates.
     def init_sample(key, model_inputs):
-        u = qmc.sample(n_filter_particles)          # generating QMC sequence (N, du + 1) (can only sample d coordinates)
+        u = _sample_points(qmc, key, n_filter_particles)  # (N, du + 1)
         u = u[:, : qmc.d - 1]                        # slice (N, du) for the initial state
         return jax.vmap(init_transform, (0, None))(u, model_inputs)
 
@@ -89,7 +131,8 @@ def build_filter(
         ),
         filter_prepare=partial(
             filter_prepare, 
-            init_sample=init_sample,
+            init_transform=init_transform,
+            qmc=qmc,
             n_filter_particles=n_filter_particles
         ),
         filter_combine=partial(
@@ -158,27 +201,30 @@ def init_prepare(
 
 def filter_prepare(
     model_inputs: ArrayTreeLike,
-    init_sample : InitSample,
+    init_transform : InitTransform,
+    qmc: QMC,
     n_filter_particles: int,
     key: KeyArray | None = None,
 ) -> ParticleFilterState:
     """Prepare an empty state for the current SQMC step.
 
     Only the particle shapes are needed here; the actual particles are
-    produced by ``filter_combine``. ``init_sample`` is used to infer the
-    per-particle shape ``(du,)``, which is then broadcast to ``(N, du)``.
+    produced by ``filter_combine``. The per-particle shape is derived by
+    applying ``jax.eval_shape`` to the deterministic ``init_transform`` with an
+    abstract uniform-coordinate input, so no QMC points are consumed (task 5).
     """
     model_inputs = tree.map(lambda x: jnp.asarray(x), model_inputs)
     if key is None:
         raise ValueError("A JAX PRNG key must be provided.")
 
-    # we are using 
-    # init_sample returns the full (N, du) batch; take the first row to infer
-    # the single-particle shape, then broadcast to (N, du).
-    batch = init_sample(key, model_inputs)
+    # Derive the per-particle shape without sampling or scrambling.
+    uniform_spec = jax.ShapeDtypeStruct((qmc.d - 1,), qmc.dtype)
+    particle_spec = jax.eval_shape(
+        lambda u: init_transform(u, model_inputs), uniform_spec
+    )
     particles = tree.map(
-        lambda x: jnp.empty((n_filter_particles,) + x.shape[1:], dtype=x.dtype),
-        batch,
+        lambda spec: jnp.empty((n_filter_particles,) + spec.shape, spec.dtype),
+        particle_spec,
     )
     log_weights = jnp.zeros(n_filter_particles)
     
@@ -205,8 +251,8 @@ def filter_combine(
 ) -> ParticleFilterState:
     N = state_1.log_weights.shape[0]
 
-    # 1. RQMC points of dimension 1 + d
-    u = qmc.sample(N)                      # (N, 1 + d)
+    # 1. RQMC points of dimension 1 + d, scrambled with the carried key (task 6)
+    u = _sample_points(qmc, state_1.key, N)      # (N, 1 + d)
 
     # 2. Sort RQMC by first coordinate
     tau = jnp.argsort(u[:, 0])
@@ -239,6 +285,10 @@ def filter_combine(
         log_normalizing_constant_incr + state_1.log_normalizing_constant
     )
 
+    # Carry the prepared key forward so the next observation uses a distinct
+    # randomization (task 6 key schedule). ``state_1.key`` was consumed to
+    # scramble this step's points; ``state_2.key`` is the fresh key supplied by
+    # ``filter_prepare`` for the current observation.
     return ParticleFilterState(
         state_2.key,
         next_particles,
@@ -304,9 +354,10 @@ def main():
         qmc=qmc,
     )
 
-    # Generate observations from the model.
+    # Generate observations from the model, sampling the initial state from
+    # the prior X_0 ~ N(0, 1) (task 9).
     key = random.PRNGKey(0)
-    x_true = 0.0
+    x_true = jax.random.normal(key, ())
     observations = []
     for t in range(n_steps):
         key = random.fold_in(key, t)
@@ -315,16 +366,24 @@ def main():
         observations.append(x_true + sigma_y * random.normal(key, ()))
     observations = jnp.array(observations)
 
-    # Run the filter.
-    state = filter_.init_prepare({"y": observations[0]}, key=key)
-    for t in range(1, n_steps):
-        state = filter_.filter_combine(
-            state,
-            filter_.filter_prepare({"y": observations[t]}, key=key),
-        )
+    # Run the filter, updating on every observation including the first
+    # (task 9). Split the trajectory key into separate initialization and
+    # observation streams so no key is reused (task 6).
+    trajectory_key = random.PRNGKey(0)
+    init_key, steps_key = random.split(trajectory_key)
+    step_keys = random.split(steps_key, n_steps + 1)
+
+    state = filter_.init_prepare({"y": observations[0]}, key=init_key)
+    state = state._replace(key=step_keys[0])
+    for observation, next_key in zip(observations, step_keys[1:]):
+        prepared = filter_.filter_prepare({"y": observation}, key=next_key)
+        state = filter_.filter_combine(state, prepared)
+
+    weights = jax.nn.softmax(state.log_weights)
+    final_mean = jnp.tensordot(weights, state.particles, axes=(0, 0))
 
     print(f"Estimated log-likelihood: {state.log_normalizing_constant:.4f}")
-    print(f"Final mean state estimate: {jnp.mean(state.particles):.4f}")
+    print(f"Final mean state estimate: {final_mean:.4f}")
 
 
 if __name__ == "__main__":
