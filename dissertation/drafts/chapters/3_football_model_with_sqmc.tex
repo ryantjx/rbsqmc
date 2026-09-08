@@ -440,6 +440,28 @@ so that
 
 \section{Performance comparison}
 
+We compare the performance of RB-SQMC with the EKF model implemented in [](cuthberto-carlos). The EKF model is a linear-Gaussian approximation of the state-space model, which speeds up the computation of the model since the posterior can be computed in closed form. However, the EKF model introduces bias in the estimation of the posterior distribution. As a result, the EKF model may not capture the true uncertainty in the latent states.
+\subsection{Parameters}
+
+full parameter set in Appendeix
+% Generated: 2026-09-08 19:53:24
+% Dataset rows: 49521 (train 32, test 8, prediction count 4).
+% Config: {"training_start_date": "1980-01-01", "test_start_date": "2024-01-01", "prediction_start_date": "2026-06-11", "n_particles": 64, "max_goals": 8, "seed": 0, "n_epochs": 3, "learning_rate": 0.02, "n_reps": 2, "include_friendly": true, "teams": "worldcup2026", "match_scale": 1, "gauss_hermite_degree": 32, "gpu": "A100", "gpu_type": "A100", "colab_timeout": 14400, "setup_timeout": 900, "transfer_timeout": 600, "session": "sqmc_ekf", "repo_url": "https://github.com/ryantjx/rbsqmc.git", "repo_branch": "main", "source_commit": "abf444d31d9fbadde6411c743921914edc749178", "run_id": "08092026_1153", "session_name": "sqmc_ekf_08092026_1153_cadca68b43", "resolved_utc": "2026-09-08T11:53:07.052255+00:00", "source_transport": "colab_git_bundle", "smoke": true}
+
+
+\subsection{Metrics}
+- logz_overlay_train_test.png
+- Brier score vs uniform, mean predictive log-score, outcome accuracy
+
+\subsection{Qualitative Evaluation}
+
+- timeseries states EKF / RB-SQMC (rbsqmc/comparison/sqmc_ekf/outputs/08092026_1135/ekf/images/ekf_timeseries_states.png and rbsqmc/comparison/sqmc_ekf/outputs/08092026_1135/sqmc/images/sqmc_timeseries_states.png)
+- Full top N rankings for RB-SQMC pre and post world cup
+- Key difference: top N correlation from RB-SQMC
+- store other images in Appendix (e.g. Full rankings of teams pre / post worldcup)
+
+Time comparison: the EKF model is extremely efficient, taking only a few seconds to perform log-marginal likelihood gradient descent optimization. however, the RB-SQMC model takes longer to run on GPU (~1.5 hours on A100), so there is a significant start-up cost to the RB-SQMC model. However, filtering is an efficient process and can be executed in this time frame (given that football match results are not generated at a high-frequency). Further extensions would be to implement a more efficient parameter estimation technique to recover the optimal static parameters, such as variational inference.
+
 % Comparison of the performance of RB-SMC, RB-SQMC, SMC, EKF
 % plot spain's skill level over time as a sideways histogram for each match
 

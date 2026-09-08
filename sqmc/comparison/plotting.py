@@ -20,7 +20,7 @@ def qmc_figure(rows):
     if any(r.get('scramble') is not True or r['mode'] != 'fresh' for r in rows):
         raise ValueError('QMC publication figure requires fresh scrambling')
     dims = sorted({r['dimension'] for r in rows})
-    styles = [('jax', 'cpu', '--', 'JAX CPU'), ('jax', 'gpu', '-', 'JAX GPU'), ('scipy', 'cpu', ':', 'SciPy CPU')]
+    styles = [('jax', 'gpu', '-', 'JAX GPU'), ('scipy', 'cpu', ':', 'SciPy CPU')]
     fig, axes = plt.subplots(2, 2, figsize=(7.2, 5.8), layout='constrained')
     for sequence, pair in zip(['sobol', 'halton'], axes):
         for d, color in zip(dims, COLORS):
@@ -30,12 +30,12 @@ def qmc_figure(rows):
                 grouped[(impl, backend)] = {r['n']:r['median_seconds'] for r in values}
                 pair[0].plot([r['n'] for r in values], [r['median_seconds']*1000 for r in values], color=color, linestyle=style, linewidth=1.1)
             gpu = grouped[('jax', 'gpu')]
-            for identity, style in [(('jax', 'cpu'), '--'), (('scipy', 'cpu'), ':')]:
+            for identity, style in [(('scipy', 'cpu'), '--')]:
                 values = grouped[identity]
                 counts = sorted(set(values) & set(gpu))
                 pair[1].plot(counts, [values[n]/gpu[n] for n in counts], color=color, linestyle=style, linewidth=1.1)
         pair[0].set(title=sequence.title() + ': fresh scrambling + sampling', ylabel='Median time (ms)', yscale='log')
-        pair[1].set(title=sequence.title() + ': CPU / JAX GPU', ylabel='Median-runtime ratio', yscale='log')
+        pair[1].set(title=sequence.title() + ': SciPy CPU / JAX GPU', ylabel='Median-runtime ratio', yscale='log')
         if not any(r['sequence'] == sequence and r['backend'] == 'gpu' for r in rows):
             pair[1].set(xlim=(min(r['n'] for r in rows), max(r['n'] for r in rows)*1.01), ylim=(.5, 2))
             pair[1].text(.5, .5, 'GPU not requested', transform=pair[1].transAxes, ha='center')

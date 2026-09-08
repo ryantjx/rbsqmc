@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from rbsqmc.comparison.sqmc_ekf.scripts import sqmc_ekf_protocol as protocol
-from rbsqmc.comparison.sqmc_ekf.scripts.refresh_colab_proxy import refresh
+from rbsqmc.comparison.sqmc_ekf.scripts.refresh_colab_proxy import execute as remote_execute, refresh
 
 
 @pytest.fixture
@@ -37,6 +37,118 @@ def test_quiet_command_preserves_original_failure_through_tee(local):
     assert caught.value.output == "HTTP 404\n"
     assert terminal.getvalue() == log.getvalue()
     assert "HTTP 404" in terminal.getvalue()
+
+
+def proxy_state():
+    session = SimpleNamespace(endpoint="owned", token="old", url="url", kernel_id="kernel",
+                              session_id="connection", keep_alive_pid=123)
+    cache = {"test": session}
+    proxy = SimpleNamespace(token="fresh", url="url", token_expires_in_seconds=3600)
+    assignments = [SimpleNamespace(endpoint="owned", runtime_proxy_info=proxy,
+                                   variant=SimpleNamespace(name="GPU"),
+                                   accelerator=SimpleNamespace(value="A100"))]
+    state = SimpleNamespace(
+        store=SimpleNamespace(get=cache.get, list=lambda: cache,
+                              add=lambda value: cache.update(test=value)),
+        client=SimpleNamespace(list_assignments=lambda: assignments),
+        auth_provider="auth", config_path=None,
+        prune_session=lambda *args: pytest.fail("Pruned the live session"))
+    return state, cache, assignments
+
+
+@pytest.mark.parametrize("error", [RuntimeError("HTTP 401"), RuntimeError("HTTP 404"), TimeoutError("offline")])
+def test_failed_remote_execution_preserves_cache_kernel_and_keep_alive(error, capsys):
+    state, cache, _ = proxy_state()
+    closes = []
+    fail = [True]
+
+    class Runtime:
+        def __init__(self, url, token, **kwargs):
+            assert token == "fresh"
+            assert kwargs["kernel_id"] == "kernel"
+
+        def execute_code(self, code, timeout):
+            if fail[0]:
+                raise error
+            return [{"output_type": "stream", "text": "sqmc epoch 36/50\n"}]
+
+        def stop(self, shutdown_kernel):
+            closes.append(shutdown_kernel)
+
+    with pytest.raises(type(error), match=str(error)):
+        remote_execute(state, "test", "owned", "poll", 10, Runtime)
+    assert cache["test"].keep_alive_pid == 123
+    assert cache["test"].kernel_id == "kernel"
+    fail[0] = False
+    remote_execute(state, "test", "owned", "poll", 10, Runtime)
+    assert closes == [False, False]
+    assert capsys.readouterr().out == "sqmc epoch 36/50\n"
+
+
+def test_missing_cache_is_restored_only_for_existing_saved_endpoint():
+    state, cache, assignments = proxy_state()
+    cache.clear()
+    starts = []
+
+    def start(endpoint, name, **kwargs):
+        assert "test" in cache
+        starts.append((endpoint, name))
+        return 456
+
+    refresh(state, "test", "owned", session_factory=SimpleNamespace, keep_alive=start)
+    assert cache["test"].endpoint == "owned"
+    assert cache["test"].keep_alive_pid == 456
+    refresh(state, "test", "owned", session_factory=SimpleNamespace, keep_alive=start)
+    assert starts == [("owned", "test")]
+    cache.clear()
+    assignments.clear()
+    with pytest.raises(RuntimeError, match="no longer assigned"):
+        refresh(state, "test", "owned", session_factory=SimpleNamespace, keep_alive=start)
+    assert not cache
+    assert len(starts) == 1
+
+
+def test_restoring_cache_refuses_endpoint_registered_under_another_name():
+    state, cache, _ = proxy_state()
+    cache["other"] = cache.pop("test")
+    with pytest.raises(RuntimeError, match="different session name"):
+        refresh(state, "test", "owned", session_factory=SimpleNamespace)
+    assert set(cache) == {"other"}
+
+
+def test_launcher_execute_uses_non_pruning_adapter(local, launcher, tmp_path):
+    cli = tmp_path / "colab"
+    cli.write_text("#!/cli/bin/python3\n")
+    launcher.colab, launcher.endpoint = str(cli), "owned"
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        assert Path(argv[argv.index("--exec-file") + 1]).read_text() == "print('poll')"
+        return "poll\n"
+
+    launcher.run = run
+    assert launcher.execute("print('poll')") == "poll\n"
+    assert calls[0][0] == "/cli/bin/python3"
+    assert calls[0][1].endswith("refresh_colab_proxy.py")
+    assert "exec" not in calls[0]
+    with pytest.raises(ValueError, match="prune"):
+        launcher.call("exec")
+
+
+def test_reconnect_restores_cache_before_downloading_config(launcher, monkeypatch):
+    actions = []
+    monkeypatch.setattr(launcher, "sessions", lambda: pytest.fail("Used the CLI cache as server truth"))
+    monkeypatch.setattr(launcher, "refresh_proxy", lambda: actions.append("restore"))
+
+    def download(*args):
+        assert actions == ["restore"]
+        protocol.write_json(Path(args[-1]), launcher.config)
+        actions.append("download")
+
+    monkeypatch.setattr(launcher, "call", download)
+    launcher.reconnect()
+    assert actions == ["restore", "download"]
 
 
 def test_snapshot_filters_remotely_and_preserves_partial_utf8_lines(tmp_path):
@@ -153,7 +265,7 @@ def test_launcher_refreshes_before_expiry_using_cli_interpreter(local, launcher,
 
     launcher.run = run
     launcher.call("download", "first")
-    launcher.call("exec", "second")
+    launcher.call("upload", "second")
     assert len(calls) == 3
     assert calls[0][-2:] == ["test", "owned"]
     now[0] += 1201

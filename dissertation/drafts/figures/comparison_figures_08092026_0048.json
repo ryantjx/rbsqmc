@@ -12,7 +12,7 @@
   },
   "analysis_sha256": {
     "dissertation/drafts/figures/make_comparison_figures.py": "e5c8caa3ece657e4d87a8ac1f3595efb372870f3e3ab79de5b07f31521a06772",
-    "sqmc/comparison/plotting.py": "3952b3d6e04dd4ff72c58da76bc44ee3619798ce9c4cd4350db9cdc2b4ecc9c2"
+    "sqmc/comparison/plotting.py": "f5763f6778e421477ff67763c2ad5a73a12d3480fbd096c349cb12c2253cb9d1"
   },
   "figures": [
     "comparison_qmc_08092026_0048.pdf",

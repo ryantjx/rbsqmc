@@ -22,6 +22,11 @@ verified final artifacts (or during failure recovery). `--no-stream-logs` polls
 status only. Transport failures get up to five attempts; model failures still
 fail the run. The launcher refreshes the existing session's expiring proxy
 credentials through the installed Colab CLI's Python environment before expiry.
+Remote commands use the CLI's transport directly, without its `exec` handler
+that deletes session records and kills keep-alive on 401/404 errors. Credentials
+are refreshed before each remote execution. If the CLI cache entry is missing,
+reconnection restores it and keep-alive only after Colab confirms the saved
+endpoint is still assigned; it never allocates a replacement runtime.
 
 The default shell command runs EKF on the local CPU, RB-SQMC on the Colab GPU,
 then combines and validates both outputs locally. Results are stored in
@@ -39,7 +44,7 @@ bash rbsqmc/comparison/sqmc_ekf/scripts/run_sqmc_ekf_colab.sh --resume rbsqmc/co
 
 The session is stopped after verified collection, or after a confirmed worker
 failure and successful diagnostic recovery. While detached, the worker's original
-timeout still applies; the VM remains assigned until collection or an explicit
+timeout still applies; the launcher leaves the VM assigned until collection or an explicit
 `colab stop --session <saved-session-name>`. Reconnection requires that Colab
 still retains the same runtime. `--local --smoke` exercises the pipeline on CPU;
 it does not verify GPU execution.

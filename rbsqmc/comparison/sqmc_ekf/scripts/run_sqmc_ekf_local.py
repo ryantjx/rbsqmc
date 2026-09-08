@@ -183,8 +183,10 @@ class Launcher:
         return instance
 
     def reconnect(self):
-        if self.sessions().get(self.session) != self.endpoint:
-            raise ReconnectFailed("Saved Colab session is unavailable or its endpoint changed")
+        # Refresh against server assignments first; a missing CLI cache entry
+        # can be restored only for this saved endpoint, without provisioning.
+        self.proxy_refresh_at = 0
+        self.refresh_proxy()
         with tempfile.TemporaryDirectory(prefix="sqmc-reconnect-") as temp:
             target = Path(temp) / "comparison_config.json"
             self.call("download", "--session", self.session, self.remote / target.name, target)
@@ -197,21 +199,26 @@ class Launcher:
         print(f"Reconnected to {self.session}; continuing from saved progress.", flush=True)
 
     def call(self, *args, timeout=None, quiet=True):
-        if self.endpoint and args[0] in {"exec", "upload", "download"}:
+        if args[0] == "exec":
+            raise ValueError("Use execute(); CLI exec can prune a live session on connection errors")
+        if self.endpoint and args[0] in {"upload", "download"}:
             self.refresh_proxy()
         return self.run([self.colab, *map(str, args)], timeout=timeout or self.config["transfer_timeout"], quiet=quiet)
 
-    def refresh_proxy(self):
-        if time.monotonic() < self.proxy_refresh_at:
-            return
+    def proxy_command(self):
         # Use Colab's own Python environment: the launcher needs only stdlib,
         # and the CLI may be installed in a separate uv/pipx environment.
         with Path(self.colab).open() as entrypoint:
             shebang = entrypoint.readline().strip()
         if not shebang.startswith("#!") or "python" not in shebang:
             raise RuntimeError("Expected a Python colab entrypoint for credential refresh")
-        response = self.run([*shlex.split(shebang[2:]), str(SCRIPTS / "refresh_colab_proxy.py"),
-                             self.session, self.endpoint],
+        return [*shlex.split(shebang[2:]), str(SCRIPTS / "refresh_colab_proxy.py"),
+                self.session, self.endpoint]
+
+    def refresh_proxy(self):
+        if time.monotonic() < self.proxy_refresh_at:
+            return
+        response = self.run(self.proxy_command(),
                             timeout=self.config["transfer_timeout"], quiet=True)
         lifetime = json.loads(response)["expires_in_seconds"]
         if not isinstance(lifetime, (int, float)) or not 0 < lifetime < float("inf"):
@@ -226,7 +233,11 @@ class Launcher:
             path = Path(temp) / "dispatch.py"
             path.write_text(code)
             duration = timeout or self.config["transfer_timeout"]
-            return self.call("exec", "--session", self.session, "--timeout", duration, "--file", path, timeout=duration + 30)
+            # This adapter refreshes credentials and borrows the kernel without
+            # invoking CLI exec's session-pruning handler. Do not retry dispatch:
+            # an acknowledgement can be lost after the worker actually starts.
+            return self.run([*self.proxy_command(), "--exec-file", str(path),
+                             "--timeout", str(duration)], timeout=duration + 30, quiet=True)
 
     def prepare_source(self, directory):
         ref = "refs/heads/" + self.config["repo_branch"]
@@ -755,8 +766,8 @@ def main(argv=None):
         print("Combine and validate locally ->", output / "combined")
         print("git bundle create <temporary source.bundle> refs/heads/" + config["repo_branch"])
         print("colab run --keep --gpu", config["gpu"], "--session", config["session_name"], "--timeout", config["setup_timeout"], "run_sqmc_ekf_gpu.py --action provision --config-json <effective JSON plus bundle SHA-256>")
-        print("colab upload <source.bundle>; colab upload <bootstrap.py>; colab exec <setup pinned checkout>")
-        print("colab exec --session", config["session_name"], "--file <start run worker>; poll; download and verify run.tar.gz + root.tar.gz")
+        print("colab upload <source.bundle>; colab upload <bootstrap.py>; Colab transport: setup pinned checkout")
+        print("Colab transport (preserve session on error):", config["session_name"], "; start worker; poll; download and verify run.tar.gz + root.tar.gz")
         print("colab stop --session", config["session_name"], "; colab sessions (verify shutdown)")
         return 0
     if args.local:
