@@ -78,8 +78,8 @@ def validate_config(config):
         for key, choices in (("sequences", {"sobol", "halton"}), ("modes", {"sample", "fresh"})):
             if key in args and (not isinstance(args[key], list) or not args[key] or any(v not in choices for v in args[key]) or len(set(args[key])) != len(args[key])):
                 raise ValueError(f"Invalid {stage}.{key}")
-        if stage == "qmc" and type(args["scramble"]) is not bool:
-            raise ValueError("scramble must be boolean")
+        if stage == "qmc" and (args["scramble"] is not True or args["modes"] != ["fresh"] or args["implementations"] != ["jax", "scipy"]):
+            raise ValueError("QMC requires fresh scrambling with jax and scipy")
         if stage == "hilbert_sort" and args["distribution"] not in {"normal", "uniform"}:
             raise ValueError("Invalid Hilbert distribution")
         if stage == "sqmc":
@@ -163,6 +163,8 @@ def validate_stage(root, stage, config):
     """Check complete grids and exact effective configuration, not just exit code."""
     root = Path(root)
     required = {"logs.txt", "config.json", "metadata.json", "status.json", "results.json", "results.csv", "cpu_gpu_comparison.json", "runtime.png"}
+    if stage == "qmc" and "implementations" in config[stage]:
+        required.add("scipy_comparison.json")
     if stage == "sqmc":
         required |= {"accuracy_records.json", "budget_summary.json", "budget_summary.csv", "accuracy_vs_runtime.png"}
     if any(not (root / name).is_file() for name in required):
@@ -185,7 +187,16 @@ def validate_stage(root, stage, config):
     if stage == "qmc":
         fields.append("mode")
         values.append(args["modes"])
-    if len(rows) != math.prod(map(len, values)) or {tuple(r[k] for k in fields) for r in rows} != set(itertools.product(*values)):
+    expected_grid = set(itertools.product(*values))
+    actual_grid = [tuple(r[k] for k in fields) for r in rows]
+    if stage == "qmc" and "implementations" in args:
+        expected_grid = {("jax",) + v for v in expected_grid} | {("scipy", "cpu") + v[1:] for v in expected_grid}
+        actual_grid = [(r["implementation"],) + v for r, v in zip(rows, actual_grid)]
+        if read_json(root / "metadata.json").get("qmc_contract_version") != 2:
+            raise ValueError("Missing QMC contract version")
+        if any(r.get("scramble") is not True or r["mode"] != "fresh" for r in rows):
+            raise ValueError("QMC requires fresh scrambled results")
+    if len(rows) != len(expected_grid) or set(actual_grid) != expected_grid:
         raise ValueError(f"Incomplete {stage} CPU/GPU result grid")
     for row in rows:
         samples = row["samples_seconds"]

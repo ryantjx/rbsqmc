@@ -323,3 +323,35 @@ def test_source_bundle_contains_exact_commit_only(config, tmp_path, monkeypatch)
     assert (clone / "tracked.py").read_text() == "original"
     assert not (clone / "untracked.txt").exists()
     assert (source / "tracked.py").read_text() == "unstaged edit"
+
+
+def test_fresh_qmc_config_contract(config):
+    assert config['qmc']['modes'] == ['fresh']
+    assert config['qmc']['scramble'] is True
+    assert config['qmc']['implementations'] == ['jax', 'scipy']
+    for edit in ({'modes': ['sample']}, {'scramble': False}, {'implementations': ['jax']}):
+        invalid = copy.deepcopy(config)
+        invalid['qmc'].update(edit)
+        with pytest.raises(ValueError):
+            protocol.validate_config(invalid)
+
+
+def test_scipy_numerical_validation(config, tmp_path):
+    from sqmc.comparison.benchmark_qmc import comparisons
+    from validate_artifacts import validate_numerical
+    config = copy.deepcopy(config)
+    config['qmc'].update(dimensions=[2], n_values=[16], repeats=2)
+    rows = []
+    for sequence in ['sobol', 'halton']:
+        for impl, backend, t in [('jax', 'cpu', 4.), ('jax', 'gpu', 2.), ('scipy', 'cpu', 6.)]:
+            rows.append(dict(sequence=sequence, dimension=2, n=16, mode='fresh', scramble=True,
+                             implementation=impl, backend=backend, median_seconds=t, samples_seconds=[t,t],
+                             q25_seconds=t, q75_seconds=t, repetition_seeds=[4,5]))
+    jax_pairs, scipy_pairs = comparisons(rows)
+    for name, content in [('results.json', rows), ('cpu_gpu_comparison.json', jax_pairs), ('scipy_comparison.json', scipy_pairs)]:
+        protocol.write_json(tmp_path/name, content)
+    validate_numerical(tmp_path, 'qmc', config)
+    scipy_pairs[0]['scipy_over_jax'] = 100
+    protocol.write_json(tmp_path/'scipy_comparison.json', scipy_pairs)
+    with pytest.raises(ValueError, match='SciPy speedup'):
+        validate_numerical(tmp_path, 'qmc', config)

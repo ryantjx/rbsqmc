@@ -24,7 +24,7 @@ def benchmark_precision():
 
 
 @pytest.mark.parametrize("sequence,cls", [("sobol", Sobol), ("halton", Halton)])
-@pytest.mark.parametrize("mode", ["sample", "fresh"])
+@pytest.mark.parametrize("mode", ["fresh"])
 def test_qmc_runner_uses_public_sampler(sequence, cls, mode, monkeypatch):
     calls = []
     original = cls.sample
@@ -142,3 +142,51 @@ def test_requested_gpu_never_falls_back(monkeypatch):
 def test_sqmc_requires_balanced_particle_counts():
     with pytest.raises(ValueError, match="powers of two"):
         common.validate_grid([2], [6], max_dimension=62, power_two=True)
+
+
+@pytest.mark.parametrize('sequence', ['sobol', 'halton'])
+def test_scipy_fresh_reproducible(sequence):
+    run = qmc_benchmark.make_scipy_runner(sequence, 16, 2)
+    a, b = run(4), run(5)
+    np.testing.assert_array_equal(a, run(4))
+    assert not np.array_equal(a, b)
+    assert a.dtype == np.float64 and a.shape == (16, 2)
+    assert np.isfinite(a).all() and ((a >= 0) & (a < 1)).all()
+
+
+@pytest.mark.parametrize('argv', [['--no-scramble'], ['--modes', 'sample']])
+def test_qmc_rejects_nonfresh(argv):
+    with pytest.raises(SystemExit):
+        qmc_benchmark.main(argv)
+
+
+def test_qmc_three_way_pairing():
+    base = dict(sequence='sobol', dimension=2, n=16, mode='fresh')
+    rows = [base | dict(implementation=i, backend=b, median_seconds=t)
+            for i, b, t in [('scipy', 'cpu', 6), ('jax', 'gpu', 2), ('jax', 'cpu', 4)]]
+    jax_pairs, scipy_pairs = qmc_benchmark.comparisons(rows)
+    assert jax_pairs[0]['cpu_over_gpu'] == 2
+    assert {p['jax_backend']: p['scipy_over_jax'] for p in scipy_pairs} == {'cpu': 1.5, 'gpu': 3}
+    with pytest.raises(ValueError, match='Duplicate'):
+        qmc_benchmark.comparisons(rows + rows[:1])
+
+
+@pytest.mark.parametrize('sequence', ['sobol', 'halton'])
+def test_scipy_constructor_settings(sequence, monkeypatch):
+    calls = []
+    class Engine:
+        def __init__(self, dimension, **kwargs):
+            calls.append((dimension, kwargs))
+        def random_base2(self, m):
+            assert m == 4
+            return np.zeros((16, 2))
+        def random(self, n, *, workers):
+            assert n == 16 and workers == 1
+            return np.zeros((16, 2))
+    monkeypatch.setattr(qmc_benchmark.scipy_qmc, sequence.title(), Engine)
+    run = qmc_benchmark.make_scipy_runner(sequence, 16, 2)
+    run(4); run(5)
+    assert len(calls) == 2
+    assert all(d == 2 and kw['scramble'] is True and kw['optimization'] is None for d, kw in calls)
+    if sequence == 'sobol':
+        assert all(kw['bits'] == 30 for _, kw in calls)

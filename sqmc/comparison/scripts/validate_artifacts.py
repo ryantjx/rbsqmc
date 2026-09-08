@@ -27,9 +27,22 @@ def validate_numerical(root, stage, config):
         if len(comparisons) != len(expected) or {tuple(c[k] for k in fields) for c in comparisons} != expected:
             raise ValueError("Incomplete CPU/GPU comparison grid")
         for comparison in comparisons:
-            pair = {r["backend"]: r for r in rows if all(r[k] == comparison[k] for k in fields)}
+            pair = {r["backend"]: r for r in rows if r.get("implementation", "jax") == "jax" and all(r[k] == comparison[k] for k in fields)}
             if not np.isclose(comparison["cpu_over_gpu"], pair["cpu"]["median_seconds"] / pair["gpu"]["median_seconds"]):
                 raise ValueError("Incorrect speedup ratio")
+    if stage == "qmc" and "implementations" in args:
+        scipy_pairs = read_json(root / "scipy_comparison.json")
+        expected_scipy = {key + (backend,) for key in expected for backend in args["platforms"]}
+        if len(scipy_pairs) != len(expected_scipy) or {tuple(c[k] for k in fields) + (c["jax_backend"],) for c in scipy_pairs} != expected_scipy:
+            raise ValueError("Incomplete SciPy comparison grid")
+        for c in scipy_pairs:
+            matched = {(r["implementation"], r["backend"]): r for r in rows if all(r[k] == c[k] for k in fields)}
+            scipy = matched[("scipy", "cpu")]
+            jax = matched[("jax", c["jax_backend"])]
+            if not np.isclose(c["scipy_over_jax"], scipy["median_seconds"] / jax["median_seconds"], rtol=1e-12, atol=0):
+                raise ValueError("Incorrect SciPy speedup ratio")
+            if scipy["repetition_seeds"] != jax["repetition_seeds"] or len(set(scipy["repetition_seeds"])) != args["repeats"]:
+                raise ValueError("Invalid QMC repetition seeds")
     if stage == "hilbert_sort":
         for sequence in args["sequences"]:
             for dimension in args["dimensions"]:

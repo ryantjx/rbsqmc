@@ -1,12 +1,12 @@
 # CPU/GPU comparison scripts
 
-These three standalone scripts compare the repository's shared algorithms on CPU and GPU. The new filter comparison measures **SQMC against SQMC at a fixed runtime budget**. It does not run an SMC baseline.
+These three standalone scripts compare the repository's shared algorithms on CPU and GPU. The filter comparison measures **SQMC on CPU versus GPU at fixed particle counts and 100 updates**, with runtime-budget selection as a secondary analysis. It does not run an SMC baseline.
 
 Run the commands from the repository root in an environment with JAX, NumPy, SciPy, Matplotlib, Cuthbert, and Cuthbertlib installed. The shared QMC package also needs its `_sobol_direction_numbers.npz` data file; `_generate_sobol_data.py` provides the repository's generation utility if that file is absent. A GPU run requires an installed JAX GPU backend. Both CPU and GPU are requested by default; an unavailable requested device causes a logged failure, with no CPU fallback. Use `--platforms cpu` explicitly for local smoke tests.
 
 | Script | Algorithm executed | Comparison |
 |---|---|---|
-| `benchmark_qmc.py` | `Halton.sample()` and `Sobol.sample()` from `sqmc/qmc/qmc.py` | Same QMC generator on CPU versus GPU |
+| `benchmark_qmc.py` | `Halton.sample()` and `Sobol.sample()` from `sqmc/qmc/qmc.py` | Fresh-scramble JAX CPU, JAX GPU and SciPy CPU |
 | `benchmark_hilbert_sort.py` | `hilbert_sort()` from `sqmc/hilbert_sort/hilbert_sort.py` | Same sorter on identical QMC-generated input arrays |
 | `benchmark_sqmc.py` | `sqmc/sqmc/sqmc.py::build_filter`, shared scrambled Sobol sampling, and shared Hilbert ordering | Held-out SQMC accuracy attainable within a per-trajectory time budget on each backend |
 
@@ -18,15 +18,18 @@ The scripts supply models, input data, orchestration, measurement, and analysis.
 .venv/bin/python -m sqmc.comparison.benchmark_qmc \
   --platforms cpu gpu --sequences sobol halton \
   --dimensions 2 5 10 --n-values 128 512 2048 8192 32768 \
-  --modes sample fresh --repeats 7 --warmups 2
+  --modes fresh --scramble --implementations jax scipy --repeats 7 --warmups 2
 ```
 
-Both modes use float64 and index-zero blocks. Sobol counts must be powers of two. `--no-scramble` disables the constructor's scrambling policy on both backends.
+All three implementations use fresh scrambling, float64 outputs and index-zero blocks. Sobol uses 30 bits and power-of-two counts. Fixed-scramble sampling and `--no-scramble` are rejected.
 
-- **`sample`:** construct one scrambled generator per configuration, then time its public `sample(n, state=...)` calculation at explicit index zero. The same point set is regenerated on each timing repetition. Constructor and scrambling setup are excluded from steady-state measurements. The explicit state avoids Python-counter mutation inside the compiled function.
-- **`fresh`:** construct a local generator with each repetition's key and call `sample(n)` inside the compiled function. Array computations for fresh scrambling and point generation are included. JAX traces Python object construction; this is not a measurement of repeated Python constructor overhead. With scrambling disabled, different keys intentionally do not alter the sequence.
+JAX calls the shared public `sample()` inside a compiled function: runtime scrambling and generation are timed, with compilation and input transfers excluded. SciPy constructs a new RNG and scrambled engine inside every timed call, then uses `Sobol.random_base2` or `Halton.random(workers=1)` with no optimisation. Its constructor overhead is included. This compares complete implementation paths, not isolated identical scrambling kernels.
 
-The same seeds and counts are supplied on both backends. Timed outputs are synchronized, then checked for shape, finite values, and membership in `[0,1)`. This is a same-implementation CPU/GPU measurement; SciPy is not a timed reference. `cpu_gpu_comparison.json` reports CPU median seconds divided by GPU median seconds for each sequence, dimension, count, and mode. A ratio above one means the GPU is faster.
+Seven distinct reproducible seeds drive the timed repetitions; JAX CPU/GPU use matching keys. Equal seeds do not imply identical SciPy/JAX scrambled points. Execution order rotates across all three implementations.
+
+QMC contract version 2 adds `implementation` (`jax` or `scipy`) alongside `backend` (`cpu` or `gpu`). `cpu_gpu_comparison.json` retains the JAX CPU/GPU ratio; `scipy_comparison.json` adds SciPy CPU/JAX CPU and SciPy CPU/JAX GPU ratios. Earlier contract-1 results remain readable by the artifact validator but cannot supply missing SciPy timings for the new figures.
+
+The QMC figure is 2×2: Sobol/Halton rows and runtime/speedup columns. The separate Hilbert figure is 1×2 for Sobol/Halton inputs. PDF and PNG exports are retained. Full-profile grids contain 180 QMC, 140 Hilbert and 50 SQMC timing rows.
 
 ## Hilbert sorting of generated QMC points
 

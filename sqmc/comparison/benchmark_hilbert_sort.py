@@ -83,8 +83,18 @@ def main(argv=None):
                             differing_positions=int(np.count_nonzero(permutations["cpu"] != permutations["gpu"]))))
                         common.write_json(output / "cpu_gpu_comparison.json", comparisons)
         common.write_json(output / "cpu_gpu_comparison.json", comparisons)
-        common.plot_lines(rows, output, "runtime.png", group_fields=["sequence", "dimension", "backend"],
-                          x="n", y="median_seconds", ylabel="Median Hilbert sort time (seconds)")
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from sqmc.comparison.plotting import hilbert_figure
+        if comparisons:
+            figure = hilbert_figure(comparisons)
+            figure.savefig(output / "runtime.png", dpi=220, bbox_inches="tight")
+            figure.savefig(output / "runtime.pdf", bbox_inches="tight")
+            plt.close(figure)
+        else:
+            common.plot_lines(rows, output, "runtime.png", group_fields=["sequence", "dimension", "backend"],
+                              x="n", y="median_seconds", ylabel="Median sorting time (seconds)")
 
 
 if __name__ == "__main__":
