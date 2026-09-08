@@ -116,7 +116,7 @@ def session_map(text):
 
 
 class Launcher:
-    def __init__(self, config, output, *, run=command, sleep=time.sleep):
+    def __init__(self, config, output, *, run=command, sleep=time.sleep, stream_logs=False):
         self.config, self.output, self.run, self.sleep = config, Path(output), run, sleep
         self.colab = shutil.which("colab") or "colab"
         self.session = config["session_name"]
@@ -124,6 +124,9 @@ class Launcher:
         self.attempted = False
         self.endpoint = None
         self.log_offset = 0
+        # Streaming re-downloads the whole (growing) remote log on every poll;
+        # keep it opt-in so the default polling loop stays cheap.
+        self.stream_logs = stream_logs
         self.status = {"status": "running", "run_id": config["run_id"], "source_commit": config["source_commit"],
                        "config_sha256": config_digest(config), "started_utc": now(),
                        "session": self.session, "shutdown": "pending", "secondary_errors": [],
@@ -198,7 +201,8 @@ class Launcher:
         deadline = time.monotonic() + self.config["colab_timeout"] + self.config["transfer_timeout"]
         while time.monotonic() < deadline:
             state = self.remote_json("remote_status.json")["run"]
-            self.stream_log()
+            if self.stream_logs:
+                self.stream_log()
             if state.get("archive_ready"):
                 self.status["run"].update(state)
                 self.save()
@@ -251,7 +255,8 @@ class Launcher:
 
     def recover(self):
         self.secondary("Root metadata download", lambda: self.download("root", partial=True))
-        self.secondary("Remote log download", self.stream_log)
+        if self.stream_logs:
+            self.secondary("Remote log download", self.stream_log)
 
     def shutdown(self):
         sessions = self.sessions()
@@ -295,6 +300,9 @@ class Launcher:
             self.save()
             self.start_run()
             self.wait_run()
+            # One final fetch so the local transcript ends with the run's
+            # closing output, without re-downloading the log on every poll.
+            self.secondary("Remote log download", self.stream_log)
             self.download("run")
             self.download("root")
             self.status["status"] = "complete"
@@ -331,6 +339,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, help="JSON overrides merged into the full profile")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--stream-logs", action="store_true",
+                        help="Re-download the remote log on every poll (slower; "
+                             "off by default so polling stays cheap)")
     args = parser.parse_args(argv)
     config = resolve(args.config)
     output = SCRIPTS.parents[0] / "outputs" / config["run_id"]
@@ -352,7 +363,7 @@ def main(argv=None):
         with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
             write_json(output / "comparison_config.json", config)
             print(f"Comparison output: {output}", flush=True)
-            return Launcher(config, output).launch()
+            return Launcher(config, output, stream_logs=args.stream_logs).launch()
 
 
 if __name__ == "__main__":
