@@ -40,6 +40,8 @@ def main():
     config = read(root / "comparison_config.json")
     provenance = {"run_id": config["run_id"], "source_commit": config["source_commit"],
                   "input_sha256": {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in sources},
+                  "analysis_sha256": {str(path.relative_to(REPO)): hashlib.sha256(path.read_bytes()).hexdigest()
+                                      for path in [Path(__file__).resolve(), REPO / "sqmc/comparison/plotting.py"]},
                   "figures": []}
 
     def save(fig, stem):

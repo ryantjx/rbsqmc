@@ -101,7 +101,7 @@ Each command creates a unique UTC timestamped directory under `sqmc/comparison/o
 
 Every run retains `logs.txt`, `config.json`, `metadata.json`, and `status.json`. Metadata contains device descriptions, software versions, Git commit and working-tree status, and hashes of the benchmark sources, shared implementations, and Sobol direction data. A recorded environment is not a dependency lock. Python exceptions are logged, status changes to `failed`, and completed result checkpoints remain available. Native process crashes or machine loss can prevent final status updates.
 
-QMC and Hilbert also write `results.json`, `results.csv`, `cpu_gpu_comparison.json`, and `runtime.png`; Hilbert retains its input arrays. QMC records runner-setup wall time separately; its first call can additionally complete deferred constructor work. All scripts retain raw timed samples. First-call measurements include tracing/compilation/execution and are not labeled as isolated compile time. CPU/GPU execution order alternates across configurations. Comparisons use the first device of each requested backend, sequentially; run performance experiments without competing jobs.
+QMC and Hilbert also write `results.json`, `results.csv`, `cpu_gpu_comparison.json`, and `runtime.png`; Hilbert retains its input arrays. QMC records runner-setup wall time separately; SciPy engine construction remains inside each timed call. All scripts retain raw timed samples. First-call measurements include tracing/compilation/execution and are not labeled as isolated compile time. QMC rotates all three implementations; Hilbert and SQMC alternate CPU/GPU order across configurations. Comparisons use the first device of each requested backend, sequentially; run performance experiments without competing jobs.
 
 ## Local checks
 
@@ -154,7 +154,7 @@ remote experiment output into the local log approximately every 15 seconds.
 | Dimensions | 2, 5, 10, 30, 60 | 2, 5, 10, 30, 60 | 2, 5, 10, 30, 60 |
 | Counts | 128, 512, 2048, 8192, 32768, 131072 | 128, 256, 512, 2048, 8192, 32768, 131072 | 128, 256, 512, 1024, 2048 |
 | Generator | Sobol and Halton | Sobol and Halton | Scrambled Sobol |
-| Other | Sample and fresh-scramble modes | Normal-transformed inputs | 100 observations; 0.01, 0.05, 0.1-second budgets |
+| Other | Fresh scrambling; JAX CPU/GPU and SciPy CPU | Normal-transformed inputs | 100 observations; 0.01, 0.05, 0.1-second budgets |
 | Repetitions | 7 timed, 2 warmups | 7 timed, 2 warmups | 7 timed, 2 warmups; 8 selection, 16 validation |
 
 All stages request both `cpu` and `gpu`. SQMC uses one dataset, 500 bootstrap
@@ -325,3 +325,58 @@ requires a clearer plot. The dissertation review regenerates faceted figures fro
 this run's saved results without altering the original output folder or rerunning
 any experiments. Local validation totals **197 passing package, benchmark and
 launcher tests**; shell syntax and all three small CPU smoke runs also pass.
+
+## Fresh-scramble A100 acceptance: 08092026_0048
+
+The full comparison completed successfully from benchmark commit
+`e7363f8fa53cd6e761d1abfeefacbac4423662cd` on
+`codex/colab-comparison-07092026`. Results are retained in
+`outputs/08092026_0048/`, with root/stage logs, configuration, hardware,
+checksummed manifests and numerical artifacts. No measurements from the earlier
+run are mixed into these results.
+
+| Stage | Timing records | Benchmark wall time | Verified download (UTC) |
+|---|---:|---:|---|
+| QMC: JAX CPU/GPU and SciPy CPU, fresh scrambling | 180 | 658.81 s | 01:01:04 |
+| Hilbert: shared sorter, Sobol/Halton inputs | 140 | 199.11 s | 01:05:44 |
+| SQMC: shared CPU/GPU filter, 100 updates | 50 | 329.62 s | 01:11:37 |
+
+Hardware was A100-SXM4 40 GB with 12 exposed Xeon CPU threads at 2.20 GHz;
+JAX/JAXlib 0.11.1, SciPy 1.16.3 and float64. The configuration hash is
+`c6d93d159e5ecefd9ea4ac1441129ef04ced6e31ab8f944b3a14682fb1326479`.
+All stage execution/download statuses are complete. The owned session
+`comparison_08092026_0048_d8c6e6d866` was stopped and its absence verified at
+01:11:44 UTC, with exit code zero and no secondary failures.
+
+At 131,072 points, JAX GPU speedups over SciPy CPU are 4.42–31.05× for Sobol
+and 86.57–103.48× for Halton. The corresponding JAX CPU/GPU ratios are
+5.34–45.59× and 8.82–12.29×. These use fresh scrambling and the timing boundaries
+specified above; they are not fixed-scramble sampling measurements.
+All 70 Hilbert input pairs give identical permutations. At 2,048 particles,
+SQMC GPU speedups are 6.23–13.37×, with maximum CPU/GPU validation RMSE difference
+2.22e-16 across all 25 matched configurations. These are observations on one
+session and one dataset per dimension, not cross-session confidence claims.
+
+Validation comprises 154 package tests and 50 comparison/launcher tests, shell
+syntax checks, a JAX CPU/SciPy smoke run, and the full live archive/numerical
+checks. Previous contract-1 QMC artifacts were also checked with the new
+validator. The chapter was compiled in an isolated directory: 50 pages, no
+overfull boxes or undefined references; revised figures and tables were visually
+inspected. Existing global duplicate PDF destination warnings remain outside
+this comparison change.
+
+To reproduce the four publication figures from this run, use a fresh destination:
+
+```bash
+.venv/bin/python dissertation/drafts/figures/make_comparison_figures.py \
+  --run-dir sqmc/comparison/outputs/08092026_0048 \
+  --output-dir /tmp/sqmc-publication-figures
+```
+
+The renderer requires a run containing the new SciPy measurements and rejects
+an existing output directory. It writes separate 2×2 QMC and 1×2 Hilbert PDF/PNG
+figures, fixed-iteration SQMC runtime and secondary budget figures, and a
+provenance JSON recording input and analysis-code hashes. The completed derived
+exports and compiled dissertation are in `outputs/08092026_0048_writeup/`.
+Raw experiment files remain unchanged. Later documentation/renderer commits
+must not be substituted for the benchmark source commit recorded above.
