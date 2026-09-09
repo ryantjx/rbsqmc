@@ -1,55 +1,217 @@
 # Spain–Argentina prediction/ranking investigation
 
-## Summary: is the issue in ISSUE_090926.md solved?
+## F2/F7 implementation repair (2026-09-09; verified complete)
 
-**Yes — the question is answered, and the ISSUE's proposed explanation is
-refuted.** Concise account:
+**The remaining F2/F7 validator fixes are implemented and verified.** The
+work plan was recorded in this document before implementation; the results
+below replace that in-progress status. Dissertation integration and any matched
+reproduction of the original run remain separate follow-up work.
 
-1. **The ISSUE's explanation was wrong.** It claimed Spain's higher win
-   probability reflected a favourable pre-final attack–defence matchup. For
-   fixed strengths this is mathematically impossible: subtracting the two
-   bivariate-Poisson log-rates gives
-   $\log(\lambda_S/\lambda_A) = [(a_S+d_S)-(a_A+d_A)]/s$, so the higher-total
-   team always has the higher scoring rate. The matchup argument cannot
-   reverse a total-strength ordering.
-2. **Two real pipeline defects were found and repaired** (Tasks 1–6, F1–F7):
-   predictions and rankings came from two different randomized filters, and
-   prediction/ranking replayed history with unit observation scaling while
-   training used the learned friendly scale. Both are fixed; 131 tests pass
-   and every artifact-corruption probe is now rejected.
-3. **The actual cause of the reversal is now measured, not assumed** (F8,
-   local full-data run `outputs_local`, fitted parameters held fixed across
-   seeds {0,1,2} × particle counts {128, 512, 2048}): at the training particle
-   count the predictive total-strength difference spans −0.49 to +0.60 across
-   seeds — its sign is not stable, so the single-seed Spain-favouring forecast
-   was one draw from a high-variance posterior. As the particle count grows
-   the mixture concentrates toward Argentina (Spain win 0.32 → 0.07), the
-   expected posterior-averaging effect. The fixed-state ordering holds per
-   particle; the mixture average need not preserve it.
-4. **The ISSUE's "deeper point" survives in corrected form**: the
-   total-strength ranking is indeed not a faithful summary of the model's
-   predictive beliefs — but because of posterior averaging over particles,
-   not because of a pre-final matchup effect. The ranking uses posterior mean
-   total strength; the forecast averages likelihoods over the particle
-   distribution, and the two need not agree.
-5. **Outstanding:** only the final Task 7 step — integrating the generated
-   scalar table into chapter 3's Evaluation subsection from the run the
-   dissertation cites. The GPU rerun is optional; the local run already
-   demonstrates the mechanism end-to-end.
+### Changes made
 
-## F8 completed (2026-09-09; current verdict)
+- **F2 — Fixture-scale binding:** validation derives the expected scale from
+  the prediction record's tournament, using the same case-insensitive
+  `Friendly` substring rule as data loading, plus the checkpoint's learned
+  friendly scale or configured non-friendly scale. Every exported diagnostic
+  is checked against that scale. The final NPZ is checked even when the final
+  fixture is outside the selected JSON diagnostic scope.
+- **F2 — Final diagnostic replay:** the validator compares raw grid mass,
+  predictive means, likelihood-weighted posterior means and posterior ESS to
+  values independently reconstructed from the final NPZ. Existing full-grid,
+  checkpoint-parameter, team-identity and uniform-predictive-weight checks
+  remain in place. Incorrect but finite masses, means and scales now fail.
+- **F7 — Exact table rows:** a new pure formatting module,
+  `scripts/scalar_table.py`, supplies canonical ordered rows to both writer
+  and validator. Validation checks the complete four-column tabular body,
+  including interpretations and EKF/SQMC positions. Swapped model values,
+  reordered/duplicate/extra rows and correct numbers placed elsewhere no
+  longer pass. LaTeX escaping now handles characters in one pass.
+- **F7 — Derived differences:** `sqmc_minus_ekf` is checked for derived rows
+  as well as learned-parameter rows, even when a corrupted CSV agrees with
+  the corrupted JSON.
 
-**F8 is now complete on a local full-data run.** The repaired pipeline was run
-end-to-end locally on the full chronological dataset
-(`config_local_small.json`, 128 particles, 3 epochs, CPU), producing a
-separately identified run with fitted checkpoints for both methods, populated
-diagnostics, and the final scalar exports. The fixed-parameter seed/particle
-study was then run on those checkpoints. The original Spain–Argentina reversal
-is now **explained by the diagnostics**: the predictive total-strength
-difference is seed-dependent and its sign is not stable at the training
-particle count, while at larger particle counts the posterior concentrates
-toward Argentina — consistent with posterior averaging over particles rather
-than a pipeline defect.
+### Verification
+
+- **150 tests passed in 28.85 seconds**:
+  `.venv/bin/python -m pytest rbsqmc/tests rbsqmc/comparison/sqmc_ekf/tests -q`.
+- The 13 new final-artifact regressions passed again after refining the
+  CSV/JSON corruption case. Coverage includes all three previously accepted
+  diagnostic corruptions, valid unequal posterior weights, a friendly final,
+  a final excluded from World Cup scope, swapped/extra table rows, and a
+  jointly corrupted derived difference.
+- Fresh populated **SQMC-only and EKF-only smoke runs both passed**, followed
+  by successful combination and validation. Outputs and logs:
+  `/private/tmp/f2f7-fixed-sqmc`, `/private/tmp/f2f7-fixed-ekf`,
+  `/private/tmp/f2f7-fixed-combined` (logs use the corresponding `.log` paths).
+- The test suite includes actual compilation of the generated LaTeX table.
+  No full-data training or F8 study regeneration was needed for these
+  validator changes.
+
+Smoke configuration: `config_smoke.json` with `diagnostics_scope="all"`.
+The combination used the SQMC partial's persisted effective config, preserving
+its smoke-subset setting and source revision:
+
+```bash
+.venv/bin/python -m rbsqmc.comparison.sqmc_ekf.run \
+  --config /private/tmp/f2f7-fixed-sqmc/results/comparison_config.json \
+  --combine /private/tmp/f2f7-fixed-ekf /private/tmp/f2f7-fixed-sqmc \
+  --output-dir /private/tmp/f2f7-fixed-combined
+```
+
+### Remaining next steps
+
+- Check a larger prediction score grid with fixed fitted parameters and
+  unchanged filtering before relying on the reported truncated probabilities.
+- Select the repaired run to cite, regenerate its reporting artifacts if
+  necessary, and integrate the scalar table into the dissertation Evaluation
+  subsection. The original 50-epoch run's specific reversal is not established
+  by the separate three-epoch local study.
+
+## F8 implementation repair (2026-09-09; current status)
+
+**The two F8 study-export bugs are fixed and all nine evaluations have been
+regenerated from the existing fitted checkpoint.** No retraining was performed.
+The original-run causal conclusion and dissertation integration remain separate
+from this repair. The subsequent F2/F7 validator repair is documented above.
+
+- `scripts/seed_particle_study.py` now persists the actual `raw_mass` returned
+  by the likelihood helper before score-grid normalization.
+- Post-final strength means, quantiles and positive-difference probabilities
+  now use normalized posterior log weights. Quantiles use the inverse weighted
+  empirical CDF: the smallest value reaching the requested cumulative mass;
+  zero-weight particles are excluded. Predictive summaries retain their
+  previous uniform-weight/NumPy-linear-quantile convention.
+- Study schema version 2 records these quantile conventions, the code revision
+  and study-script SHA-256. The driver checks dataset hash and team mapping
+  against the fitted run before evaluation.
+- Added six regression cases covering analytically known omitted score mass,
+  weighted posterior summaries, consistency with posterior team means,
+  zero-weight particles, log-weight shift invariance and invalid weights.
+- **137 tests passed in 15.82 seconds** across `rbsqmc/tests` and
+  `rbsqmc/comparison/sqmc_ekf/tests`.
+
+Regeneration command (completed, exit 0):
+
+```bash
+.venv/bin/python -m rbsqmc.comparison.sqmc_ekf.scripts.seed_particle_study \
+  --run-dir rbsqmc/comparison/sqmc_ekf/outputs_local \
+  --seeds 0 1 2 --particle-counts 128 512 2048
+```
+
+The corrected artifact is
+`rbsqmc/comparison/sqmc_ekf/outputs_local/results/seed_particle_study.json`.
+The previous export was preserved at
+`/private/tmp/seed_particle_study_before_f8_fix.json`; execution log:
+`/private/tmp/f8-corrected-study.log`.
+
+| Particles | Actual raw grid mass, min–max | Weighted post-final total difference, min–max |
+| --- | --- | --- |
+| 128 | 0.999141–0.999968 | −0.366616–0.672751 |
+| 512 | 0.998795–0.999990 | −1.348629–0.065197 |
+| 2048 | 0.897433–0.998909 | −1.718789–−0.976366 |
+
+The minimum raw mass implies approximately **10.26% omitted score probability**,
+so “no truncation” was incorrect. Reported win probabilities remain conditional
+on the normalized finite grid. The N=128, seed=0 post-final mean is now
+**−0.3666158513**, agreeing with the weighted posterior team means.
+
+All nine entries were checked against the prior export: checkpoint and dataset
+hashes are unchanged, and win probabilities agree within `1e-12`. Each corrected
+post-final mean agrees with the corresponding weighted team-total difference
+within `1e-12`. The sensitivity study still uses the three-epoch local checkpoint;
+it cannot establish the specific cause of the original 50-epoch run's reversal.
+
+## Independent review before the F8 repair (2026-09-09; historical)
+
+**The original explanation is refuted and the core pipeline defects are
+repaired, but the investigation is not fully closed.** The new local study
+provides evidence of particle-approximation sensitivity for its own fitted
+parameters. It does not establish the cause of the original saved reversal,
+and two study-export bugs must be repaired before F8 can be accepted.
+
+### Verified in this review
+
+- **131 tests passed in 17.35 seconds**, including LaTeX compilation.
+- Fresh populated EKF-only and SQMC-only smoke runs both exited successfully:
+  `/private/tmp/issue090926-fifth-ekf` and
+  `/private/tmp/issue090926-fifth-sqmc`, using `config_smoke.json` with
+  `diagnostics_scope="all"`.
+- The attempted combination did **not** pass: the partials recorded source
+  `846957ba...`, while the later combine step recorded current HEAD
+  `e93981c8...`; validation rejected the source-revision mismatch. HEAD changed
+  between these steps. This is not evidence that a same-revision combination
+  fails, but this review cannot certify a successful fresh combine. Repeat
+  using a pinned revision, and distinguish the partials' scientific source
+  provenance from the combining process's revision.
+- All six mutations from the third review are now rejected: covariance
+  inconsistency, wrong diagnostic source revision, invalid strength summary,
+  nonuniform predictive weights, wrong scalar checkpoint hash, and replacement
+  of the table with arbitrary text.
+- `outputs_local/results/seed_particle_study.json` exists with nine evaluations.
+  Its checkpoint and dataset hashes match the local saved artifacts. The
+  reported win-probability ranges agree with the JSON.
+
+### F8: correct the new study before accepting its conclusions
+
+- **Save the actual raw mass.** In
+  `scripts/seed_particle_study.py::evaluate_fixture`, replace
+  `float(exp(logsumexp(log(grid + 1e-12))))` with `float(raw_mass)` returned by
+  `predict_match_score_with_mass`. The current calculation sums the normalized
+  9-by-9 grid plus 81 floors, giving approximately **1.000000000081** by
+  construction. It cannot establish “no truncation.” Add a test with known
+  omitted score mass and regenerate the study export.
+- **Weight the post-final distribution.** `post_total_strength_difference`
+  currently calls the same unweighted helper on the same positions as the
+  predictive distribution. Use normalized `log_weights[t+1]` for its mean,
+  quantiles and fraction positive, with a documented weighted-quantile rule.
+  In the saved N=128, seed=0 evaluation, the reported post-final mean is
+  **−0.4901938978**, but the saved weighted posterior team means imply
+  **−0.3666158513**. All nine reported post-final distributions exactly equal
+  their predictive counterparts. Add a consistency test and regenerate them.
+- **Separate seed sensitivity from posterior uncertainty.** Across-seed
+  variation in an estimated probability is numerical approximation variability;
+  within-evaluation particle quantiles describe the approximate posterior's
+  spread. More particles approximate a fixed posterior more accurately; they
+  do not inherently concentrate the underlying posterior toward Argentina.
+- **Do not claim the original reversal has been reproduced.** The local study
+  uses a three-epoch checkpoint and a 2025-06-01 prediction split; the original
+  run used 50 epochs and a 2026-06-11 split. In all nine local evaluations,
+  the sign of the predictive mean total-strength difference agrees with the
+  Spain-versus-Argentina win-probability ordering. This study demonstrates
+  seed sensitivity, not a same-state mean-ranking/probability reversal caused
+  by posterior averaging. Identifying the original cause requires its fitted
+  parameters or a suitably matched reproduction with controlled comparisons.
+- **Qualify convergence and ESS claims.** Three seeds do not establish
+  convergence. A high ESS immediately after the final update does not exclude
+  earlier particle degeneracy; the saved ESS before final resampling is as
+  low as **4.04% of N**. Remove the blanket “never collapses” conclusion.
+- **Complete provenance and reporting.** The study writes
+  `source_revision: null`; record the actual code revision and verify loaded
+  data/team mapping against the checkpoint/run. Finish the dissertation table
+  integration from the run actually cited. GPU execution is not inherently
+  necessary for validation, but a different CPU checkpoint does not reproduce
+  the original run merely because it uses the full dataset.
+
+### Remaining F2/F7 acceptance gaps confirmed in this review
+
+- Final diagnostic `raw_grid_mass=0.123`, `posterior_means.home_attack=999`,
+  and `current_scale=999` were each still accepted in independent populated
+  fixture probes. Bind final diagnostics to NPZ raw-mass replay, weighted
+  posterior summaries, and the expected fixture scale; the optional
+  `final_scale` check is still not supplied by the caller.
+- Swapping EKF and SQMC values within a generated LaTeX row still passes
+  `_validate_scalar_table`: it searches for labels and numbers anywhere in
+  the file. Validate complete expected rows with values in their correct
+  columns, or compare against deterministically regenerated table content.
+- Add rejection regressions for these cases. These are existing documented
+  acceptance requirements, not a recurrence of the repaired scaling or
+  shared-filter defect.
+
+Only the investigation document was edited in this review. The local study
+and its artifacts remain available below as preliminary evidence; completion
+claims have been narrowed to match what the code and saved data support.
+
+## Local full-data study (exports corrected; dissertation integration pending)
 
 ### Run identification
 
@@ -77,35 +239,20 @@ predictive (pre-likelihood, uniform weights) summaries for the final fixture:
 | 512 | −1.731–−0.041, −1.137 | 0.075–0.282, 0.147 | 0.288–0.680, 0.543 | 372–483 |
 | 2048 | −2.121–−1.325, −1.693 | 0.048–0.101, 0.066 | 0.721–0.879, 0.780 | 780–1357 |
 
-Raw grid mass was 1.0000 in every evaluation (no truncation). ESS scales with
-the particle count as expected and never collapses.
+The probability and predictive-total summaries above match the saved JSON.
+The raw-mass and post-final distribution exports have now been regenerated;
+see the F8 implementation repair above for corrected ranges. The table's ESS values refer to
+**ESS after the final update**, not ESS throughout the historical filter.
 
-### Interpretation
+### Supported interpretation
 
-1. **The original reversal is a particle-approximation artefact, not a
-   pipeline defect.** At the training particle count (128), the predictive
-   total-strength difference spans −0.49 to +0.60 across seeds — its sign is
-   not stable, so the single-seed forecast that favoured Spain was one draw
-   from a high-variance posterior. The repaired pipeline's diagnostics make
-   this visible; the pre-repair pipeline could not.
-2. **Posterior averaging explains the disagreement with mean-strength
-   rankings.** As the particle count grows, the mixture average concentrates
-   toward Argentina (mean Spain win probability falls from 0.32 at N=128 to
-   0.07 at N=2048), consistent with the investigation's earlier qualification
-   that a nonlinear posterior average can favour a team whose mean total
-   strength is lower. The fixed-state ordering (higher total ⇒ higher rate)
-   is preserved per particle; the mixture average need not preserve it.
-3. **The seed spread shrinks with the particle count**, as it should: the
-   Spain-win range narrows from 0.22 wide at N=128 to 0.05 wide at N=2048.
-   The remaining spread at N=2048 reflects genuine posterior uncertainty in
-   the strength difference (q05–q95 spans roughly ±1), not Monte Carlo noise
-   alone.
-4. **No conclusion about the original saved run's specific numbers follows
-   from this local run** — it is a separately identified run with a different
-   prediction split (2025-06-01 rather than 2026-06-11) and 3 training epochs.
-   The mechanism, however, is established: the reversal is explained by
-   particle-approximation variability plus posterior averaging, and the
-   repaired pipeline now persists everything needed to demonstrate it.
+The three-epoch local checkpoint exhibits substantial across-seed variation
+at N=128. In this sample, higher particle counts favour Argentina more strongly
+and the Spain-win range is narrower at N=2048. This supports checking numerical
+stability, but does not prove convergence, absence of degeneracy, or the cause
+of the original run's ranking/probability disagreement. Posterior averaging
+can produce such disagreements in principle; all nine local evaluations here
+have matching predictive-mean and win-probability orderings.
 
 ### Tooling added for F8
 
@@ -127,13 +274,13 @@ the particle count as expected and never collapses.
   dissertation (the GPU run with the 2026-06-11 prediction split), not from
   this local run, if the dissertation's headline numbers are to come from the
   tournament-split run.
-- The GPU rerun on `config_gpu_small.json` remains optional for the
-  dissertation's headline numbers; the local run already demonstrates the
-  mechanism end-to-end on the full chronological dataset.
+- The hardware choice is secondary; use the scientifically intended checkpoint
+  and split for the dissertation. Correct and regenerate the study before
+  presenting it as completed evidence.
 
-## Fourth validation (2026-09-09; historical)
+## Fourth implementation report (2026-09-09; superseded)
 
-**F1–F7 are now complete to the documented acceptance criteria.** The six
+**Earlier implementation claim (not the current verdict): F1–F7 complete.** The six
 independent mutations and the additional code-review gaps from the third
 validation have all been addressed. F8 (the full-data seed/particle study and
 dissertation population) remains outstanding and requires the GPU rerun.
@@ -234,8 +381,8 @@ the final acceptance step, not a prerequisite for starting that same study.
 
 - [x] **R1** — Pass identical per-match scales through training, prediction, and ranking.
 - [x] **R2** — Generate predictions and posterior ranking summaries from one filter history (uniform predictive weights vs updated posterior weights, with explicit match/state timestamps).
-- [x] **R3** — Artifacts and replay exist; full semantic validation is now complete (F2, F4).
-- [x] **R4** — With fixed fitted parameters, repeat filtering across seeds and larger particle counts; compare Spain–Argentina immediately before and after the final using the same run. Completed locally (see F8 section above); the GPU rerun remains optional for the dissertation's headline numbers.
+- [x] **R3** — Artifacts, checkpoint binding and final diagnostic replay are verified; the remaining F2 checks are complete.
+- [x] **R4 (local study)** — Fixed-checkpoint seed/particle study regenerated with correct raw mass and posterior weighting. Original-run attribution remains unproven.
 
 ### Proposed code repair
 
@@ -243,12 +390,12 @@ the final acceptance step, not a prerequisite for starting that same study.
 - [x] **Task 2** — Separate forecasting from running the filter (`predict_from_sqmc_history` helper; document the state/weight contract).
 - [x] **Task 3** — Current-fixture scaling and raw mass are implemented; the specified log-space weight normalization is now in place (F3).
 - [x] **Task 4** — Run one final evaluation filter and reuse its history (replace the two SQMC filter runs in `run.py::_run_method`; remove `_sqmc_states` independent filtering).
-- [x] **Task 5** — Populated diagnostics validate; semantic-rejection gaps are closed (F2).
-- [x] **Task 6** — 131 tests and a fresh populated combined smoke pass; acceptance regressions are closed (F6). The empirical portion (seed/particle study) is complete (F8).
+- [x] **Task 5** — Final diagnostic mass, weighted summaries and fixture-scale bindings are implemented and tested.
+- [x] **Task 6 (code/smoke acceptance)** — 150 tests pass; populated separate partials and combination validate. Corrected local F8 study exists; interpretation limits and dissertation integration remain.
 
 ### Re-run
 
-- [x] **Re-run** — Completed locally on the full chronological dataset (`config_local_small.json`, run `rbsqmc/comparison/sqmc_ekf/outputs_local`): fitted parameters held fixed across seeds {0,1,2} × particle counts {128, 512, 2048}; Spain–Argentina pre/post-final summaries, raw grid mass, and win-probability spread recorded in `results/seed_particle_study.json`. The GPU rerun on `config_gpu_small.json` remains optional if the dissertation's headline numbers should come from the tournament-split run.
+- [ ] **F8 final acceptance** — The local fixed-checkpoint study is corrected and regenerated; dissertation integration and any matched original-run attribution remain open.
 
 ### Dissertation reporting
 
@@ -265,13 +412,13 @@ F8 covers the full-data evidence and final dissertation population.
 | ID | Priority | Outstanding change | Acceptance check |
 | --- | --- | --- | --- |
 | F1 | P1 | Separate checkpoint validation by method; SQMC-only runs must not require EKF artifacts, and EKF-only runs must validate their own checkpoint. | **Resolved.** Each partial validates its own checkpoint; genuinely separate EKF/SQMC partials validate, collect, and combine. |
-| F2 | P2 | Validate diagnostic meaning, bounds, exact scope, fixture alignment, checkpoint/dataset provenance, and final NPZ contents. | **Partial.** Index/scope/team fixes work; provenance, strength-summary checks and complete NPZ bindings remain. |
+| F2 | P2 | Validate diagnostic meaning, bounds, exact scope, fixture alignment, checkpoint/dataset provenance, and final NPZ contents. | **Resolved.** Final raw mass, weighted summaries and fixture scale are bound to saved particles and model; rejection regressions pass. |
 | F3 | P2 | Normalize log weights directly in log space. | **Resolved.** Direct log-space normalization and the shift-invariance regression are present; the suite passes. |
 | F4 | P2 | Make checkpoint reload self-contained and bind diagnostics to the saved checkpoint. | **Partial.** Forecast replay works; full constrained-field/dimension consistency remains. |
 | F5 | P3 | Enforce scale and history input contracts before compiled computation. | **Partial.** Explicit broadcasting is fixed; full scale/history shape validation remains. |
 | F6 | P2 | Replace incomplete integration tests and exercise the actual split workflow. | **Partial.** 130 tests and a populated combined smoke pass; remaining rejection and call-count coverage is absent. |
-| F7 | Task 7 | Implement final scalar exports, comparison CSV/JSON, and generated LaTeX table. | **Partial.** Table compiles and CSV/JSON values agree; scalar provenance, partial-export validation and table-content checks remain. |
-| F8 | R4 / rerun | Run the fixed-parameter seed/particle study and populate the dissertation from the repaired run. | Saved Spain–Argentina pre/post-final diagnostics explain any remaining disagreement, and the dissertation table matches the final checkpoints. |
+| F7 | Task 7 | Implement final scalar exports, comparison CSV/JSON, and generated LaTeX table. | **Code resolved.** Exact ordered table rows/model columns are validated; dissertation integration remains Task 7. |
+| F8 | R4 / rerun | Run the fixed-parameter seed/particle study and populate the dissertation from the repaired run. | **Partial; see latest review.** Mass/weighting fixed and nine evaluations regenerated; retain interpretation limits and complete dissertation integration. |
 
 ### F1 — Partial-run checkpoint validation: resolved
 
@@ -280,7 +427,7 @@ F8 covers the full-data evidence and final dissertation population.
 - Retain rejection tests for a missing own-method checkpoint, using genuinely separate EKF and SQMC directories.
 - No further checkpoint-selection change is required. The previous populated-diagnostic index failure has also been repaired; remaining diagnostic checks are listed under F2.
 
-### F2 — Diagnostic and final-particle validation: outstanding
+### F2 — Diagnostic and final-particle validation: resolved
 
 - **Fix the index offset** in `scripts/validate_sqmc_ekf_outputs.py::_validate_sqmc_diagnostics`:
   - Set `prefix = metadata["train_count"] + metadata["test_count"]`.
@@ -351,7 +498,7 @@ F8 covers the full-data evidence and final dissertation population.
 - Add tests showing `(T,)`, `(T, 1)`, and an explicitly broadcast `(T, M)` produce identical unpacked scales, and that invalid scale/history shapes fail clearly.
 - **Acceptance:** no supported scale form depends on out-of-bounds index clipping, and malformed inputs fail before a forecast is produced.
 
-### F6 — Integration tests and split-run acceptance: outstanding
+### F6 — Integration tests and split-run acceptance: verified
 
 - Retain the improved scale-continuity test that invokes `Methods.filter` directly.
 - Ensure its unit-scale negative control uses the **same decoded parameters**, key and data as the scaled case; change only scales so a parameterization difference cannot make the test pass.
@@ -364,7 +511,7 @@ F8 covers the full-data evidence and final dissertation population.
 - Record commands, output directories, exit codes and test results in this document. Do not mark F6 complete merely because unit tests pass while a populated partial run fails.
 - **Acceptance:** the affected suite, populated partial workflow, collection, combination and replay checks all pass. Only then proceed to F8.
 
-### F7 — Final scalar comparison and compilable LaTeX: outstanding
+### F7 — Final scalar comparison and compilable LaTeX: code resolved
 
 - Retain the existing per-model `final_scalar_params.json` and combined CSV/JSON writers in `run.py`.
 - Compare the four constrained final-epoch scalars: `alpha`, `beta`, `kappa`, and `friendly_scale`; exclude mean and covariance quantities from the comparison.

@@ -10,6 +10,7 @@ from datetime import date, datetime
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 import struct
 import sys
@@ -412,6 +413,8 @@ def _validate_sqmc_diagnostics(results, metadata, cfg, records=None):
             _require(0 <= p < len(records),
                      "Diagnostics full-sequence index out of range for the prediction split")
             record = records[p]
+            _close(entry["current_scale"], _fixture_scale(record, fitted, cfg),
+                   "Diagnostics scale vs fixture")
             _require(record["date"] == entry["date"], "Diagnostics date does not match prediction record")
             _require(record["home"] == entry["home"] and record["away"] == entry["away"],
                      "Diagnostics teams do not match prediction record")
@@ -429,16 +432,30 @@ def _validate_sqmc_diagnostics(results, metadata, cfg, records=None):
             _close(record["prob_home_win"], probs["home"], "Diagnostics home probability vs prediction")
             _close(record["prob_draw"], probs["draw"], "Diagnostics draw probability vs prediction")
             _close(record["prob_away_win"], probs["away"], "Diagnostics away probability vs prediction")
+    final_entry = next((e for e in forecasts if records is not None and
+                        e["full_sequence_match_index"] == prefix + len(records) - 1), None)
+    expected_final_scale = (_fixture_scale(records[-1], fitted, cfg)
+                            if records else None)
     _validate_final_npz(
         results / "sqmc_final_fixture.npz", cfg,
         records=records, team_id_to_name=team_id_to_name,
+        final_scale=expected_final_scale, final_diagnostic=final_entry,
         checkpoint_alpha=float(fitted["constrained"]["model"]["alpha"]),
         checkpoint_beta=float(fitted["constrained"]["model"]["beta"]),
     )
 
 
+def _fixture_scale(record, fitted, cfg):
+    # Match data.filter_teams: case-insensitive substring, not exact equality.
+    friendly = "friendly" in (record.get("tournament") or "").lower()
+    scale = (fitted["constrained"]["friendly_scale"] if friendly
+             else cfg.get("match_scale", 1.0))
+    _require(math.isfinite(float(scale)) and float(scale) > 0, "Invalid fixture scale")
+    return float(scale)
+
+
 def _validate_final_npz(path, cfg, records=None, team_id_to_name=None, final_scale=None,
-                        checkpoint_alpha=None, checkpoint_beta=None):
+                        checkpoint_alpha=None, checkpoint_beta=None, final_diagnostic=None):
     """Open and replay the final-fixture NPZ, checking fields, shapes, finite
     coordinates, valid log weights, and (when records/team mapping are given)
     reconstructing the grid and comparing it to the saved final prediction."""
@@ -493,6 +510,23 @@ def _validate_final_npz(path, cfg, records=None, team_id_to_name=None, final_sca
         )
         grid = np.asarray(grid)
         _require(0.0 < float(raw_mass) <= 1.0 + 1e-6, "Final NPZ raw mass out of range")
+        if final_diagnostic is not None:
+            _close(final_diagnostic["raw_grid_mass"], float(raw_mass),
+                   "Final diagnostic raw mass vs NPZ replay")
+            _close(final_diagnostic["current_scale"], float(data["scale"]),
+                   "Final diagnostic scale vs NPZ")
+            posterior_lw = data["log_weights_posterior"]
+            posterior_w = np.exp(posterior_lw - np.max(posterior_lw))
+            posterior_w /= posterior_w.sum()
+            for label, weights in (("predictive_means", np.full(n, 1.0 / n)),
+                                   ("posterior_means", posterior_w)):
+                for side, team_id in (("home", home_id), ("away", away_id)):
+                    means = np.sum(particles[:, team_id, :] * weights[:, None], axis=0)
+                    for component, value in zip(("attack", "defence"), means):
+                        _close(final_diagnostic[label][f"{side}_{component}"], float(value),
+                               f"Final diagnostic {label} {side}_{component} vs NPZ replay")
+            _close(final_diagnostic["ess_after_update"], float(1 / np.sum(posterior_w**2)),
+                   "Final diagnostic posterior ESS vs NPZ replay")
         # Compare the replayed grid to the saved final prediction record,
         # cell by cell (full-grid replay), and resolve the NPZ team IDs to the
         # final record's names.
@@ -587,6 +621,9 @@ def _validate_scalar_params(results, cfg, metadata=None, methods=METHODS):
             elif row["parameter"] == "log(2)/kappa":
                 _close(row["ekf"], math.log(2) / per_method["ekf"]["kappa"], "combined log(2)/kappa ekf")
                 _close(row["sqmc"], math.log(2) / per_method["sqmc"]["kappa"], "combined log(2)/kappa sqmc")
+        for row in rows:
+            _close(row["sqmc_minus_ekf"], float(row["sqmc"]) - float(row["ekf"]),
+                   f"combined {row['parameter']} difference")
         # CSV must agree with the JSON rows.
         csv_rows = _csv(results / "final_scalar_params_comparison.csv")
         _require(len(csv_rows) == len(rows), "Scalar comparison CSV row count mismatch")
@@ -598,22 +635,21 @@ def _validate_scalar_params(results, cfg, metadata=None, methods=METHODS):
 
 
 def _validate_scalar_table(path, rows):
-    """Validate the generated LaTeX table content: it must contain the four
-    learned parameter rows with values matching the formatted source values,
-    and the Interpretation column header."""
+    """Validate complete ordered table rows and their model-column positions."""
+    from rbsqmc.comparison.sqmc_ekf.scripts.scalar_table import table_body
+
     _nonempty(path)
     text = path.read_text()
-    _require("Interpretation" in text, "Scalar table missing Interpretation column")
-    for row in rows:
-        if row["parameter"] in ("exp(alpha)", "exp(beta)", "log(2)/kappa"):
-            continue
-        label = {"alpha": r"$\alpha$", "beta": r"$\beta$", "kappa": r"$\kappa$",
-                 "friendly_scale": r"friendly\_scale"}[row["parameter"]]
-        _require(label in text, f"Scalar table missing parameter label {label}")
-        fmt = f"{row['ekf']:.3e}" if row["parameter"] == "kappa" else f"{row['ekf']:.4f}"
-        _require(fmt in text, f"Scalar table missing EKF value {fmt} for {row['parameter']}")
-        fmt = f"{row['sqmc']:.3e}" if row["parameter"] == "kappa" else f"{row['sqmc']:.4f}"
-        _require(fmt in text, f"Scalar table missing SQMC value {fmt} for {row['parameter']}")
+    blocks = re.findall(r"\\begin\{tabular\}\{lccc\}(.*?)\\end\{tabular\}",
+                        text, flags=re.DOTALL)
+    _require(len(blocks) == 1 and text.count(r"\begin{tabular}") == 1,
+             "Scalar table must contain exactly one four-column tabular")
+    # Remove actual comments, not escaped percent signs in interpretations.
+    body = re.sub(r"(?<!\\)%[^\n]*", "", blocks[0])
+    actual = [" ".join(line.split()) for line in body.splitlines() if line.strip()]
+    expected = [" ".join(line.split()) for line in table_body(rows)]
+    _require(actual == expected,
+             "Scalar table rows/Interpretation/model columns do not match the comparison")
 
 
 def validate_artifacts(run_dir, config=None):

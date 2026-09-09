@@ -34,6 +34,9 @@ from rbsqmc.comparison.sqmc_ekf.scripts import plots as plots_mod
 from rbsqmc.comparison.sqmc_ekf.scripts import predict as predict_mod
 from rbsqmc.comparison.sqmc_ekf.scripts import report as report_mod
 from rbsqmc.comparison.sqmc_ekf.scripts import train
+from rbsqmc.comparison.sqmc_ekf.scripts.scalar_table import (
+    latex_escape as _latex_escape, table_body as _scalar_table_body,
+)
 from rbsqmc.comparison.sqmc_ekf.scripts.scaling import sqmc_match_scales
 from rbsqmc.src.model.rbsqmc.model_rbsqmc import run_filter_sqmc
 from rbsqmc.comparison.sqmc_ekf.scripts import diagnostics as diag_mod
@@ -569,28 +572,6 @@ def _write_scalar_comparison(results_dir, cfg, run_dir):
     _write_scalar_latex(results_dir, rows, ekf, sqmc, run_dir)
 
 
-def _latex_escape(text):
-    """Escape LaTeX special characters in arbitrary text fields."""
-    return (str(text)
-            .replace("\\", r"\textbackslash{}")
-            .replace("_", r"\_")
-            .replace("&", r"\&")
-            .replace("%", r"\%")
-            .replace("$", r"\$")
-            .replace("#", r"\#")
-            .replace("{", r"\{")
-            .replace("}", r"\}"))
-
-
-# LaTeX-safe display labels for the four fitted parameters.
-_SCALAR_LABELS = {
-    "alpha": r"$\alpha$",
-    "beta": r"$\beta$",
-    "kappa": r"$\kappa$",
-    "friendly_scale": r"friendly\_scale",
-}
-
-
 def _write_scalar_latex(results_dir, rows, ekf, sqmc, run_dir):
     """Generate a LaTeX table from the scalar comparison artifact.
 
@@ -598,10 +579,6 @@ def _write_scalar_latex(results_dir, rows, ekf, sqmc, run_dir):
     rendered as safe labels and the run ID is escaped so the table compiles
     even when the run ID contains underscores or other special characters.
     """
-    def _fmt(value, param):
-        if param == "kappa":
-            return f"{value:.3e}"
-        return f"{value:.4f}"
     run_id = _latex_escape(os.path.basename(run_dir))
     lines = [
         "\\begin{table}[ht]",
@@ -609,20 +586,9 @@ def _write_scalar_latex(results_dir, rows, ekf, sqmc, run_dir):
         "\\caption{Final fitted scalar parameters (run \\texttt{%s}, final epoch EKF %d / SQMC %d).}"
         % (run_id, ekf["checkpoint_epoch"], sqmc["checkpoint_epoch"]),
         "\\begin{tabular}{lccc}",
-        "\\toprule",
-        "Parameter & Interpretation & EKF & RB-SQMC \\\\",
-        "\\midrule",
     ]
-    for row in rows:
-        if row["parameter"] in ("exp(alpha)", "exp(beta)", "log(2)/kappa"):
-            continue  # derived rows are discussed in prose, not the main table
-        label = _SCALAR_LABELS.get(row["parameter"], _latex_escape(row["parameter"]))
-        lines.append(
-            "%s & %s & %s & %s \\\\"
-            % (label, _latex_escape(row["meaning"]),
-               _fmt(row["ekf"], row["parameter"]), _fmt(row["sqmc"], row["parameter"]))
-        )
-    lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
+    lines += _scalar_table_body(rows)
+    lines += ["\\end{tabular}", "\\end{table}"]
     with open(os.path.join(results_dir, "final_scalar_params_table.tex"), "w") as f:
         f.write("\n".join(lines) + "\n")
 

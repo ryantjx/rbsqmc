@@ -20,7 +20,7 @@ Usage:
 import argparse
 import hashlib
 import json
-import os
+import subprocess
 from pathlib import Path
 
 import jax
@@ -31,7 +31,6 @@ from rbsqmc.comparison.sqmc_ekf.scripts import train as train_mod
 from rbsqmc.comparison.sqmc_ekf.scripts.scaling import sqmc_match_scales
 from rbsqmc.src.data.data_ekf import load_dataset as data_mod_load_dataset
 from rbsqmc.src.model.rbsqmc.model_rbsqmc import run_filter_sqmc
-from rbsqmc.src.model.rbsqmc.predict_rbsqmc import predict_from_sqmc_history
 from rbsqmc.src.model.rbsmc.predict import predict_match_score_with_mass
 from jax.scipy.special import logsumexp
 
@@ -64,13 +63,38 @@ def _team_means(particles_x, log_weights, home_id, away_id):
     }
 
 
-def _total_diff_distribution(particles_x, home_id, away_id):
-    """Particlewise ``(att_home+def_home) - (att_away+def_away)`` summary."""
+def _total_diff_distribution(particles_x, home_id, away_id, log_weights=None):
+    """Summarize total-strength differences under predictive/posterior weights.
+
+    Predictive quantiles retain NumPy's linear interpolation convention.
+    Posterior quantiles use the inverse weighted empirical CDF: the smallest
+    value whose cumulative normalized weight reaches the requested probability.
+    Zero-weight particles are excluded from that CDF.
+    """
     diff = (
         particles_x[:, home_id, 0] + particles_x[:, home_id, 1]
         - particles_x[:, away_id, 0] - particles_x[:, away_id, 1]
     )
     diff = np.asarray(diff)
+    if log_weights is not None:
+        lw = np.asarray(log_weights, dtype=float)
+        if (lw.shape != diff.shape or np.isnan(lw).any()
+                or np.isposinf(lw).any() or not np.isfinite(lw).any()):
+            raise ValueError("Posterior log weights must match particles and have finite mass")
+        weights = np.exp(lw - np.max(lw))
+        weights /= weights.sum()
+        order = np.argsort(diff, kind="stable")
+        order = order[weights[order] > 0]
+        cdf = np.cumsum(weights[order])
+        cdf[-1] = 1.0
+        quantiles = diff[order[np.searchsorted(cdf, [0.05, 0.5, 0.95], side="left")]]
+        return {
+            "mean": float(np.dot(weights, diff)),
+            "q05": float(quantiles[0]),
+            "q50": float(quantiles[1]),
+            "q95": float(quantiles[2]),
+            "fraction_positive": float(weights[diff > 0].sum()),
+        }
     return {
         "mean": float(diff.mean()),
         "q05": float(np.quantile(diff, 0.05)),
@@ -125,11 +149,11 @@ def evaluate_fixture(dataset, params, cfg, key, n_particles, p, t, scale):
         "posterior_means": _team_means(particles_x[t + 1], log_weights[t + 1], home_id, away_id),
         "total_strength_difference": _total_diff_distribution(x_pred, home_id, away_id),
         "post_total_strength_difference": _total_diff_distribution(
-            particles_x[t + 1], home_id, away_id
+            particles_x[t + 1], home_id, away_id, log_weights[t + 1]
         ),
         "ess_before_resampling": _ess(log_weights[t]),
         "ess_after_update": _ess(log_weights[t + 1]),
-        "raw_grid_mass": float(jnp.exp(logsumexp(jnp.log(grid + 1e-12)))),
+        "raw_grid_mass": float(raw_mass),
         "outcome_probabilities": _outcome_probs(grid),
     }
 
@@ -179,6 +203,12 @@ def main():
 
     # Load the fitted SQMC checkpoint; parameters are held fixed throughout.
     checkpoint_path = results_dir / "sqmc" / "fitted_params.json"
+    checkpoint = json.loads(checkpoint_path.read_text())
+    stored_metadata = json.loads((results_dir / "dataset_metadata.json").read_text())
+    if dataset.metadata["source_sha256"] != stored_metadata["source_sha256"]:
+        raise ValueError("Study dataset does not match the fitted run's dataset hash")
+    if checkpoint["team_id_to_name"] != {str(k): v for k, v in dataset.teams.items()}:
+        raise ValueError("Study team mapping does not match the fitted checkpoint")
     params = train_mod.load_fitted_params(checkpoint_path, "sqmc")
     checkpoint_hash = hashlib.sha256(checkpoint_path.read_bytes()).hexdigest()
 
@@ -215,7 +245,15 @@ def main():
                     "full_sequence_match_index": t, "prediction_index": p},
         "checkpoint_hash": checkpoint_hash,
         "dataset_hash": dataset.metadata.get("source_sha256"),
-        "source_revision": None,
+        "schema_version": 2,
+        "source_revision": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[4], text=True
+        ).strip(),
+        "study_script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "quantile_conventions": {
+            "predictive": "numpy linear interpolation, uniform particle weights",
+            "posterior": "inverse weighted empirical CDF, normalized posterior weights",
+        },
         "n_particles_list": args.particle_counts,
         "seeds": args.seeds,
         "evaluations": entries,
