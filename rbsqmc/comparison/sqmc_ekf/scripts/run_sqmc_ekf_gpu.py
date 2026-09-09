@@ -199,7 +199,11 @@ def main():
     root.mkdir(exist_ok=args.action != "provision")
     # RBSQMC_PLATFORM must be set before the comparison imports the model
     # modules, which otherwise pin jax_platforms to cpu (audit finding P1).
-    os.environ.update(JAX_ENABLE_X64="true", XLA_PYTHON_CLIENT_PREALLOCATE="false", MPLBACKEND="Agg", MPLCONFIGDIR="/tmp/sqmc-matplotlib", PYTHONUNBUFFERED="1", RBSQMC_PLATFORM="cuda")
+    # PYTHONPATH makes the rbsqmc namespace package importable to every
+    # subprocess regardless of import site: the artifact validator imports
+    # rbsqmc.* lazily inside function bodies, which fails when only the
+    # scripts directory is on sys.path.
+    os.environ.update(JAX_ENABLE_X64="true", XLA_PYTHON_CLIENT_PREALLOCATE="false", MPLBACKEND="Agg", MPLCONFIGDIR="/tmp/sqmc-matplotlib", PYTHONUNBUFFERED="1", RBSQMC_PLATFORM="cuda", PYTHONPATH=str(REPO))
     (root / "comparison_config.json").write_text(json.dumps(config, indent=2) + "\n")
     with (root / "remote_logs.txt").open("a", buffering=1) as log:
         with contextlib.redirect_stdout(Tee(sys.stdout, log)), contextlib.redirect_stderr(Tee(sys.stderr, log)):
