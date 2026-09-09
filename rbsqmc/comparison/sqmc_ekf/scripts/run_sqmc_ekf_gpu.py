@@ -100,6 +100,14 @@ def setup(config, root):
     run(["git", "bundle", "verify", str(bundle)])
     run(["git", "fetch", str(bundle), "refs/heads/" + config["repo_branch"]])
     run(["git", "checkout", "--detach", "FETCH_HEAD"])
+    # Only materialize the directories the comparison needs. The monorepo also
+    # tracks archive/, papers/, dissertation/ and generated images/data that
+    # are irrelevant to the run; a sparse checkout keeps the VM working tree
+    # small and avoids shipping those bytes over the bundle transport. The
+    # exact source_commit is still pinned (HEAD is unchanged by sparse
+    # checkout), so the run remains reproducible.
+    run(["git", "sparse-checkout", "init", "--cone"])
+    run(["git", "sparse-checkout", "set", "rbsqmc", "sqmc"])
     actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
     if actual != config["source_commit"]:
         raise RuntimeError("Remote checkout does not match source commit")

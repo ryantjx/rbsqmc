@@ -60,6 +60,12 @@ class Tee:
         for line in lines:
             self.write(line)
 
+    def close(self):
+        # absl.logging captures the redirected stream and calls close() on it
+        # during interpreter shutdown; without this, exit raises
+        # AttributeError: 'Tee' object has no attribute 'close'.
+        self.log.close()
+
 
 def command(argv, timeout=600, quiet=False, cwd=None, env=None):
     if not quiet:
