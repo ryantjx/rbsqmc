@@ -398,7 +398,7 @@ Our static parameters for the model are $\Theta = (\Gamma_0, B, \kappa, \alpha, 
 
 The smoothing algorithm requires the backward-sampled trajectories to be sufficiently diverse to provide a good estimate of the smoothing distribution. However, drawing many independent backward trajectories is computationally expensive: each trajectory is sampled sequentially from time $T$ to $0$, and at every time step $t$ the backward weights must be evaluated against all $N$ particles. Producing $M$ trajectories over $T$ time steps therefore costs $\mathcal{O}(MNT)$ particle-weight evaluations. Moreover, if the forward filter degenerates, the backward weights concentrate on only a few particles, so the effective number of distinct trajectories is small. The resulting smoothed trajectories then carry little diversity, which biases the estimate of the initial between-team covariance $\Gamma_0$: the backward paths are drawn from too few ancestors and the inferred spread is unreliable. 
 
-A simpler and more efficient approach is to estimate the gradient of the marginal log-likelihood. By Fisher's identity \citep{delmoral2004feynman,delmoraldoucetsingh2010forwardsmoothing}, the marginal log-likelihood of the particle filter takes the form
+A simpler and more efficient approach is to estimate the gradient of the marginal log-likelihood $p(y_{1:T} \mid \Theta)$. By Fisher's identity \citep{delmoral2004feynman,delmoraldoucetsingh2010forwardsmoothing}, the marginal log-likelihood of the particle filter takes the form
 
 \begin{equation}\nabla_\Theta \log p(y_{1:T} \mid \Theta) = \int p(x_{0:T} \mid y_{1:T}, \Theta) \nabla_\Theta \log p(x_{0:T}, y_{1:T} \mid \Theta) dx_{0:T}\end{equation}
 
