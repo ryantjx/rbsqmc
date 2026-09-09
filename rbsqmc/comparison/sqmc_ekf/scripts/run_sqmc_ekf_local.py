@@ -109,7 +109,7 @@ def command(argv, timeout=600, quiet=False, cwd=None, env=None):
 
 def resolve(path=None, environ=None, repo=REPO, clock=None):
     environ = os.environ if environ is None else environ
-    config = read_json(SCRIPTS.parent / "config/config.json")
+    config = read_json(SCRIPTS / "config/config_gpu.json")
     if path:
         overrides = read_json(path)
         config.update(overrides)

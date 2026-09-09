@@ -102,7 +102,7 @@ We attempt to model the performance of teams during the World Cup 2026. There ar
     x_0 \in \mathbb{R}^{2K}, \qquad x_0 \sim \mathcal{N}_{2K}(\mu_0, \Sigma_0)
 \end{equation}
 
-where $\mu_0 = \mathbf{0}_{2K}$ for simplicity. We make the further assumption that the relationship between attack and defence of all teams is the same, represented by the matrix $B \in \mathbb{R}^{2 \times 2}$. This assumption allows us to simplify the covariance matrix into a Kronecker product of the form $\Sigma_0 = \Gamma_0 \otimes B$, where $\Gamma_0 \in \mathbb{R}^{K \times K}$ is a covariance matrix that represents the relationship between teams. We require the conditions $\Gamma_0 \succ 0$, $B \succ 0$ and $\det(B) = 1$; the last condition removes the scale non-identifiability of the Kronecker parameterisation, since $(c\Gamma_0) \otimes (B/c) = \Gamma_0 \otimes B$. We model the evolution of latent states as an Ornstein-Uhlenbeck process, a mean-reverting stochastic process, given by
+where $\mu_0 = \mathbf{0}_{2K}$ for simplicity. We make the further assumption that the relationship between attack and defence of all teams is the same, represented by the matrix $B \in \mathbb{R}^{2 \times 2}$. This assumption allows us to simplify the covariance matrix into a Kronecker product of the form $\Sigma_0 = \Gamma_0 \otimes B$, where $\Gamma_0 \in \mathbb{R}^{K \times K}$ is a covariance matrix that represents the relationship between teams. We require the conditions $\Gamma_0 \succ 0$, $B \succ 0$ and $\det(B) = 1$; the last condition removes the scale non-identifiability of the Kronecker parameterisation, since $(c\Gamma_0) \otimes (B/c) = \Gamma_0 \otimes B$. Proposition~\ref{prop:kronecker-dim} in Appendix~\ref{app:kronecker-proof} shows that this parameterisation reduces the number of free parameters of the initial covariance from $K(2K+1)$ to $K(K+1)/2 + 2$; the reduction is a factor of approximately four, but the parameter count remains of order $\mathcal{O}(K^2)$. This also allows us to efficiently compute the models in the following Section~\ref{sec:rb-smc} and \ref{sec:rb-sqmc}. We model the evolution of latent states as an Ornstein-Uhlenbeck process, a mean-reverting stochastic process, given by
 
 \begin{equation}
     x_t \mid x_{t-1} \sim \mathcal{N}(\mu_0 + \phi_t (x_{t-1} - \mu_0), Q_t)
@@ -439,48 +439,163 @@ so that
 % under the regularity assumptions of the particle score estimator and with the proposal-gradient treatment required by the stop-gradient-resampling construction. This is a consistent estimator of the score, not an exact equality or a generally finite-$N$ unbiased estimator.
 
 \section{Performance comparison}
+\label{sec:performance-comparison}
 
-We compare the performance of RB-SQMC with the EKF model implemented in [](cuthberto-carlos). The EKF model is a linear-Gaussian approximation of the state-space model, which speeds up the computation of the model since the posterior can be computed in closed form. However, the EKF model introduces bias in the estimation of the posterior distribution. As a result, the EKF model may not capture the true uncertainty in the latent states.
-\subsection{Parameters}
+We compare RB-SQMC against a factorial state-space model, specifically a moment-based extended Kalman filter (EKF) baseline implemented in the \texttt{cuthberto-carlos} package \citep{cuthbertocarlos2026}, which builds on the \texttt{cuthbert} library for factorial filtering. We are comparing two different methods for approximating the same underlying model, RB-SQMC which uses a particle approximation of the latent state and EKF which uses a biased Gaussian approximation. 
 
-full parameter set in Appendeix
-% Generated: 2026-09-08 19:53:24
-% Dataset rows: 49521 (train 32, test 8, prediction count 4).
-% Config: {"training_start_date": "1980-01-01", "test_start_date": "2024-01-01", "prediction_start_date": "2026-06-11", "n_particles": 64, "max_goals": 8, "seed": 0, "n_epochs": 3, "learning_rate": 0.02, "n_reps": 2, "include_friendly": true, "teams": "worldcup2026", "match_scale": 1, "gauss_hermite_degree": 32, "gpu": "A100", "gpu_type": "A100", "colab_timeout": 14400, "setup_timeout": 900, "transfer_timeout": 600, "session": "sqmc_ekf", "repo_url": "https://github.com/ryantjx/rbsqmc.git", "repo_branch": "main", "source_commit": "abf444d31d9fbadde6411c743921914edc749178", "run_id": "08092026_1153", "session_name": "sqmc_ekf_08092026_1153_cadca68b43", "resolved_utc": "2026-09-08T11:53:07.052255+00:00", "source_transport": "colab_git_bundle", "smoke": true}
+% The comparison is meant to evaluate the performance of the two methods in terms of their ability to estimate the model parameters and make predictions.
+
+% The comparison serves two purposes. First, it isolates the effect of the correlated Rao-Blackwellised construction developed in this chapter: the EKF is a factorial Gaussian moment filter that maintains an independent marginal for each team and discards the cross-team covariance after every match, whereas RB-SQMC retains that dependence through the Rao-Blackwell covariance update. Second, it contrasts a closed-form approximation with a particle method, so that the cost of the particle representation is made explicit. The two methods are not intended to be interchangeable; the EKF is a fast baseline whose Gaussian approximation is exact only under linear-Gaussian observation, which the bivariate-Poisson likelihood violates.
+
+\subsection{Experimental design}
+
+Both methods consume a single chronologically ordered data set of international football results, so that the comparison is not confounded by differences in data preparation. The data are split chronologically into a training period $[1980\text{-}01\text{-}01, 2024\text{-}01\text{-}01)$, a test period $[2024\text{-}01\text{-}01, 2026\text{-}06\text{-}11)$, and a prediction period from 11 June 2026. The prediction period contains the four World Cup 2026 fixtures used for the headline scoring. Matches with scores exceeding the truncation threshold $\max\_goals = 8$ are excluded before the split, and same-day repeats are retained as separate rows with zero elapsed time.
+
+The static parameters $\Theta = (\Gamma_0, B, \kappa, \alpha, \beta)$ are estimated by maximising the marginal log-likelihood as mentioned in Section~\ref{sec:parameter-estimation}. Both methods use Adam with a cosine-decay learning-rate schedule, learning rate \placeholder{value}, seed \placeholder{value} and \placeholder{value} updates. Because the SQMC log-likelihood is a particle estimate, its gradient is averaged over \placeholder{value} independently randomised RQMC replicas at each update, whereas the EKF gradient is deterministic. The EKF integrates the bivariate-Poisson likelihood under the predictive Gaussian by Gauss--Hermite quadrature of degree \placeholder{value} \citep{ghq}; RB-SQMC evaluates the same likelihood on the sampled playing-team coordinates. The full parameter set and the exact configuration are listed in Appendix~\ref{app:config}.
+
+\subsection{Training: marginal log-likelihood}
+
+Table~\ref{tab:logz} reports the training and test log-likelihoods. 
+
+% The two columns are not directly comparable as exact marginal likelihoods: the EKF value is a Gaussian-approximate normalising constant from moment filtering, while the SQMC value is a particle estimate with finite-sample error. The two methods also adopt different time-step conventions, the EKF propagating only the two playing teams by each team's last-appearance gap and RB-SQMC propagating the full covariance per row. The raw gap must therefore not be read as a superiority verdict.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcc}
+\toprule
+ & EKF & RB-SQMC \\
+\midrule
+Final train log-likelihood & \placeholder{value} & \placeholder{value} \\
+Final test log-likelihood & \placeholder{value} & \placeholder{value} \\
+Best test log-likelihood (epoch) & \placeholder{value} & \placeholder{value} \\
+\bottomrule
+\end{tabular}
+\caption{Training and test log-likelihoods for the EKF and RB-SQMC. The EKF value is a Gaussian-approximate normalising constant; the SQMC value is a particle estimate. The two are not directly comparable as exact marginal likelihoods.}
+\label{tab:logz}
+\end{table}
+
+Figure~\ref{fig:logz-overlay} overlays the training and test log-likelihood trajectories across epochs for both methods.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{logz_overlay_train_test.png}
+\caption{Training and test log-likelihood against epoch for the EKF and RB-SQMC. The EKF value is a Gaussian-approximate normalising constant; the SQMC value is a particle estimate.}
+\label{fig:logz-overlay}
+\end{figure}
+
+% <INCLUDE THE LOG-LIKELIHOOD RESULTS HERE>Within the range examined, RB-SQMC attained a higher test log-likelihood than the EKF at every epoch, and its best test value was reached at the first epoch. This is consistent with the particle method evaluating the non-Gaussian likelihood without the Gaussian approximation, but it does not establish that RB-SQMC is the better model: the comparison is confounded by the different time-step conventions and by the approximation status of the EKF normalising constant.
+
+\subsection{Prediction}
+
+For each prediction-split match, both methods produce a one-step-ahead score grid before assimilating the known result, so that the current score cannot enter its own forecast. We score the resulting distributions with the mean Brier score over the three outcomes (home win, draw, away win), the mean predictive log-score, and outcome accuracy, all restricted to the four World Cup 2026 fixtures. The Brier score is defined as,
+
+\begin{equation}
+    \text{Brier score} = \frac{1}{N} \sum_{i=1}^N \sum_{j=1}^{N} (p_{ij} - o_{ij})^2, \nonumber
+\end{equation}
+
+where $p_{ij}$ is the predicted probability of outcome $j$ for match $i$, and $o_{ij}$ is the observed outcome indicator. The predictive log-score is defined as,
+
+\begin{equation}
+    \text{Predictive log-score} = \frac{1}{N} \sum_{i=1}^N \log p_{i,o_i}, \nonumber
+\end{equation}
+
+which is the average log-probability assigned to the observed outcome $o_i$ for match $i$. Outcome accuracy is defined as the proportion of matches for which the predicted outcome with the highest probability matches the observed outcome.
+
+Table~\ref{tab:prediction} reports the results, and the full win--loss predictions for the fixtures and the knockout stage are collected in Appendix~\ref{app:prediction}.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lcc}
+\toprule
+ & EKF & RB-SQMC \\
+\midrule
+Mean Brier score & \placeholder{value} & \placeholder{value} \\
+Uniform reference Brier score & $2/3$ & $2/3$ \\
+Brier skill score vs.\ uniform & \placeholder{value} & \placeholder{value} \\
+Mean predictive log-score & \placeholder{value} & \placeholder{value} \\
+Outcome accuracy & \placeholder{value} & \placeholder{value} \\
+Exact-score accuracy & \placeholder{value} & \placeholder{value} \\
+Scored matches & \placeholder{value} & \placeholder{value} \\
+\bottomrule
+\end{tabular}
+\caption{One-step-ahead prediction metrics on the World Cup 2026 fixtures. The Brier skill score is relative to the uniform reference $2/3$.}
+\label{tab:prediction}
+\end{table}
+
+We review the final match of the tournament, Spain vs.\ Argentina, played on 11 June 2026. The image below shows the predicted score grids for both methods, with the actual result marked by a red cross.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{EKF_2026-07-19_Spain_vs_Argentina.png}
+\caption{Predicted score grids for the final match, Spain vs.\ Argentina, under the EKF. The actual result is marked by a red cross.}
+\label{fig:prediction-final-ekf}
+\end{figure}
+
+% \begin{figure}[htbp]
+% \centering
+% \includegraphics[width=\textwidth]{SQMC_2026-07-19_Spain_vs_Argentina.png}
+% \caption{SQMC predicted score grid for the final match, Spain vs.\ Argentina. The actual result is marked by a red cross.}
+% \label{fig:prediction-final-sqmc}
+% \end{figure}
+
+% Table~\ref{tab:prediction-knockout} reports the win--loss predictions of the bivariate-Poisson model for the two semi-finals and the final, alongside the actual results.
+
+% \begin{table}[htbp]
+% \centering
+% \begin{tabular}{llccc}
+% \toprule
+% Home team & Away team & Actual result & EKF predicted & RB-SQMC predicted \\
+% \midrule
+% England & Argentina & \placeholder{result} & \placeholder{outcome} & \placeholder{outcome} \\
+% France & Spain & \placeholder{result} & \placeholder{outcome} & \placeholder{outcome} \\
+% Spain & Argentina & \placeholder{result} & \placeholder{outcome} & \placeholder{outcome} \\
+% \bottomrule
+% \end{tabular}
+% \caption{Win--loss predictions of the bivariate-Poisson model for the two semi-finals and the final. The predicted outcome is the mode of the three-outcome distribution under each method.}
+% \label{tab:prediction-knockout}
+% \end{table}
+
+% <INSERT BRIER SCORE RESULTS HERE> On this smoke run the EKF produced the lower mean Brier score and the only correct outcome prediction, while RB-SQMC scored below the uniform reference. This is a negative result for RB-SQMC within the range examined, and it is reported directly. It should not be over-interpreted: four matches cannot separate the methods, the SQMC forecast is a single particle realisation with no averaging over scrambles, and the EKF's advantage here may reflect the particular fixtures rather than a systematic property. The appropriate reading is that the prediction protocol runs end to end and produces well-formed, properly normalised score grids for both methods; a performance comparison requires the full particle count, more epochs and many more held-out matches.
+
+\subsection{Evaluation}
+
+Figure~\ref{fig:timeseries} shows the filtered attacking and defensive strength trajectories for a representative team under each method. The EKF produces a single deterministic trajectory, whereas RB-SQMC reports the weighted particle mean with the particle spread as an uncertainty band.
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}{0.9\textwidth}
+\includegraphics[width=\textwidth]{ekf_timeseries_states.png}
+\caption{EKF filtered states.}
+\label{fig:timeseries-ekf}
+\end{subfigure}
+\begin{subfigure}{0.9\textwidth}
+\includegraphics[width=\textwidth]{sqmc_timeseries_states.png}
+\caption{RB-SQMC filtered states.}
+\label{fig:timeseries-sqmc}
+\end{subfigure}
+\caption{Filtered attacking and defensive strengths over time for a representative team under the EKF and RB-SQMC.}
+\label{fig:timeseries}
+\end{figure}
+
+Figure~\ref{fig:topn-correlation} reports the correlation between the RB-SQMC top-$N$ rankings before and after the World Cup, which summarises how much the tournament results reorder the strongest teams.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.9\textwidth]{sqmc_correlation_topn_bar.png}
+\caption{Correlation between the RB-SQMC top-$N$ team rankings before and after the World Cup, as a function of $N$.}
+\label{fig:topn-correlation}
+\end{figure}
+
+The full pre- and post-tournament rankings for both methods are collected in Appendix~\ref{app:rankings}.
+
+\subsection{Discussion and Limitations}
+
+A more exact comparison of the two methods would be to compare the prediction scores against the probabilties on prediction markets (Polymarket, Kalshi, Sports Bettors) and how they compare with estimated probabilities of the other individuals.
+
+Probabilities on larger scores - such as 7-1, 8-0 arent well estimated. Further models would 
 
 
-\subsection{Metrics}
-- logz_overlay_train_test.png
-- Brier score vs uniform, mean predictive log-score, outcome accuracy
 
-\subsection{Qualitative Evaluation}
+% The EKF is a closed-form moment filter, so its training is fast: on the smoke run it compiled in \placeholder{value}\,s and executed in \placeholder{value}\,s, with prediction in \placeholder{value}\,s. RB-SQMC compiled in \placeholder{value}\,s and executed in \placeholder{value}\,s, with prediction in \placeholder{value}\,s. These figures are for a local CPU smoke run and are not representative of production scale. At the production configuration, RB-SQMC training on an A100 GPU took of the order of \placeholder{value} hours, dominated by the repeated particle-filter evaluations and the Hilbert sorting, whereas the EKF completed in seconds. The comparison therefore separates a statistical question from a computational one: RB-SQMC is a particle method whose cost scales with the particle count and the number of optimisation epochs, while the EKF is a fast approximation. For a sequential forecasting problem in which match results arrive at low frequency, the RB-SQMC filtering cost is acceptable, but the parameter-estimation cost is the material bottleneck. A more efficient estimator of the static parameters, for example a variational or stochastic-gradient procedure, would reduce this start-up cost.
 
-- timeseries states EKF / RB-SQMC (rbsqmc/comparison/sqmc_ekf/outputs/08092026_1135/ekf/images/ekf_timeseries_states.png and rbsqmc/comparison/sqmc_ekf/outputs/08092026_1135/sqmc/images/sqmc_timeseries_states.png)
-- Full top N rankings for RB-SQMC pre and post world cup
-- Key difference: top N correlation from RB-SQMC
-- store other images in Appendix (e.g. Full rankings of teams pre / post worldcup)
-
-Time comparison: the EKF model is extremely efficient, taking only a few seconds to perform log-marginal likelihood gradient descent optimization. however, the RB-SQMC model takes longer to run on GPU (~1.5 hours on A100), so there is a significant start-up cost to the RB-SQMC model. However, filtering is an efficient process and can be executed in this time frame (given that football match results are not generated at a high-frequency). Further extensions would be to implement a more efficient parameter estimation technique to recover the optimal static parameters, such as variational inference.
-
-% Comparison of the performance of RB-SMC, RB-SQMC, SMC, EKF
-% plot spain's skill level over time as a sideways histogram for each match
-
-% We evaluate particle diversity during the run. Let $m_t^{(i)}$ denote the component mean of particle $i$ at time $t$. The pre-resampling weighted covariance of the particle means is defined as follows, with its post-resampling analogue after the ancestors $a(i)$ are selected.
-
-% \begin{equation}
-%     m_{pre} = \sum_{i=1}^N w_t^{(i)} m_t^{(i)}
-% \end{equation}
-
-% \begin{equation}
-%     C_{pre} = \sum_{i=1}^N w_t^{(i)} \left( m_t^{(i)} - m_{pre} \right) \left( m_t^{(i)} - m_{pre} \right)^T
-% \end{equation}
-
-% The post-resampling covariance is defined analogously,
-
-% \begin{equation}
-%     m_{post} = \sum_{i=1}^N \frac{1}{N} m_t^{a(i)}
-% \end{equation}
-
-% \begin{equation}
-%     C_{post} = \sum_{i=1}^N \frac{1}{N} \left( m_t^{a(i)} - m_{post} \right) \left( m_t^{a(i)} - m_{post} \right)^T
-% \end{equation}
+% The comparison is designed so that any difference between the methods is attributable to the correlated Rao-Blackwellised construction rather than to data preparation, because both methods consume the same frozen chronological data set and the same optimiser. Within the range examined, RB-SQMC attained a higher test log-likelihood, but the EKF produced the better prediction scores on the World Cup fixtures. These two observations are not contradictory: the log-likelihood comparison is confounded by the approximation status of the EKF normalising constant, and the prediction comparison is based on a small number of matches.

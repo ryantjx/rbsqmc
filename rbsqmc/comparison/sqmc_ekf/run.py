@@ -5,7 +5,7 @@ into a single timestamped run directory under ``outputs/DDMMYYYY_HHMM/``.
 
 Usage:
     python -m rbsqmc.comparison.sqmc_ekf.run \
-        --config rbsqmc/comparison/sqmc_ekf/config/config.json \
+        --config rbsqmc/comparison/sqmc_ekf/scripts/config/config_gpu.json \
         --data rbsqmc/data/results.csv \
         [--smoke] [--output-dir ...]
 """

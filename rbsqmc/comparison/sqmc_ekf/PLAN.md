@@ -61,7 +61,7 @@ Use your selected settings: **512 particles, 100 epochs, cosine learning-rate de
 
 ### In place (done)
 
-- [x] `rbsqmc/comparison/sqmc_ekf/config.json` — comparison config (add `match_scale`: `1`).
+- [x] `rbsqmc/comparison/sqmc_ekf/scripts/config/config_gpu.json` — comparison config (add `match_scale`: `1`).
 - [x] `rbsqmc/src/data/data_ekf.py` — frozen, per-row dataset for both methods; same-day repeats kept as `dt=0` rows; per-team `previous`; SQMC `FootballResults`; exclusions metadata.
 - [x] `rbsqmc/comparison/sqmc_ekf/requirements-gpu.txt` — pin `cuthbert`, `cuthbertlib`, `ghq`, `optax`, `jax[cuda12]`.
 - [x] `rbsqmc/src/model/ekf/train.py` — `Methods` driver: `constrain`/`params`, `filter`, per-epoch gradient, score, checkpoint/history/summary.
@@ -97,7 +97,7 @@ Use your selected settings: **512 particles, 100 epochs, cosine learning-rate de
 
 ## Progress
 
-- `rbsqmc/comparison/sqmc_ekf/config.json`
+- `rbsqmc/comparison/sqmc_ekf/scripts/config/config_gpu.json`
 - `rbsqmc/src/data/data_ekf.py`
 - `rbsqmc/comparison/sqmc_ekf/requirements-gpu.txt`
 - `/Users/ryant/Github/ryantjx/rbsqmc/rbsqmc/src/model/ekf/train.py`

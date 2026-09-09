@@ -318,7 +318,7 @@ def test_resume_collects_without_dispatching_again(launcher, monkeypatch):
 
 
 def test_hybrid_detach_and_resume_reuses_local_ekf(local, tmp_path, monkeypatch):
-    config = protocol.read_json(Path(protocol.__file__).parent.parent / "config/config.json")
+    config = protocol.read_json(Path(protocol.__file__).parent / "config/config_gpu.json")
     config.update(run_id="test", session_name="test", source_commit="a" * 40)
     actions = []
     monkeypatch.setattr(local, "ensure_sobol_data", lambda: None)

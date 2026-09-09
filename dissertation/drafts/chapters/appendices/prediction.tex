@@ -1,0 +1,45 @@
+\chapter{Prediction Tables}
+\label{app:prediction}
+
+This appendix collects the win--loss predictions of the bivariate-Poisson model under the EKF and RB-SQMC methods described in Section~\ref{sec:performance-comparison}. For each match, the predicted outcome is the mode of the three-outcome distribution (home win, draw, away win) induced by the one-step-ahead score grid, computed before the known result is assimilated.
+
+\section{World Cup 2026 fixtures}
+\label{app:prediction-fixtures}
+
+Table~\ref{tab:prediction-appendix} reports the predicted outcome for each of the four World Cup 2026 fixtures under both methods, together with the actual result.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{llccc}
+\toprule
+Home team & Away team & Actual result & EKF predicted & RB-SQMC predicted \\
+\midrule
+\placeholder{home} & \placeholder{away} & \placeholder{result} & \placeholder{outcome} & \placeholder{outcome} \\
+\placeholder{home} & \placeholder{away} & \placeholder{result} & \placeholder{outcome} & \placeholder{outcome} \\
+\placeholder{home} & \placeholder{away} & \placeholder{result} & \placeholder{outcome} & \placeholder{outcome} \\
+\placeholder{home} & \placeholder{away} & \placeholder{result} & \placeholder{outcome} & \placeholder{outcome} \\
+\bottomrule
+\end{tabular}
+\caption{Win--loss predictions of the bivariate-Poisson model for the World Cup 2026 fixtures. The predicted outcome is the mode of the three-outcome distribution under each method.}
+\label{tab:prediction-appendix}
+\end{table}
+
+\section{Knockout fixtures}
+\label{app:prediction-knockout}
+
+Table~\ref{tab:prediction-knockout} reports the predicted outcome for the two semi-finals and the final.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{llccc}
+\toprule
+Home team & Away team & Actual result & EKF predicted & RB-SQMC predicted \\
+\midrule
+England & Argentina & \placeholder{result} & \placeholder{outcome} & \placeholder{outcome} \\
+France & Spain & \placeholder{result} & \placeholder{outcome} & \placeholder{outcome} \\
+Spain & Argentina & \placeholder{result} & \placeholder{outcome} & \placeholder{outcome} \\
+\bottomrule
+\end{tabular}
+\caption{Win--loss predictions of the bivariate-Poisson model for the two semi-finals and the final. The predicted outcome is the mode of the three-outcome distribution under each method.}
+\label{tab:prediction-knockout-appendix}
+\end{table}

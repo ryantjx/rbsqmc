@@ -62,6 +62,16 @@ Use British English consistently.
 Do not alternate between British and American spellings. Code identifiers and
 titles in the bibliography must retain their original spelling.
 
+Software packages, code identifiers and repository names are set in a monospace
+roman face using `\texttt{...}`. Write package names exactly as they are
+spelled, including lower case: write `\texttt{jax}`, `\texttt{cuthbert}`,
+`\texttt{scipy}` and `\texttt{numpy}`, not `\texttt{JAX}` or `scipy` in italic
+prose. The same rule applies to function, variable and file identifiers such as
+`\texttt{sample}` and `\texttt{qmc.py}`, and to repository references such as
+`\texttt{ryantjx/sqmc-cuthbert}`. URLs, which are set with `\url{...}`, are
+exempt from this rule. When a package name begins a sentence, keep the
+monospace form and do not capitalise it.
+
 ## 3. Authorial stance
 
 Prefer active constructions when responsibility matters:
@@ -399,9 +409,9 @@ to:
 Originality may lie in the formulation, implementation, experimental design,
 application, synthesis or interpretation. State the contribution precisely:
 
-> This dissertation implements Hilbert-ordered SQMC in JAX and evaluates
-> whether Rao-Blackwellisation preserves its advantage in a correlated football
-> state-space model.
+> This dissertation implements Hilbert-ordered SQMC in \texttt{jax} and
+> evaluates whether Rao-Blackwellisation preserves its advantage in a correlated
+> football state-space model.
 
 Do not imply that every component is novel. Identify inherited methods and
 original contributions separately.

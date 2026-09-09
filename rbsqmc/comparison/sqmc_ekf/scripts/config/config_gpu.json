@@ -13,7 +13,6 @@
   "match_scale": 1,
   "gauss_hermite_degree": 32,
   "gpu": "T4",
-  "gpu_type": "T4",
   "colab_timeout": 14400,
   "setup_timeout": 900,
   "transfer_timeout": 600,
