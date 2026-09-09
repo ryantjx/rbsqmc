@@ -171,7 +171,16 @@ def run_comparison(config, root, methods):
         validate_run(root, config, methods=methods)
         run_status["execution"] = "complete"
     except BaseException as error:
-        run_status.update(execution="failed", error=f"{type(error).__name__}: {error}")
+        # Distinguish "training finished but the validation gate failed" from
+        # "training crashed": in the former case the results/images exist on
+        # the VM and are archived below, so the launcher can salvage them.
+        training_completed = (root / "results" / "run_metadata.json").exists()
+        run_status.update(
+            execution="failed",
+            error=f"{type(error).__name__}: {error}",
+            failure_kind="validation" if training_completed else "training",
+            results_exported=training_completed,
+        )
         traceback.print_exc()
         raise
     finally:

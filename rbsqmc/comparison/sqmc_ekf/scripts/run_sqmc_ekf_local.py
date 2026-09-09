@@ -384,6 +384,12 @@ class Launcher:
     def recover(self):
         metadata = self.secondary("Root metadata download", lambda: self.download("root", partial=True))
         logs = self.secondary("Remote log download", self.download_log)
+        # The worker archives the run bundle in its finally block even when
+        # validation fails, so completed training results may exist on the VM
+        # even though the run was marked failed. Salvage them (skipping the
+        # validation gate, which is what failed) before the session stops.
+        if self.status["run"].get("archive_ready"):
+            self.secondary("Run artifact salvage", lambda: self.download("run", partial=True))
         return metadata and logs
 
     def shutdown(self):
@@ -487,7 +493,12 @@ class Launcher:
                     self.status.update(status="detached", shutdown="deferred",
                                        detached_utc=now(), failure_kind="monitoring")
                     if isinstance(error, RemoteRunFailed):
-                        self.status.update(status="failed", failure_kind="training")
+                        # The worker reports whether results were exported:
+                        # a validation failure leaves completed training
+                        # artifacts on the VM (salvaged by recover()), while a
+                        # training crash leaves nothing worth keeping.
+                        failure_kind = self.status["run"].get("failure_kind", "training")
+                        self.status.update(status="failed", failure_kind=failure_kind)
                         stop_session = self.recover()
                     self.save()
                     if not stop_session:
