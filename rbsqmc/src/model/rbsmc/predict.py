@@ -118,24 +118,53 @@ def predict_match_score(
     alpha: float,
     beta: float,
     max_goals: int,
+    scale: float = 1.0,
 ):
     """Weighted posterior predictive score grid (G x G), normalized to sum to 1."""
+    grid, _ = predict_match_score_with_mass(
+        particles_x, log_weights, home_id, away_id,
+        alpha, beta, max_goals, scale,
+    )
+    return grid
+
+
+@jax.jit(static_argnames=("max_goals",))
+def predict_match_score_with_mass(
+    particles_x: jax.Array,     # (N, num_teams, 2)
+    log_weights: jax.Array,     # (N,)
+    home_id: int,
+    away_id: int,
+    alpha: float,
+    beta: float,
+    max_goals: int,
+    scale: float = 1.0,
+):
+    """Weighted posterior predictive score grid plus its raw (unnormalized) mass.
+
+    Returns ``(grid, raw_mass)`` where ``grid`` is the ``(G, G)`` score grid
+    normalized to sum to one and ``raw_mass`` is the unnormalized total
+    likelihood mass ``exp(logsumexp(logp))``. The raw mass is recorded *before*
+    normalization so it can diagnose score-grid truncation; the sum of an
+    already-normalized grid cannot.
+    """
     # (N, G, G) log-likelihood grids, one per particle
     log_grid = jax.vmap(
         lambda p: loglik_grid(
             p[home_id], p[away_id], alpha=alpha, beta=beta,
-            max_goals=max_goals, scale=1.0)
+            max_goals=max_goals, scale=scale)
     )(particles_x)
 
     # Weighted average of likelihoods: logsumexp over particles with the
-    # unnormalized log-weights, normalized by sum(weights).
-    w = jnp.exp(log_weights)                     # (N,)
-    log_w = jnp.log(w + 1e-12)
-    log_w = log_w - logsumexp(log_w)             # normalize log-weights
+    # unnormalized log-weights, normalized in log space. Normalizing directly
+    # in log space makes the result invariant to adding any constant to all
+    # log weights (a shift that must not change the normalized mixture).
+    log_w = log_weights - logsumexp(log_weights)  # (N,) normalized log-weights
     logp = logsumexp(log_grid + log_w[:, None, None], axis=0)  # (G, G)
 
-    grid = jnp.exp(logp)
-    return grid / grid.sum()
+    log_mass = logsumexp(logp)
+    grid = jnp.exp(logp - log_mass)
+    raw_mass = jnp.exp(log_mass)
+    return grid, raw_mass
 
 # ---------------------------------------------------------------------------
 # Sequential predict -> update -> compare driver

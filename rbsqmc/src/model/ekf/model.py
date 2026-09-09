@@ -52,7 +52,7 @@ def initial_raw(cov, alpha=0.2, beta=-4.0, kappa=0.001, friendly_scale=2.0):
                 beta=jnp.asarray(beta), friendly_scale=inverse_positive(friendly_scale))
 
 
-def build(params, num_teams):
+def build(params, num_teams, match_scale=1.0):
     def init(_):
         return (jnp.broadcast_to(params["init_mean"], (num_teams, 2)),
                 jnp.broadcast_to(params["init_chol_cov"], (num_teams, 2, 2)))
@@ -72,7 +72,9 @@ def build(params, num_teams):
         return conditional, state.mean
 
     def observation(state, match):
-        scale = jnp.where(match.friendly, params["friendly_scale"], 1.0)
+        # Friendlies use the learned friendly_scale; all other matches use the
+        # configured match_scale baseline, matching the SQMC observation model.
+        scale = jnp.where(match.friendly, params["friendly_scale"], match_scale)
         def conditional(x):
             l1 = jnp.exp(params["alpha"] + (x[0] - x[3]) / scale)
             l2 = jnp.exp(params["alpha"] + (x[2] - x[1]) / scale)
@@ -87,9 +89,9 @@ def build(params, num_teams):
             build_factorializer(lambda match: jnp.array([match.home, match.away])))
 
 
-def run_filter(inputs, params, num_teams):
+def run_filter(inputs, params, num_teams, match_scale=1.0):
     """Return team marginals and cumulative Gaussian approximate logZ, prior first."""
-    filter_obj, factorializer = build(params, num_teams)
+    filter_obj, factorializer = build(params, num_teams, match_scale)
     first = jax.tree.map(lambda x: x[0], inputs)
     initial = filter_obj.init_prepare(first)
     # Cuthbert joins the two teams, updates jointly, then retains only their
@@ -120,19 +122,19 @@ def predict_match(mean, cov, alpha, beta, scale, max_goals=8, degree=32):
         rate_mean, rate_cov, degree=degree)
 
 
-def sequential_predict(inputs, history, params, start, max_goals=8, degree=32):
+def sequential_predict(inputs, history, params, start, max_goals=8, degree=32, match_scale=1.0):
     """Forecast from the previous state; the current score cannot enter its grid."""
     def one(_, index):
         pair = jnp.array([inputs.home[index], inputs.away[index]])
         mean, cov = propagate(history["mean"][index, pair], history["cov"][index, pair],
                               inputs.timestamp[index] - inputs.previous[index], params)
-        scale = jnp.where(inputs.friendly[index], params["friendly_scale"], 1.)
+        scale = jnp.where(inputs.friendly[index], params["friendly_scale"], match_scale)
         grid = predict_match(mean, cov, params["alpha"], params["beta"], scale, max_goals, degree)
         return None, grid
     return jax.lax.scan(one, None, jnp.arange(start, len(inputs.timestamp)))[1]
 
 
-def synchronized_moments(inputs, history, params, num_teams):
+def synchronized_moments(inputs, history, params, num_teams, match_scale=1.0):
     """Propagate reporting copies to a common date without changing filter logZ."""
     def step(last, index):
         last = last.at[inputs.home[index]].set(inputs.timestamp[index])

@@ -20,7 +20,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from rbsqmc.src.model.ekf import model as ekf
-from rbsqmc.src.model.rbsqmc.predict_rbsqmc import run_sequential_predict_rbsqmc
+from rbsqmc.comparison.sqmc_ekf.scripts.scaling import sqmc_match_scales
+from rbsqmc.src.model.rbsqmc.predict_rbsqmc import (
+    predict_from_sqmc_history,
+    run_sequential_predict_rbsqmc,
+)
 from rbsqmc.src.utils.type import FootballResults, Matches
 
 
@@ -57,6 +61,14 @@ def predict_sqmc(dataset, params, cfg, key):
     rng = pred_index_range(dataset)
     observed = _slice_sqmc(dataset.sqmc, 0, rng.start)
     prediction = _slice_sqmc(dataset.sqmc, rng.start, dataset.sqmc.timestamp.shape[0])
+    observed_scales = sqmc_match_scales(
+        dataset.inputs.friendly[:rng.start], params["friendly_scale"],
+        cfg.get("match_scale", 1.0),
+    )
+    prediction_scales = sqmc_match_scales(
+        dataset.inputs.friendly[rng.start:], params["friendly_scale"],
+        cfg.get("match_scale", 1.0),
+    )
 
     grids, logp, _ = run_sequential_predict_rbsqmc(
         key=key,
@@ -65,8 +77,30 @@ def predict_sqmc(dataset, params, cfg, key):
         params=params["model"],
         n_particles=cfg["n_particles"],
         max_goals=cfg["max_goals"],
+        observed_scales=observed_scales,
+        prediction_scales=prediction_scales,
     )
     # (P, M=1, G, G) -> (P, G, G)
+    return MethodPredictions(grids=np.asarray(grids[:, 0]), logp=np.asarray(logp[:, 0]))
+
+
+def predict_sqmc_from_history(dataset, params, cfg, result, scales):
+    """One-step-ahead SQMC grids from an already-run evaluation filter history.
+
+    ``result`` is the dict returned by ``run_filter_sqmc`` (keys
+    ``particles_x``, ``log_weights``) and ``scales`` is the ``(T, 1)`` per-match
+    scale array used for that filter. This adapter slices the prediction rows
+    and scales, invokes the extracted forecast helper, and builds
+    ``MethodPredictions``. It shares the single evaluation filter with the
+    ranking summaries, so predictions and rankings describe the same particles.
+    """
+    rng = pred_index_range(dataset)
+    prediction = _slice_sqmc(dataset.sqmc, rng.start, dataset.sqmc.timestamp.shape[0])
+    prediction_scales = scales[rng.start:]
+    grids, logp, _ = predict_from_sqmc_history(
+        result, prediction, rng.start, params["model"],
+        cfg["max_goals"], prediction_scales,
+    )
     return MethodPredictions(grids=np.asarray(grids[:, 0]), logp=np.asarray(logp[:, 0]))
 
 
@@ -78,7 +112,8 @@ def predict_ekf(dataset, params, cfg):
     result or any later one.
     """
     num_teams = len(dataset.teams)
-    history = ekf.run_filter(dataset.inputs, params, num_teams)
+    match_scale = cfg.get("match_scale", 1.0)
+    history = ekf.run_filter(dataset.inputs, params, num_teams, match_scale=match_scale)
 
     rng = pred_index_range(dataset)
     grids = ekf.sequential_predict(
@@ -88,6 +123,7 @@ def predict_ekf(dataset, params, cfg):
         rng.start,
         max_goals=cfg["max_goals"],
         degree=cfg.get("gauss_hermite_degree", 32),
+        match_scale=match_scale,
     )
     grids = np.asarray(grids)
     # GH integrates the unnormalized likelihood mass; normalize to a distribution.

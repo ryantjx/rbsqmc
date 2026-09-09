@@ -15,6 +15,7 @@ import csv
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 import platform
 import shutil
@@ -30,9 +31,12 @@ import numpy as np
 from rbsqmc.src.data.data_ekf import load_dataset as data_mod_load_dataset
 from rbsqmc.comparison.sqmc_ekf.scripts import evaluate as eval_mod
 from rbsqmc.comparison.sqmc_ekf.scripts import plots as plots_mod
-from rbsqmc.src.model.ekf import predict as predict_mod
+from rbsqmc.comparison.sqmc_ekf.scripts import predict as predict_mod
 from rbsqmc.comparison.sqmc_ekf.scripts import report as report_mod
-from rbsqmc.src.model.ekf import train
+from rbsqmc.comparison.sqmc_ekf.scripts import train
+from rbsqmc.comparison.sqmc_ekf.scripts.scaling import sqmc_match_scales
+from rbsqmc.src.model.rbsqmc.model_rbsqmc import run_filter_sqmc
+from rbsqmc.comparison.sqmc_ekf.scripts import diagnostics as diag_mod
 
 
 DEFAULT_DATA = "rbsqmc/data/results.csv"
@@ -71,6 +75,15 @@ def _git_commit():
             ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL, text=True
         ).strip()
     except Exception:
+        return None
+
+
+def _file_sha256(path):
+    """SHA-256 of a file's bytes, or None if the file is missing."""
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
         return None
 
 
@@ -216,6 +229,7 @@ def _write_combined(results_dir, images_dir, dataset, results, cfg, run_dir):
         "ekf": results["ekf"]["summary"], "sqmc": results["sqmc"]["summary"]})
     write_performance_metrics_csv(results_dir, results)
     write_logz_history_csv(results_dir, results)
+    _write_scalar_comparison(results_dir, cfg, run_dir)
     _save_json(os.path.join(results_dir, "run_metadata.json"), {
         "completed_at_utc": datetime.utcnow().isoformat() + "Z",
         "run_id": os.path.basename(run_dir),
@@ -234,6 +248,8 @@ def _write_combined(results_dir, images_dir, dataset, results, cfg, run_dir):
             "images/logz_overlay_train_test.png",
             "results/ekf_predictions.json", "results/sqmc_predictions.json",
             "results/ekf_metrics.json", "results/sqmc_metrics.json",
+            "results/ekf/fitted_params.json", "results/sqmc/fitted_params.json",
+            "results/sqmc_prediction_diagnostics.json", "results/sqmc_final_fixture.npz",
             "images/ekf_top5_strengths.png", "images/sqmc_top5_strengths.png",
             "images/ekf_pre_worldcup_rankings.png", "images/sqmc_pre_worldcup_rankings.png",
             "images/ekf_post_worldcup_rankings.png", "images/sqmc_post_worldcup_rankings.png",
@@ -323,6 +339,19 @@ def combine(ekf_dir, sqmc_dir, output_dir, data_path, cfg, smoke=False):
         dest = results_dir / name / "summary.json"
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(Path(src) / "results" / name / "summary.json", dest)
+        # Carry the reproducibility checkpoint into the combined run.
+        fitted = Path(src) / "results" / name / "fitted_params.json"
+        if fitted.is_file():
+            shutil.copyfile(fitted, results_dir / name / "fitted_params.json")
+        # Carry the final scalar-params export into the combined run.
+        scalars = Path(src) / "results" / name / "final_scalar_params.json"
+        if scalars.is_file():
+            shutil.copyfile(scalars, results_dir / name / "final_scalar_params.json")
+    # Carry the SQMC diagnostics and final-fixture NPZ into the combined run.
+    for artifact in ("sqmc_prediction_diagnostics.json", "sqmc_final_fixture.npz"):
+        src_artifact = Path(sqmc_dir) / "results" / artifact
+        if src_artifact.is_file():
+            shutil.copyfile(src_artifact, results_dir / artifact)
     _save_json(results_dir / "comparison_config.json", cfg)
     _save_json(results_dir / "run_config.json", compute_setup(cfg))
     # Retain the actual training machines; the combined run itself runs on CPU.
@@ -391,14 +420,44 @@ def _run_method(method, methods, dataset, cfg, root, results_dir, images_dir):
     pred_start = time.perf_counter()
     if method == "sqmc":
         key = jax.random.fold_in(root, 2_000_000)
-        pred = predict_mod.predict_sqmc(dataset, params, cfg, key)
-        states, augmented = _sqmc_states(dataset, params, cfg, root)
+        scales = sqmc_match_scales(
+            dataset.inputs.friendly, params["friendly_scale"],
+            cfg.get("match_scale", 1.0),
+        )
+        result, augmented = run_filter_sqmc(
+            key, dataset.sqmc, params["model"],
+            cfg["n_particles"], cfg["max_goals"],
+            match_scales=scales,
+        )
+        pred = predict_mod.predict_sqmc_from_history(
+            dataset, params, cfg, result, scales
+        )
+        states = plots_mod.wrap_sqmc(result, len(dataset.teams))
         plots_mod.plot_correlation(
             params["model"], augmented, dataset.teams, images_dir
         )
+        # Persist per-forecast diagnostics and the final-fixture NPZ so the
+        # Spain–Argentina reversal is reproducible and explainable. The scope
+        # config controls how many forecasts are written (all / worldcup /
+        # final); the final-fixture NPZ is always written. The diagnostics are
+        # bound to the exact fitted-params checkpoint via its SHA-256.
+        checkpoint_path = os.path.join(results_dir, "sqmc", "fitted_params.json")
+        checkpoint_hash = _file_sha256(checkpoint_path)
+        payload, final_npz = diag_mod.build_diagnostics(
+            dataset, params, cfg, result, scales,
+            source_revision=_git_commit(),
+            dataset_hash=dataset.metadata.get("source_sha256"),
+            filter_key_provenance="fold_in(root, 2_000_000)",
+            schema_version=1,
+            scope=cfg.get("diagnostics_scope", "worldcup"),
+            checkpoint_hash=checkpoint_hash,
+        )
+        diag_mod.write_diagnostics(results_dir, payload, final_npz)
     else:
         pred = predict_mod.predict_ekf(dataset, params, cfg)
-        states, augmented = _ekf_states(dataset, params, len(dataset.teams))
+        states, augmented = _ekf_states(
+            dataset, params, len(dataset.teams), cfg.get("match_scale", 1.0)
+        )
 
     records = eval_mod.build_records(dataset, pred.grids, pred.logp)
     metrics = eval_mod.compute_metrics(records)
@@ -410,29 +469,191 @@ def _run_method(method, methods, dataset, cfg, root, results_dir, images_dir):
         post_index=-1,
     )
 
+    _write_final_scalar_params(
+        results_dir, method, params, summary, cfg, dataset,
+        checkpoint_hash=_file_sha256(os.path.join(results_dir, method, "fitted_params.json")),
+    )
+
     return {"raw": raw, "params": params, "history": history, "summary": summary,
             "pred": pred, "records": records, "metrics": metrics,
             "states": states, "prediction_sec": prediction_sec}
 
 
-def _sqmc_states(dataset, params, cfg, root):
-    """Weighted SQMC posterior moments plus the augmented gamma trajectory."""
-    from rbsqmc.src.model.rbsqmc.model_rbsqmc import run_filter_sqmc as run_filter
+def _write_final_scalar_params(results_dir, method, params, summary, cfg, dataset, checkpoint_hash):
+    """Persist the four final fitted scalar parameters for one method.
 
+    Uses the constrained final-epoch parameters (the same epoch used for
+    evaluation), excluding means and covariance quantities. The configured
+    non-friendly ``match_scale`` is recorded as run metadata, not as an
+    estimated parameter.
+    """
+    if method == "ekf":
+        scalars = {
+            "alpha": float(params["alpha"]),
+            "beta": float(params["beta"]),
+            "kappa": float(params["kappa"]),
+            "friendly_scale": float(params["friendly_scale"]),
+        }
+    else:
+        scalars = {
+            "alpha": float(params["model"].alpha),
+            "beta": float(params["model"].beta),
+            "kappa": float(params["model"].kappa),
+            "friendly_scale": float(params["friendly_scale"]),
+        }
+    payload = {
+        "method": method,
+        "checkpoint_policy": summary["checkpoint_policy"],
+        "checkpoint_epoch": summary["n_epochs_completed"],
+        "run_id": cfg.get("run_id"),
+        "source_revision": _git_commit(),
+        "dataset_hash": dataset.metadata.get("source_sha256"),
+        "checkpoint_hash": checkpoint_hash,
+        "match_scale": cfg.get("match_scale", 1.0),
+        "parameters": scalars,
+    }
+    _save_json(os.path.join(results_dir, method, "final_scalar_params.json"), payload)
+    return payload
+
+
+_SCALAR_MEANINGS = {
+    "alpha": ("Baseline log scoring rate", "log goals"),
+    "beta": ("Log rate of the shared Poisson component", "log goals"),
+    "kappa": ("OU mean-reversion rate", "per day"),
+    "friendly_scale": ("Strength scaling for friendly matches", "dimensionless"),
+}
+
+
+def _write_scalar_comparison(results_dir, cfg, run_dir):
+    """Read both per-method scalar exports and write the combined comparison
+    CSV/JSON plus a generated LaTeX table."""
+    ekf = _read_json(os.path.join(results_dir, "ekf", "final_scalar_params.json"))
+    sqmc = _read_json(os.path.join(results_dir, "sqmc", "final_scalar_params.json"))
+    rows = []
+    for param in ("alpha", "beta", "kappa", "friendly_scale"):
+        meaning, unit = _SCALAR_MEANINGS[param]
+        e = ekf["parameters"][param]
+        s = sqmc["parameters"][param]
+        rows.append({
+            "parameter": param,
+            "meaning": meaning,
+            "unit": unit,
+            "ekf": e,
+            "sqmc": s,
+            "sqmc_minus_ekf": s - e,
+        })
+    # Derived rows (not additional learned parameters).
+    rows.append({"parameter": "exp(alpha)", "meaning": "Baseline scoring rate",
+                 "unit": "goals", "ekf": math.exp(ekf["parameters"]["alpha"]),
+                 "sqmc": math.exp(sqmc["parameters"]["alpha"]),
+                 "sqmc_minus_ekf": math.exp(sqmc["parameters"]["alpha"]) - math.exp(ekf["parameters"]["alpha"])})
+    rows.append({"parameter": "exp(beta)", "meaning": "Shared-component rate",
+                 "unit": "goals", "ekf": math.exp(ekf["parameters"]["beta"]),
+                 "sqmc": math.exp(sqmc["parameters"]["beta"]),
+                 "sqmc_minus_ekf": math.exp(sqmc["parameters"]["beta"]) - math.exp(ekf["parameters"]["beta"])})
+    rows.append({"parameter": "log(2)/kappa", "meaning": "OU half-life",
+                 "unit": "days", "ekf": math.log(2) / ekf["parameters"]["kappa"],
+                 "sqmc": math.log(2) / sqmc["parameters"]["kappa"],
+                 "sqmc_minus_ekf": math.log(2) / sqmc["parameters"]["kappa"] - math.log(2) / ekf["parameters"]["kappa"]})
+    csv_path = os.path.join(results_dir, "final_scalar_params_comparison.csv")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["parameter", "meaning", "unit", "ekf", "sqmc", "sqmc_minus_ekf"])
+        writer.writeheader()
+        writer.writerows(rows)
+    _save_json(os.path.join(results_dir, "final_scalar_params_comparison.json"), {
+        "run_id": os.path.basename(run_dir),
+        "checkpoint_epoch_ekf": ekf["checkpoint_epoch"],
+        "checkpoint_epoch_sqmc": sqmc["checkpoint_epoch"],
+        "rows": rows,
+    })
+    _write_scalar_latex(results_dir, rows, ekf, sqmc, run_dir)
+
+
+def _latex_escape(text):
+    """Escape LaTeX special characters in arbitrary text fields."""
+    return (str(text)
+            .replace("\\", r"\textbackslash{}")
+            .replace("_", r"\_")
+            .replace("&", r"\&")
+            .replace("%", r"\%")
+            .replace("$", r"\$")
+            .replace("#", r"\#")
+            .replace("{", r"\{")
+            .replace("}", r"\}"))
+
+
+# LaTeX-safe display labels for the four fitted parameters.
+_SCALAR_LABELS = {
+    "alpha": r"$\alpha$",
+    "beta": r"$\beta$",
+    "kappa": r"$\kappa$",
+    "friendly_scale": r"friendly\_scale",
+}
+
+
+def _write_scalar_latex(results_dir, rows, ekf, sqmc, run_dir):
+    """Generate a LaTeX table from the scalar comparison artifact.
+
+    Columns: Parameter / Interpretation / EKF / RB-SQMC. Parameter names are
+    rendered as safe labels and the run ID is escaped so the table compiles
+    even when the run ID contains underscores or other special characters.
+    """
+    def _fmt(value, param):
+        if param == "kappa":
+            return f"{value:.3e}"
+        return f"{value:.4f}"
+    run_id = _latex_escape(os.path.basename(run_dir))
+    lines = [
+        "\\begin{table}[ht]",
+        "\\centering",
+        "\\caption{Final fitted scalar parameters (run \\texttt{%s}, final epoch EKF %d / SQMC %d).}"
+        % (run_id, ekf["checkpoint_epoch"], sqmc["checkpoint_epoch"]),
+        "\\begin{tabular}{lccc}",
+        "\\toprule",
+        "Parameter & Interpretation & EKF & RB-SQMC \\\\",
+        "\\midrule",
+    ]
+    for row in rows:
+        if row["parameter"] in ("exp(alpha)", "exp(beta)", "log(2)/kappa"):
+            continue  # derived rows are discussed in prose, not the main table
+        label = _SCALAR_LABELS.get(row["parameter"], _latex_escape(row["parameter"]))
+        lines.append(
+            "%s & %s & %s & %s \\\\"
+            % (label, _latex_escape(row["meaning"]),
+               _fmt(row["ekf"], row["parameter"]), _fmt(row["sqmc"], row["parameter"]))
+        )
+    lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
+    with open(os.path.join(results_dir, "final_scalar_params_table.tex"), "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _sqmc_states(dataset, params, cfg, root):
+    """Weighted SQMC posterior moments plus the augmented gamma trajectory.
+
+    Deprecated: the evaluation filter is now run once in ``_run_method`` and
+    its history is shared by predictions and rankings. This wrapper is retained
+    only for callers that still need a standalone filter; it reruns the full
+    filter with a distinct key and must not be used for the main comparison.
+    """
     key = jax.random.fold_in(root, 3_000_000)
-    result, augmented = run_filter(
-        key, dataset.sqmc, params["model"], cfg["n_particles"], cfg["max_goals"]
+    scales = sqmc_match_scales(
+        dataset.inputs.friendly, params["friendly_scale"],
+        cfg.get("match_scale", 1.0),
+    )
+    result, augmented = run_filter_sqmc(
+        key, dataset.sqmc, params["model"], cfg["n_particles"], cfg["max_goals"],
+        match_scales=scales,
     )
     return plots_mod.wrap_sqmc(result, len(dataset.teams)), augmented
 
 
-def _ekf_states(dataset, params, num_teams):
+def _ekf_states(dataset, params, num_teams, match_scale=1.0):
     """Native EKF moments wrapped as a single-particle FilterStates."""
     from rbsqmc.src.model.ekf import model as ekf
 
-    history = ekf.run_filter(dataset.inputs, params, num_teams)
+    history = ekf.run_filter(dataset.inputs, params, num_teams, match_scale=match_scale)
     mean, cov = ekf.synchronized_moments(
-        dataset.inputs, history, params, num_teams
+        dataset.inputs, history, params, num_teams, match_scale=match_scale
     )
     # synchronized_moments returns post-match states only. Restore the prior
     # so both methods' index i means "before match i", including the WC split.

@@ -64,7 +64,7 @@ Use your selected settings: **512 particles, 100 epochs, cosine learning-rate de
 - [x] `rbsqmc/comparison/sqmc_ekf/scripts/config/config_gpu.json` — comparison config (add `match_scale`: `1`).
 - [x] `rbsqmc/src/data/data_ekf.py` — frozen, per-row dataset for both methods; same-day repeats kept as `dt=0` rows; per-team `previous`; SQMC `FootballResults`; exclusions metadata.
 - [x] `rbsqmc/comparison/sqmc_ekf/requirements-gpu.txt` — pin `cuthbert`, `cuthbertlib`, `ghq`, `optax`, `jax[cuda12]`.
-- [x] `rbsqmc/src/model/ekf/train.py` — `Methods` driver: `constrain`/`params`, `filter`, per-epoch gradient, score, checkpoint/history/summary.
+- [x] `rbsqmc/comparison/sqmc_ekf/scripts/train.py` — `Methods` driver: `constrain`/`params`, `filter`, per-epoch gradient, score, checkpoint/history/summary.
 - [x] `rbsqmc/src/data/data.py` — fixed date & Morocco–Senegal issue; removed `_drop_duplicate_teams_per_day` (same-day matches kept); unknown-score-safe max-goals filter.
 - [x] `rbsqmc/src/model/rbsqmc/model_rbsqmc.py` — `match_scales` option (`1` default, so SQMC unchanged for existing callers); unknown-score likelihood suppression.
 - [x] `rbsqmc/src/model/ekf/__init__.py` — package marker.
@@ -72,7 +72,7 @@ Use your selected settings: **512 particles, 100 epochs, cosine learning-rate de
 
 ### To build (open)
 
-- [x] **Prediction driver** (`predict.py`) — `predict_sqmc` via `run_sequential_predict_rbsqmc` and `predict_ekf` via OU propagation + GH quadrature; both forecast from the pre-likelihood/previous state so the current score cannot enter its own grid.
+- [x] **Prediction driver** (`scripts/predict.py`) — `predict_sqmc` via `run_sequential_predict_rbsqmc` and `predict_ekf` via OU propagation + GH quadrature; both forecast from the pre-likelihood/previous state so the current score cannot enter its own grid.
 - [x] **Evaluation module** (`evaluate.py`) — score-grid records, truncation mass, Brier score, `2/3` baseline, exact/outcome accuracy, predictive log score; World Cup–eligible subset + all-scored.
 - [x] **Plots module** (`plots.py`) — convergence (logmarginal + gradient-norm), prediction heatmaps, SQMC correlation matrices, rankings, strengths, trajectories; weighted SQMC posterior moments and EKF native moments via a single-particle wrapper.
 - [x] **Report/draft writer** (`report.py`) — final/best test logZ, per-match logZ difference, explicit Gaussian-approx (EKF) vs particle (SQMC) distinction, verdict + `REPORT.md`/`DRAFT.md`.
@@ -100,7 +100,7 @@ Use your selected settings: **512 particles, 100 epochs, cosine learning-rate de
 - `rbsqmc/comparison/sqmc_ekf/scripts/config/config_gpu.json`
 - `rbsqmc/src/data/data_ekf.py`
 - `rbsqmc/comparison/sqmc_ekf/requirements-gpu.txt`
-- `/Users/ryant/Github/ryantjx/rbsqmc/rbsqmc/src/model/ekf/train.py`
+- `/Users/ryant/Github/ryantjx/rbsqmc/rbsqmc/comparison/sqmc_ekf/scripts/train.py`
 - `/Users/ryant/Github/ryantjx/rbsqmc/rbsqmc/src/data/data.py`
   - fixed dates issue 
   - fixed dropping duplicate teams per day - with match level filters, it accomodates the same-day matches
@@ -108,4 +108,4 @@ Use your selected settings: **512 particles, 100 epochs, cosine learning-rate de
   - include friendly scale (which should default to 1 for the EKF comparison)
 - `/Users/ryant/Github/ryantjx/rbsqmc/rbsqmc/src/model/ekf/__init__.py`
 - `/Users/ryant/Github/ryantjx/rbsqmc/rbsqmc/src/model/ekf/model.py`
-- `/Users/ryant/Github/ryantjx/rbsqmc/rbsqmc/src/model/ekf/predict.py`
+- `/Users/ryant/Github/ryantjx/rbsqmc/rbsqmc/comparison/sqmc_ekf/scripts/predict.py`
