@@ -29,4 +29,9 @@ elif command -v python >/dev/null 2>&1; then
 else
     INTERPRETER="python3"
 fi
+# The launcher runs as a script, so sys.path[0] is the scripts directory and
+# the repo root is NOT importable: its artifact validation imports rbsqmc.*
+# lazily and would raise ModuleNotFoundError. Export PYTHONPATH so the
+# launcher process (and every child it spawns) can resolve the package.
+export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:$PYTHONPATH}"
 exec "$INTERPRETER" "$SCRIPT_DIR/run_sqmc_ekf_local.py" "$@"
