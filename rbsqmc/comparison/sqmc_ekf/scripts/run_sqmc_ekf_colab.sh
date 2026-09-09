@@ -17,8 +17,13 @@
 # with --resume to collect the results without restarting training.
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Prefer the repo's .venv so the launcher never silently falls back to a
+# system Python that lacks the project's dependencies (jax, etc.).
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/../../../.." && pwd)"
 if [ -n "${PYTHON:-}" ]; then
     INTERPRETER="$PYTHON"
+elif [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+    INTERPRETER="$REPO_ROOT/.venv/bin/python"
 elif command -v python >/dev/null 2>&1; then
     INTERPRETER="python"
 else
