@@ -1,0 +1,562 @@
+[
+  {
+    "sequence": "sobol",
+    "dimension": 2,
+    "n": 128,
+    "cpu_over_gpu": 0.2038136163019286,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 2,
+    "n": 256,
+    "cpu_over_gpu": 0.2959604623016102,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 2,
+    "n": 512,
+    "cpu_over_gpu": 0.449725348071919,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 2,
+    "n": 2048,
+    "cpu_over_gpu": 2.552050735586497,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 2,
+    "n": 8192,
+    "cpu_over_gpu": 7.350138399250772,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 2,
+    "n": 32768,
+    "cpu_over_gpu": 23.024433243120818,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 2,
+    "n": 131072,
+    "cpu_over_gpu": 79.4164529543151,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 5,
+    "n": 128,
+    "cpu_over_gpu": 0.286231005102059,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 5,
+    "n": 256,
+    "cpu_over_gpu": 0.5206806349116518,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 5,
+    "n": 512,
+    "cpu_over_gpu": 0.8577625731211679,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 5,
+    "n": 2048,
+    "cpu_over_gpu": 2.331124069737957,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 5,
+    "n": 8192,
+    "cpu_over_gpu": 6.755479179567441,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 5,
+    "n": 32768,
+    "cpu_over_gpu": 21.258087926831536,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 5,
+    "n": 131072,
+    "cpu_over_gpu": 86.70029006154832,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 10,
+    "n": 128,
+    "cpu_over_gpu": 0.5167116363836947,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 10,
+    "n": 256,
+    "cpu_over_gpu": 0.5664740702372676,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 10,
+    "n": 512,
+    "cpu_over_gpu": 1.2242373871389947,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 10,
+    "n": 2048,
+    "cpu_over_gpu": 2.6399884202964405,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 10,
+    "n": 8192,
+    "cpu_over_gpu": 7.150469027628108,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 10,
+    "n": 32768,
+    "cpu_over_gpu": 24.974767864478903,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 10,
+    "n": 131072,
+    "cpu_over_gpu": 81.48449366607186,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 30,
+    "n": 128,
+    "cpu_over_gpu": 0.5191363335336472,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 30,
+    "n": 256,
+    "cpu_over_gpu": 0.8845926077861482,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 30,
+    "n": 512,
+    "cpu_over_gpu": 1.4326740223829577,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 30,
+    "n": 2048,
+    "cpu_over_gpu": 3.634860852382121,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 30,
+    "n": 8192,
+    "cpu_over_gpu": 10.543305992174467,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 30,
+    "n": 32768,
+    "cpu_over_gpu": 28.584035620606546,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 30,
+    "n": 131072,
+    "cpu_over_gpu": 83.06785894064345,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 60,
+    "n": 128,
+    "cpu_over_gpu": 0.7752899342843812,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 60,
+    "n": 256,
+    "cpu_over_gpu": 1.5778811962317898,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 60,
+    "n": 512,
+    "cpu_over_gpu": 2.593625221604784,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 60,
+    "n": 2048,
+    "cpu_over_gpu": 4.219709045387812,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 60,
+    "n": 8192,
+    "cpu_over_gpu": 12.310285686649612,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 60,
+    "n": 32768,
+    "cpu_over_gpu": 34.478942150736856,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "sobol",
+    "dimension": 60,
+    "n": 131072,
+    "cpu_over_gpu": 107.93008400832804,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 2,
+    "n": 128,
+    "cpu_over_gpu": 0.154181459873222,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 2,
+    "n": 256,
+    "cpu_over_gpu": 0.27672967118137537,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 2,
+    "n": 512,
+    "cpu_over_gpu": 0.49303927900582006,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 2,
+    "n": 2048,
+    "cpu_over_gpu": 2.5755622413191204,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 2,
+    "n": 8192,
+    "cpu_over_gpu": 7.451159145113744,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 2,
+    "n": 32768,
+    "cpu_over_gpu": 23.535581215651924,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 2,
+    "n": 131072,
+    "cpu_over_gpu": 78.30190903436637,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 5,
+    "n": 128,
+    "cpu_over_gpu": 0.3973245914224281,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 5,
+    "n": 256,
+    "cpu_over_gpu": 0.6666167026272712,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 5,
+    "n": 512,
+    "cpu_over_gpu": 1.0256209712009072,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 5,
+    "n": 2048,
+    "cpu_over_gpu": 2.25206862659154,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 5,
+    "n": 8192,
+    "cpu_over_gpu": 7.222836375466717,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 5,
+    "n": 32768,
+    "cpu_over_gpu": 25.079728040165666,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 5,
+    "n": 131072,
+    "cpu_over_gpu": 83.07847600553319,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 10,
+    "n": 128,
+    "cpu_over_gpu": 0.49955872642303206,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 10,
+    "n": 256,
+    "cpu_over_gpu": 0.7021554642969623,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 10,
+    "n": 512,
+    "cpu_over_gpu": 1.364983608522841,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 10,
+    "n": 2048,
+    "cpu_over_gpu": 2.6321276657838855,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 10,
+    "n": 8192,
+    "cpu_over_gpu": 7.603998117288707,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 10,
+    "n": 32768,
+    "cpu_over_gpu": 27.16336248275007,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 10,
+    "n": 131072,
+    "cpu_over_gpu": 88.28062214717418,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 30,
+    "n": 128,
+    "cpu_over_gpu": 0.8725190289208388,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 30,
+    "n": 256,
+    "cpu_over_gpu": 1.2617881109928937,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 30,
+    "n": 512,
+    "cpu_over_gpu": 1.9496569502064747,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 30,
+    "n": 2048,
+    "cpu_over_gpu": 3.2681355672800643,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 30,
+    "n": 8192,
+    "cpu_over_gpu": 9.579008383216452,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 30,
+    "n": 32768,
+    "cpu_over_gpu": 28.59888658050819,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 30,
+    "n": 131072,
+    "cpu_over_gpu": 84.17148972381058,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 60,
+    "n": 128,
+    "cpu_over_gpu": 0.8587670103827421,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 60,
+    "n": 256,
+    "cpu_over_gpu": 1.289044260041502,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 60,
+    "n": 512,
+    "cpu_over_gpu": 2.1014154186046285,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 60,
+    "n": 2048,
+    "cpu_over_gpu": 5.338122475213427,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 60,
+    "n": 8192,
+    "cpu_over_gpu": 13.075684141446194,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 60,
+    "n": 32768,
+    "cpu_over_gpu": 40.08727562593484,
+    "identical_permutation": true,
+    "differing_positions": 0
+  },
+  {
+    "sequence": "halton",
+    "dimension": 60,
+    "n": 131072,
+    "cpu_over_gpu": 109.13578566379101,
+    "identical_permutation": true,
+    "differing_positions": 0
+  }
+]

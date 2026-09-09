@@ -1,0 +1,19 @@
+{
+  "n_epochs_completed": 3,
+  "baseline": [
+    -16855.76391985765,
+    -576.8005003439648
+  ],
+  "compilation_sec": 0.8673129999951925,
+  "execution_sec": 1.173955083002511,
+  "elapsed_sec": 2.0412680829977035,
+  "final_train_logz": -16568.5538345243,
+  "final_test_logz": -567.2392925032291,
+  "best_test_logz": -567.2392925032291,
+  "best_test_epoch": 3,
+  "checkpoint_policy": "final_epoch",
+  "learning_rate_schedule": "cosine",
+  "gradient_replicas": 1,
+  "score_replicas": 1,
+  "prediction_sec": 1.130670458995155
+}

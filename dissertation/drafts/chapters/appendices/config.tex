@@ -1,0 +1,46 @@
+\chapter{Configuration}
+\label{app:config}
+
+This appendix records the exact configuration used for the performance comparison in Section~\ref{sec:performance-comparison}. Both methods consume the same frozen, chronologically ordered data set and the same optimiser, so that any difference between them is attributable to the correlated Rao-Blackwellised construction rather than to data preparation.
+
+\section{Data and split}
+
+The data set is the frozen international football results file \texttt{results.csv}, containing $49{,}521$ rows. The rows are split chronologically into a training period $[1980\text{-}01\text{-}01, 2024\text{-}01\text{-}01)$, a test period $[2024\text{-}01\text{-}01, 2026\text{-}06\text{-}11)$, and a prediction period from 11 June 2026. The training set contains $4{,}702$ matches, the test set $305$, and the prediction set $104$. Matches with scores exceeding the truncation threshold $\max\_goals = 8$ are excluded before the split, and same-day repeats are retained as separate rows with zero elapsed time.
+
+\section{Model parameters}
+
+The static parameters are $\Theta = (\Gamma_0, B, \kappa, \alpha, \beta)$, with $\Gamma_0 \in \mathbb{R}^{K \times K}$, $B \in \mathbb{R}^{2 \times 2}$, $\kappa > 0$, $\alpha \in \mathbb{R}$ and $\beta \in \mathbb{R}$, subject to $\Gamma_0 \succ 0$, $B \succ 0$ and $\det(B) = 1$. The number of teams is $K = 48$. The initial mean is $\mu_0 = \mathbf{0}_{2K}$.
+
+\section{Optimisation}
+
+Both methods use Adam with a cosine-decay learning-rate schedule, learning rate $0.02$, seed $0$ and exactly $50$ updates. The SQMC log-likelihood gradient is averaged over $10$ independently randomised RQMC replicas at each update; the EKF gradient is deterministic. The EKF integrates the bivariate-Poisson likelihood under the predictive Gaussian by Gauss--Hermite quadrature of degree $32$.
+
+\section{Full configuration}
+
+Table~\ref{tab:config} lists the complete configuration.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{ll}
+\toprule
+Setting & Value \\
+\midrule
+Number of teams $K$ & $48$ \\
+Particles $N$ & $128$ \\
+Epochs & $50$ \\
+Learning rate & $0.02$ \\
+Learning-rate schedule & cosine decay \\
+Seed & $0$ \\
+SQMC gradient replicas & $10$ \\
+Gauss--Hermite degree & $32$ \\
+$\max\_goals$ & $8$ \\
+$\text{match\_scale}$ & $1$ \\
+Include friendlies & yes \\
+Training start & $1980\text{-}01\text{-}01$ \\
+Test start & $2024\text{-}01\text{-}01$ \\
+Prediction start & $2026\text{-}06\text{-}11$ \\
+\bottomrule
+\end{tabular}
+\caption{Configuration for the performance comparison of Section~\ref{sec:performance-comparison}.}
+\label{tab:config}
+\end{table}

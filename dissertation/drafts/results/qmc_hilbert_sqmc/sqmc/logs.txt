@@ -1,0 +1,82 @@
+sqmc: /content/sqmc-comparison-08092026_0048/sqmc
+SQMC cpu d=2 N=128: 0.033879s, held-out RMSE=0.130075
+SQMC gpu d=2 N=128: 0.041510s, held-out RMSE=0.130075
+SQMC gpu d=2 N=256: 0.041343s, held-out RMSE=0.0901396
+SQMC cpu d=2 N=256: 0.064649s, held-out RMSE=0.0901396
+SQMC cpu d=2 N=512: 0.121773s, held-out RMSE=0.0630064
+SQMC gpu d=2 N=512: 0.053327s, held-out RMSE=0.0630064
+SQMC gpu d=2 N=1024: 0.060492s, held-out RMSE=0.03921
+SQMC cpu d=2 N=1024: 0.270507s, held-out RMSE=0.03921
+SQMC cpu d=2 N=2048: 0.438331s, held-out RMSE=0.0241805
+SQMC gpu d=2 N=2048: 0.070361s, held-out RMSE=0.0241805
+SQMC gpu d=5 N=128: 0.025546s, held-out RMSE=0.339217
+SQMC cpu d=5 N=128: 0.036368s, held-out RMSE=0.339217
+SQMC cpu d=5 N=256: 0.056259s, held-out RMSE=0.253617
+SQMC gpu d=5 N=256: 0.032366s, held-out RMSE=0.253617
+SQMC gpu d=5 N=512: 0.031670s, held-out RMSE=0.195704
+SQMC cpu d=5 N=512: 0.093128s, held-out RMSE=0.195704
+SQMC cpu d=5 N=1024: 0.168120s, held-out RMSE=0.133947
+SQMC gpu d=5 N=1024: 0.037464s, held-out RMSE=0.133947
+SQMC gpu d=5 N=2048: 0.048290s, held-out RMSE=0.103136
+SQMC cpu d=5 N=2048: 0.312341s, held-out RMSE=0.103136
+SQMC cpu d=10 N=128: 0.031138s, held-out RMSE=0.736599
+SQMC gpu d=10 N=128: 0.024964s, held-out RMSE=0.736599
+SQMC gpu d=10 N=256: 0.025673s, held-out RMSE=0.581607
+SQMC cpu d=10 N=256: 0.055752s, held-out RMSE=0.581607
+SQMC cpu d=10 N=512: 0.100260s, held-out RMSE=0.479821
+SQMC gpu d=10 N=512: 0.029740s, held-out RMSE=0.479821
+SQMC gpu d=10 N=1024: 0.035132s, held-out RMSE=0.380178
+SQMC cpu d=10 N=1024: 0.175932s, held-out RMSE=0.380178
+SQMC cpu d=10 N=2048: 0.352606s, held-out RMSE=0.29819
+SQMC gpu d=10 N=2048: 0.040632s, held-out RMSE=0.29819
+SQMC gpu d=30 N=128: 0.015303s, held-out RMSE=1.5709
+SQMC cpu d=30 N=128: 0.039951s, held-out RMSE=1.5709
+SQMC cpu d=30 N=256: 0.070654s, held-out RMSE=1.38678
+SQMC gpu d=30 N=256: 0.017635s, held-out RMSE=1.38678
+SQMC gpu d=30 N=512: 0.023272s, held-out RMSE=1.25257
+SQMC cpu d=30 N=512: 0.113721s, held-out RMSE=1.25257
+SQMC cpu d=30 N=1024: 0.209140s, held-out RMSE=1.13792
+SQMC gpu d=30 N=1024: 0.028237s, held-out RMSE=1.13792
+SQMC gpu d=30 N=2048: 0.035198s, held-out RMSE=1.03129
+SQMC cpu d=30 N=2048: 0.364370s, held-out RMSE=1.03129
+SQMC cpu d=60 N=128: 0.064924s, held-out RMSE=2.46079
+SQMC gpu d=60 N=128: 0.014204s, held-out RMSE=2.46079
+SQMC gpu d=60 N=256: 0.016708s, held-out RMSE=2.23995
+SQMC cpu d=60 N=256: 0.101570s, held-out RMSE=2.23995
+SQMC cpu d=60 N=512: 0.159654s, held-out RMSE=2.0598
+SQMC gpu d=60 N=512: 0.022120s, held-out RMSE=2.0598
+SQMC gpu d=60 N=1024: 0.027884s, held-out RMSE=1.92215
+SQMC cpu d=60 N=1024: 0.260996s, held-out RMSE=1.92215
+SQMC cpu d=60 N=2048: 0.440156s, held-out RMSE=1.79198
+SQMC gpu d=60 N=2048: 0.032918s, held-out RMSE=1.79198
+Budget result: {'dimension': 2, 'budget_seconds': 0.01, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 2, 'budget_seconds': 0.01, 'backend': 'gpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 2, 'budget_seconds': 0.05, 'backend': 'cpu', 'status': 'selected', 'n': 128, 'median_seconds': 0.03387915700022859, 'q75_seconds': 0.03408867299981466, 'selection_rmse': 0.1130675753734897, 'validation_rmse': 0.13007515406376371, 'validation_ci95': [0.12273537218071016, 0.13759683092610336], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 2, 'budget_seconds': 0.05, 'backend': 'gpu', 'status': 'selected', 'n': 256, 'median_seconds': 0.04134289300009186, 'q75_seconds': 0.042098433500086685, 'selection_rmse': 0.08633001082022813, 'validation_rmse': 0.09013960707123, 'validation_ci95': [0.08201650087016381, 0.09795447686110909], 'measured_fraction_within_budget': 0.8571428571428571}
+Budget result: {'dimension': 2, 'budget_seconds': 0.1, 'backend': 'cpu', 'status': 'selected', 'n': 256, 'median_seconds': 0.06464854100022421, 'q75_seconds': 0.06471048749995134, 'selection_rmse': 0.08633001082022813, 'validation_rmse': 0.09013960707123002, 'validation_ci95': [0.0820165008701638, 0.09795447686110907], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 2, 'budget_seconds': 0.1, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.07036091200006922, 'q75_seconds': 0.07045829900016543, 'selection_rmse': 0.022213897390964885, 'validation_rmse': 0.02418054059359806, 'validation_ci95': [0.020228266343964026, 0.029009546975964265], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 5, 'budget_seconds': 0.01, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 5, 'budget_seconds': 0.01, 'backend': 'gpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 5, 'budget_seconds': 0.05, 'backend': 'cpu', 'status': 'selected', 'n': 128, 'median_seconds': 0.03636815199979537, 'q75_seconds': 0.037081863500134205, 'selection_rmse': 0.3434872739213601, 'validation_rmse': 0.3392170133035258, 'validation_ci95': [0.32858895707195723, 0.34955050448445896], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 5, 'budget_seconds': 0.05, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.048289715999999316, 'q75_seconds': 0.04880319549988599, 'selection_rmse': 0.11301838953594265, 'validation_rmse': 0.10313637346676585, 'validation_ci95': [0.09633812739364145, 0.11149208288555389], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 5, 'budget_seconds': 0.1, 'backend': 'cpu', 'status': 'selected', 'n': 512, 'median_seconds': 0.09312822499987305, 'q75_seconds': 0.09333438249996107, 'selection_rmse': 0.19011206316857107, 'validation_rmse': 0.19570441190543092, 'validation_ci95': [0.18875972187017698, 0.20256783442150803], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 5, 'budget_seconds': 0.1, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.048289715999999316, 'q75_seconds': 0.04880319549988599, 'selection_rmse': 0.11301838953594265, 'validation_rmse': 0.10313637346676585, 'validation_ci95': [0.09633812739364145, 0.11149208288555389], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 10, 'budget_seconds': 0.01, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 10, 'budget_seconds': 0.01, 'backend': 'gpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 10, 'budget_seconds': 0.05, 'backend': 'cpu', 'status': 'selected', 'n': 128, 'median_seconds': 0.031137870000293333, 'q75_seconds': 0.031546262000119896, 'selection_rmse': 0.7220247819923548, 'validation_rmse': 0.7365986881520519, 'validation_ci95': [0.7232031797755989, 0.7500317229706709], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 10, 'budget_seconds': 0.05, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.04063188500003889, 'q75_seconds': 0.04093002749982588, 'selection_rmse': 0.29749849057275585, 'validation_rmse': 0.29818962725691467, 'validation_ci95': [0.2918485327308549, 0.3047192792768512], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 10, 'budget_seconds': 0.1, 'backend': 'cpu', 'status': 'selected', 'n': 256, 'median_seconds': 0.05575210699998934, 'q75_seconds': 0.05583811499991498, 'selection_rmse': 0.576437622240384, 'validation_rmse': 0.5816067111445262, 'validation_ci95': [0.5683722689309927, 0.5925204438123484], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 10, 'budget_seconds': 0.1, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.04063188500003889, 'q75_seconds': 0.04093002749982588, 'selection_rmse': 0.29749849057275585, 'validation_rmse': 0.29818962725691467, 'validation_ci95': [0.2918485327308549, 0.3047192792768512], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 30, 'budget_seconds': 0.01, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 30, 'budget_seconds': 0.01, 'backend': 'gpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 30, 'budget_seconds': 0.05, 'backend': 'cpu', 'status': 'selected', 'n': 128, 'median_seconds': 0.039950607999799104, 'q75_seconds': 0.040325379500018244, 'selection_rmse': 1.5369784650646985, 'validation_rmse': 1.5709026333370244, 'validation_ci95': [1.5438605186857872, 1.6007737337443537], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 30, 'budget_seconds': 0.05, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.035198055999899225, 'q75_seconds': 0.03562262000014016, 'selection_rmse': 1.064557272601128, 'validation_rmse': 1.031287114485816, 'validation_ci95': [1.016805916224632, 1.0467408141632166], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 30, 'budget_seconds': 0.1, 'backend': 'cpu', 'status': 'selected', 'n': 256, 'median_seconds': 0.07065440300038972, 'q75_seconds': 0.07082612499993957, 'selection_rmse': 1.3954852257643622, 'validation_rmse': 1.386782425346532, 'validation_ci95': [1.3643464291255922, 1.410107912590709], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 30, 'budget_seconds': 0.1, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.035198055999899225, 'q75_seconds': 0.03562262000014016, 'selection_rmse': 1.064557272601128, 'validation_rmse': 1.031287114485816, 'validation_ci95': [1.016805916224632, 1.0467408141632166], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 60, 'budget_seconds': 0.01, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 60, 'budget_seconds': 0.01, 'backend': 'gpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 60, 'budget_seconds': 0.05, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 60, 'budget_seconds': 0.05, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.032918079999944894, 'q75_seconds': 0.03943292449980618, 'selection_rmse': 1.7880993358602306, 'validation_rmse': 1.791981127781043, 'validation_ci95': [1.7739622235089323, 1.810532748008791], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 60, 'budget_seconds': 0.1, 'backend': 'cpu', 'status': 'selected', 'n': 128, 'median_seconds': 0.06492407199993977, 'q75_seconds': 0.0651086804998613, 'selection_rmse': 2.4443096606576007, 'validation_rmse': 2.4607890258072707, 'validation_ci95': [2.4179819521432977, 2.5046697038716683], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 60, 'budget_seconds': 0.1, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.032918079999944894, 'q75_seconds': 0.03943292449980618, 'selection_rmse': 1.7880993358602306, 'validation_rmse': 1.791981127781043, 'validation_ci95': [1.7739622235089323, 1.810532748008791], 'measured_fraction_within_budget': 1.0}
+Benchmark completed.

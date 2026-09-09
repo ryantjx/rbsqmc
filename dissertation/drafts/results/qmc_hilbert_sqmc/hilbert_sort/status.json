@@ -1,0 +1,7 @@
+{
+  "benchmark": "hilbert_sort",
+  "status": "complete",
+  "started_utc": "20260908_010110",
+  "total_wall_seconds": 199.10900867700002,
+  "finished_utc": "2026-09-08T01:04:29.895734+00:00"
+}

@@ -1,0 +1,40 @@
+{
+  "completed_at_utc": "2026-09-09T09:58:13.268509Z",
+  "run_id": "outputs_local",
+  "config_sha256": "ef995ae27779ec4c5ae7e772f09abcf0e377ab0435f1410163df0c5cb8cb6be6",
+  "source_commit": "846957bacb00a8673871aaf428115455832c9024",
+  "prediction_count": 253,
+  "worldcup_count": 104,
+  "methods": [
+    "cfg",
+    "ekf",
+    "sqmc"
+  ],
+  "results_dir": "results",
+  "images_dir": "images",
+  "artifacts": [
+    "results/REPORT.md",
+    "results/DRAFT.md",
+    "results/summary.json",
+    "results/comparison_config.json",
+    "results/run_config.json",
+    "results/dataset_metadata.json",
+    "results/performance_metrics.csv",
+    "results/logz_history.csv",
+    "images/logz_overlay_train_test.png",
+    "results/ekf_predictions.json",
+    "results/sqmc_predictions.json",
+    "results/ekf_metrics.json",
+    "results/sqmc_metrics.json",
+    "results/ekf/fitted_params.json",
+    "results/sqmc/fitted_params.json",
+    "results/sqmc_prediction_diagnostics.json",
+    "results/sqmc_final_fixture.npz",
+    "images/ekf_top5_strengths.png",
+    "images/sqmc_top5_strengths.png",
+    "images/ekf_pre_worldcup_rankings.png",
+    "images/sqmc_pre_worldcup_rankings.png",
+    "images/ekf_post_worldcup_rankings.png",
+    "images/sqmc_post_worldcup_rankings.png"
+  ]
+}

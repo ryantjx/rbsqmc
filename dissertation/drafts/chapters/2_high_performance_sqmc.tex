@@ -6,6 +6,7 @@
 Let $X_t \in \mathcal{X} \subseteq \mathbb{R}^d$ be a latent Markov state with observations $Y_t$. By defining the initial distribution as $m_0$, transition density as $m_t$, and observation density as $g_t$, the joint density of the state-space model is given by
 
 \begin{equation}
+\label{eq:state-space-model}
 p(x_{0:T}, y_{1:T}) = m_0(x_0) \prod_{t=1}^T m_t(x_t | x_{t-1}) g_t(y_t | x_t)
 \end{equation}
 
@@ -312,7 +313,7 @@ Figure~\ref{fig:comparison-qmc} reports 120 fresh-scramble timing configurations
 
 \begin{figure}[t]
     \centering
-    \includegraphics[width=\textwidth]{comparison_qmc_08092026_0048.pdf}
+    \includegraphics[width=\textwidth]{results/qmc_hilbert_sqmc/comparison_qmc_08092026_0048.pdf}
     \caption{Fresh scrambling and point generation for Sobol' (top) and Halton (bottom). Left: median runtime for \texttt{jax} GPU and \texttt{scipy} CPU. Right: \texttt{scipy} CPU/\texttt{jax} GPU median-runtime ratio, with equal runtime marked at one. Colours identify dimensions and line styles identify implementations. Every timed call includes fresh scrambling; no unscrambled or fixed-scramble sampling curve is shown.}
     \label{fig:comparison-qmc}
 \end{figure}
@@ -334,7 +335,7 @@ Figure~\ref{fig:comparison-hilbert} separates Sobol'-generated and Halton-genera
 
 \begin{figure}[t]
     \centering
-    \includegraphics[width=\textwidth]{comparison_hilbert_08092026_0048.pdf}
+    \includegraphics[width=\textwidth]{results/qmc_hilbert_sqmc/comparison_hilbert_08092026_0048.pdf}
     \caption{\texttt{jax} CPU/\texttt{jax} GPU median-runtime ratios for shared Hilbert sorting. Left: normal-transformed scrambled Sobol' inputs; right: normal-transformed scrambled Halton inputs. Colours identify dimensions. Point generation and input transfer are excluded from sorting time; the horizontal line marks equal runtime. Points above the horizontal line favour the GPU.}
     \label{fig:comparison-hilbert}
 \end{figure}
@@ -368,7 +369,7 @@ Figure~\ref{fig:comparison-sqmc-runtime} shows the 50 timing records, forming 25
 
 \begin{figure}[t]
     \centering
-    \includegraphics[width=\textwidth]{comparison_sqmc_runtime_08092026_0048.pdf}
+    \includegraphics[width=\textwidth]{results/qmc_hilbert_sqmc/comparison_sqmc_runtime_08092026_0048.pdf}
     \caption{Median runtime of a complete 100-observation SQMC trajectory on CPU and GPU, at matched particle counts. Shaded bands give the interquartile range of seven timed executions. Compilation and input transfers are excluded. The same shared SQMC implementation is used in every panel.}
     \label{fig:comparison-sqmc-runtime}
 \end{figure}
@@ -388,7 +389,7 @@ Since both backends use the same generator and estimator, the filtering error is
 
 \begin{figure}[t]
     \centering
-    \includegraphics[width=\textwidth]{comparison_sqmc_budget_08092026_0048.pdf}
+    \includegraphics[width=\textwidth]{results/qmc_hilbert_sqmc/comparison_sqmc_budget_08092026_0048.pdf}
     \caption{Held-out filtering RMSE of the SQMC configuration selected under each median-runtime budget. Error bars are 95\% bootstrap intervals from sixteen validation randomisations and 500 resamples, conditional on one dataset per dimension. CPU has no eligible configuration at $d=60$ under 50\,ms. Neither backend has an eligible configuration under 10\,ms.}
     \label{fig:comparison-sqmc-budget}
 \end{figure}

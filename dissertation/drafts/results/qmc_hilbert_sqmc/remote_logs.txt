@@ -1,0 +1,456 @@
+Provisioned; waiting for the verified source bundle.
+Running: ['git', 'init', '/content/rbsqmc']
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint: 
+hint: 	git config --global init.defaultBranch <name>
+hint: 
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint: 
+hint: 	git branch -m <name>
+Initialized empty Git repository in /content/rbsqmc/.git/
+Running: ['git', 'remote', 'add', 'origin', 'https://github.com/ryantjx/rbsqmc.git']
+Running: ['git', 'bundle', 'verify', '/content/sqmc-comparison-08092026_0048/source.bundle']
+/content/sqmc-comparison-08092026_0048/source.bundle is okay
+The bundle contains this ref:
+e7363f8fa53cd6e761d1abfeefacbac4423662cd refs/heads/codex/colab-comparison-07092026
+The bundle records a complete history.
+Running: ['git', 'fetch', '/content/sqmc-comparison-08092026_0048/source.bundle', 'refs/heads/codex/colab-comparison-07092026']
+From /content/sqmc-comparison-08092026_0048/source.bundle
+ * branch            codex/colab-comparison-07092026 -> FETCH_HEAD
+Running: ['git', 'checkout', '--detach', 'FETCH_HEAD']
+HEAD is now at e7363f8 Compare fresh scrambled QMC with SciPy and split benchmark figures
+Running: ['/usr/bin/python3', '-m', 'pip', 'install', '-c', '/content/sqmc-comparison-08092026_0048/jax_constraints.txt', 'cuthbert', 'cuthbertlib']
+Collecting cuthbert
+  Downloading cuthbert-0.0.15-py3-none-any.whl.metadata (7.9 kB)
+Collecting cuthbertlib
+  Downloading cuthbertlib-0.0.15-py3-none-any.whl.metadata (779 bytes)
+Requirement already satisfied: jax>=0.4.35 in /usr/local/lib/python3.13/dist-packages (from cuthbertlib) (0.11.1)
+Requirement already satisfied: numba>=0.60.0 in /usr/local/lib/python3.13/dist-packages (from cuthbertlib) (0.61.2)
+Requirement already satisfied: jaxlib<=0.11.1,>=0.11.1 in /usr/local/lib/python3.13/dist-packages (from jax>=0.4.35->cuthbertlib) (0.11.1)
+Requirement already satisfied: ml_dtypes>=0.5.0 in /usr/local/lib/python3.13/dist-packages (from jax>=0.4.35->cuthbertlib) (0.6.0)
+Requirement already satisfied: numpy>=2.1 in /usr/local/lib/python3.13/dist-packages (from jax>=0.4.35->cuthbertlib) (2.1.3)
+Requirement already satisfied: opt_einsum in /usr/local/lib/python3.13/dist-packages (from jax>=0.4.35->cuthbertlib) (3.4.0)
+Requirement already satisfied: scipy>=1.15 in /usr/local/lib/python3.13/dist-packages (from jax>=0.4.35->cuthbertlib) (1.16.3)
+Requirement already satisfied: llvmlite<0.45,>=0.44.0dev0 in /usr/local/lib/python3.13/dist-packages (from numba>=0.60.0->cuthbertlib) (0.44.0)
+Downloading cuthbert-0.0.15-py3-none-any.whl (66 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 66.4/66.4 kB 4.9 MB/s eta 0:00:00
+Downloading cuthbertlib-0.0.15-py3-none-any.whl (56 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 56.9/56.9 kB 7.4 MB/s eta 0:00:00
+Installing collected packages: cuthbertlib, cuthbert
+Successfully installed cuthbert-0.0.15 cuthbertlib-0.0.15
+Running: ['/usr/bin/python3', 'sqmc/qmc/_generate_sobol_data.py', '--verify-scipy']
+Generated direction integers match SciPy exactly.
+Wrote (21201, 30) uint32 direction integers to /content/rbsqmc/sqmc/qmc/_sobol_direction_numbers.npz.
+Hardware: NVIDIA A100-SXM4-40GB, 40960 MiB, 580.82.07
+Running: ['/usr/bin/python3', '-u', '-m', 'sqmc.comparison.benchmark_qmc', '--platforms', 'cpu', 'gpu', '--dimensions', '2', '5', '10', '30', '60', '--n-values', '128', '512', '2048', '8192', '32768', '131072', '--sequences', 'sobol', 'halton', '--modes', 'fresh', '--scramble', '--repeats', '7', '--warmups', '2', '--seed', '42', '--implementations', 'jax', 'scipy', '--output-dir', '/content/sqmc-comparison-08092026_0048/qmc']
+qmc: /content/sqmc-comparison-08092026_0048/qmc
+sobol d=2 N=128 fresh jax cpu: 0.000079s
+sobol d=2 N=128 fresh jax gpu: 0.000169s
+sobol d=2 N=128 fresh scipy cpu: 0.000453s
+sobol d=2 N=512 fresh jax gpu: 0.000187s
+sobol d=2 N=512 fresh scipy cpu: 0.000453s
+sobol d=2 N=512 fresh jax cpu: 0.000082s
+sobol d=2 N=2048 fresh scipy cpu: 0.000505s
+sobol d=2 N=2048 fresh jax cpu: 0.000116s
+sobol d=2 N=2048 fresh jax gpu: 0.000200s
+sobol d=2 N=8192 fresh jax cpu: 0.000276s
+sobol d=2 N=8192 fresh jax gpu: 0.000251s
+sobol d=2 N=8192 fresh scipy cpu: 0.000540s
+sobol d=2 N=32768 fresh jax gpu: 0.000296s
+sobol d=2 N=32768 fresh scipy cpu: 0.000732s
+sobol d=2 N=32768 fresh jax cpu: 0.000594s
+sobol d=2 N=131072 fresh scipy cpu: 0.001577s
+sobol d=2 N=131072 fresh jax cpu: 0.001907s
+sobol d=2 N=131072 fresh jax gpu: 0.000357s
+sobol d=5 N=128 fresh jax cpu: 0.000121s
+sobol d=5 N=128 fresh jax gpu: 0.000176s
+sobol d=5 N=128 fresh scipy cpu: 0.000666s
+sobol d=5 N=512 fresh jax gpu: 0.000199s
+sobol d=5 N=512 fresh scipy cpu: 0.000660s
+sobol d=5 N=512 fresh jax cpu: 0.000135s
+sobol d=5 N=2048 fresh scipy cpu: 0.000694s
+sobol d=5 N=2048 fresh jax cpu: 0.000188s
+sobol d=5 N=2048 fresh jax gpu: 0.000193s
+sobol d=5 N=8192 fresh jax cpu: 0.000328s
+sobol d=5 N=8192 fresh jax gpu: 0.000238s
+sobol d=5 N=8192 fresh scipy cpu: 0.000784s
+sobol d=5 N=32768 fresh jax gpu: 0.000374s
+sobol d=5 N=32768 fresh scipy cpu: 0.001134s
+sobol d=5 N=32768 fresh jax cpu: 0.000870s
+sobol d=5 N=131072 fresh scipy cpu: 0.002808s
+sobol d=5 N=131072 fresh jax cpu: 0.002667s
+sobol d=5 N=131072 fresh jax gpu: 0.000387s
+sobol d=10 N=128 fresh jax cpu: 0.000163s
+sobol d=10 N=128 fresh jax gpu: 0.000177s
+sobol d=10 N=128 fresh scipy cpu: 0.000981s
+sobol d=10 N=512 fresh jax gpu: 0.000174s
+sobol d=10 N=512 fresh scipy cpu: 0.000988s
+sobol d=10 N=512 fresh jax cpu: 0.000154s
+sobol d=10 N=2048 fresh scipy cpu: 0.001031s
+sobol d=10 N=2048 fresh jax cpu: 0.000223s
+sobol d=10 N=2048 fresh jax gpu: 0.000207s
+sobol d=10 N=8192 fresh jax cpu: 0.000473s
+sobol d=10 N=8192 fresh jax gpu: 0.000254s
+sobol d=10 N=8192 fresh scipy cpu: 0.001164s
+sobol d=10 N=32768 fresh jax gpu: 0.000399s
+sobol d=10 N=32768 fresh scipy cpu: 0.001698s
+sobol d=10 N=32768 fresh jax cpu: 0.001219s
+sobol d=10 N=131072 fresh scipy cpu: 0.004854s
+sobol d=10 N=131072 fresh jax cpu: 0.004662s
+sobol d=10 N=131072 fresh jax gpu: 0.000702s
+sobol d=30 N=128 fresh jax cpu: 0.000165s
+sobol d=30 N=128 fresh jax gpu: 0.000204s
+sobol d=30 N=128 fresh scipy cpu: 0.002377s
+sobol d=30 N=512 fresh jax gpu: 0.000197s
+sobol d=30 N=512 fresh scipy cpu: 0.002299s
+sobol d=30 N=512 fresh jax cpu: 0.000246s
+sobol d=30 N=2048 fresh scipy cpu: 0.002372s
+sobol d=30 N=2048 fresh jax cpu: 0.000345s
+sobol d=30 N=2048 fresh jax gpu: 0.000272s
+sobol d=30 N=8192 fresh jax cpu: 0.000914s
+sobol d=30 N=8192 fresh jax gpu: 0.000296s
+sobol d=30 N=8192 fresh scipy cpu: 0.002726s
+sobol d=30 N=32768 fresh jax gpu: 0.000413s
+sobol d=30 N=32768 fresh scipy cpu: 0.004720s
+sobol d=30 N=32768 fresh jax cpu: 0.002383s
+sobol d=30 N=131072 fresh scipy cpu: 0.013110s
+sobol d=30 N=131072 fresh jax cpu: 0.023622s
+sobol d=30 N=131072 fresh jax gpu: 0.000518s
+sobol d=60 N=128 fresh jax cpu: 0.000337s
+sobol d=60 N=128 fresh jax gpu: 0.000195s
+sobol d=60 N=128 fresh scipy cpu: 0.004150s
+sobol d=60 N=512 fresh jax gpu: 0.000184s
+sobol d=60 N=512 fresh scipy cpu: 0.004203s
+sobol d=60 N=512 fresh jax cpu: 0.000374s
+sobol d=60 N=2048 fresh scipy cpu: 0.004358s
+sobol d=60 N=2048 fresh jax cpu: 0.000769s
+sobol d=60 N=2048 fresh jax gpu: 0.000292s
+sobol d=60 N=8192 fresh jax cpu: 0.001450s
+sobol d=60 N=8192 fresh jax gpu: 0.000265s
+sobol d=60 N=8192 fresh scipy cpu: 0.005413s
+sobol d=60 N=32768 fresh jax gpu: 0.000587s
+sobol d=60 N=32768 fresh scipy cpu: 0.009677s
+sobol d=60 N=32768 fresh jax cpu: 0.006687s
+sobol d=60 N=131072 fresh scipy cpu: 0.044424s
+sobol d=60 N=131072 fresh jax cpu: 0.047077s
+sobol d=60 N=131072 fresh jax gpu: 0.001431s
+halton d=2 N=128 fresh jax cpu: 0.000171s
+halton d=2 N=128 fresh jax gpu: 0.001663s
+halton d=2 N=128 fresh scipy cpu: 0.000561s
+halton d=2 N=512 fresh jax gpu: 0.001594s
+halton d=2 N=512 fresh scipy cpu: 0.001032s
+halton d=2 N=512 fresh jax cpu: 0.000234s
+halton d=2 N=2048 fresh scipy cpu: 0.002915s
+halton d=2 N=2048 fresh jax cpu: 0.000417s
+halton d=2 N=2048 fresh jax gpu: 0.001600s
+halton d=2 N=8192 fresh jax cpu: 0.001111s
+halton d=2 N=8192 fresh jax gpu: 0.001594s
+halton d=2 N=8192 fresh scipy cpu: 0.010346s
+halton d=2 N=32768 fresh jax gpu: 0.001594s
+halton d=2 N=32768 fresh scipy cpu: 0.040425s
+halton d=2 N=32768 fresh jax cpu: 0.005256s
+halton d=2 N=131072 fresh scipy cpu: 0.159970s
+halton d=2 N=131072 fresh jax cpu: 0.014443s
+halton d=2 N=131072 fresh jax gpu: 0.001638s
+halton d=5 N=128 fresh jax cpu: 0.000400s
+halton d=5 N=128 fresh jax gpu: 0.002576s
+halton d=5 N=128 fresh scipy cpu: 0.000805s
+halton d=5 N=512 fresh jax gpu: 0.002627s
+halton d=5 N=512 fresh scipy cpu: 0.001574s
+halton d=5 N=512 fresh jax cpu: 0.000479s
+halton d=5 N=2048 fresh scipy cpu: 0.004660s
+halton d=5 N=2048 fresh jax cpu: 0.000831s
+halton d=5 N=2048 fresh jax gpu: 0.002593s
+halton d=5 N=8192 fresh jax cpu: 0.002134s
+halton d=5 N=8192 fresh jax gpu: 0.002564s
+halton d=5 N=8192 fresh scipy cpu: 0.017017s
+halton d=5 N=32768 fresh jax gpu: 0.002568s
+halton d=5 N=32768 fresh scipy cpu: 0.066158s
+halton d=5 N=32768 fresh jax cpu: 0.007568s
+halton d=5 N=131072 fresh scipy cpu: 0.264154s
+halton d=5 N=131072 fresh jax cpu: 0.024777s
+halton d=5 N=131072 fresh jax gpu: 0.002571s
+halton d=10 N=128 fresh jax cpu: 0.000729s
+halton d=10 N=128 fresh jax gpu: 0.003752s
+halton d=10 N=128 fresh scipy cpu: 0.001093s
+halton d=10 N=512 fresh jax gpu: 0.003839s
+halton d=10 N=512 fresh scipy cpu: 0.002215s
+halton d=10 N=512 fresh jax cpu: 0.000903s
+halton d=10 N=2048 fresh scipy cpu: 0.006546s
+halton d=10 N=2048 fresh jax cpu: 0.001405s
+halton d=10 N=2048 fresh jax gpu: 0.003623s
+halton d=10 N=8192 fresh jax cpu: 0.003401s
+halton d=10 N=8192 fresh jax gpu: 0.003613s
+halton d=10 N=8192 fresh scipy cpu: 0.023885s
+halton d=10 N=32768 fresh jax gpu: 0.003601s
+halton d=10 N=32768 fresh scipy cpu: 0.093815s
+halton d=10 N=32768 fresh jax cpu: 0.011410s
+halton d=10 N=131072 fresh scipy cpu: 0.372790s
+halton d=10 N=131072 fresh jax cpu: 0.032669s
+halton d=10 N=131072 fresh jax gpu: 0.003602s
+halton d=30 N=128 fresh jax cpu: 0.002715s
+halton d=30 N=128 fresh jax gpu: 0.007259s
+halton d=30 N=128 fresh scipy cpu: 0.002091s
+halton d=30 N=512 fresh jax gpu: 0.006788s
+halton d=30 N=512 fresh scipy cpu: 0.004097s
+halton d=30 N=512 fresh jax cpu: 0.003228s
+halton d=30 N=2048 fresh scipy cpu: 0.012185s
+halton d=30 N=2048 fresh jax cpu: 0.004186s
+halton d=30 N=2048 fresh jax gpu: 0.006532s
+halton d=30 N=8192 fresh jax cpu: 0.008361s
+halton d=30 N=8192 fresh jax gpu: 0.006808s
+halton d=30 N=8192 fresh scipy cpu: 0.043872s
+halton d=30 N=32768 fresh jax gpu: 0.006753s
+halton d=30 N=32768 fresh scipy cpu: 0.169281s
+halton d=30 N=32768 fresh jax cpu: 0.026002s
+halton d=30 N=131072 fresh scipy cpu: 0.671669s
+halton d=30 N=131072 fresh jax cpu: 0.080268s
+halton d=30 N=131072 fresh jax gpu: 0.006754s
+halton d=60 N=128 fresh jax cpu: 0.009901s
+halton d=60 N=128 fresh jax gpu: 0.010872s
+halton d=60 N=128 fresh scipy cpu: 0.003870s
+halton d=60 N=512 fresh jax gpu: 0.011559s
+halton d=60 N=512 fresh scipy cpu: 0.006863s
+halton d=60 N=512 fresh jax cpu: 0.010412s
+halton d=60 N=2048 fresh scipy cpu: 0.018742s
+halton d=60 N=2048 fresh jax cpu: 0.013450s
+halton d=60 N=2048 fresh jax gpu: 0.010066s
+halton d=60 N=8192 fresh jax cpu: 0.021883s
+halton d=60 N=8192 fresh jax gpu: 0.009887s
+halton d=60 N=8192 fresh scipy cpu: 0.067377s
+halton d=60 N=32768 fresh jax gpu: 0.010980s
+halton d=60 N=32768 fresh scipy cpu: 0.256107s
+halton d=60 N=32768 fresh jax cpu: 0.047843s
+halton d=60 N=131072 fresh scipy cpu: 1.022041s
+halton d=60 N=131072 fresh jax cpu: 0.145116s
+halton d=60 N=131072 fresh jax gpu: 0.011806s
+Benchmark completed.
+Running: ['/usr/bin/python3', '-u', '-m', 'sqmc.comparison.benchmark_hilbert_sort', '--platforms', 'cpu', 'gpu', '--dimensions', '2', '5', '10', '30', '60', '--n-values', '128', '256', '512', '2048', '8192', '32768', '131072', '--sequences', 'sobol', 'halton', '--distribution', 'normal', '--repeats', '7', '--warmups', '2', '--seed', '42', '--output-dir', '/content/sqmc-comparison-08092026_0048/hilbert_sort']
+hilbert_sort: /content/sqmc-comparison-08092026_0048/hilbert_sort
+sobol/normal d=2 N=128 cpu: 0.000123s
+sobol/normal d=2 N=128 gpu: 0.000601s
+sobol/normal d=2 N=256 gpu: 0.000535s
+sobol/normal d=2 N=256 cpu: 0.000158s
+sobol/normal d=2 N=512 cpu: 0.000291s
+sobol/normal d=2 N=512 gpu: 0.000648s
+sobol/normal d=2 N=2048 gpu: 0.000649s
+sobol/normal d=2 N=2048 cpu: 0.001656s
+sobol/normal d=2 N=8192 cpu: 0.005032s
+sobol/normal d=2 N=8192 gpu: 0.000685s
+sobol/normal d=2 N=32768 gpu: 0.000795s
+sobol/normal d=2 N=32768 cpu: 0.018308s
+sobol/normal d=2 N=131072 cpu: 0.086423s
+sobol/normal d=2 N=131072 gpu: 0.001088s
+sobol/normal d=5 N=128 gpu: 0.000334s
+sobol/normal d=5 N=128 cpu: 0.000096s
+sobol/normal d=5 N=256 cpu: 0.000179s
+sobol/normal d=5 N=256 gpu: 0.000343s
+sobol/normal d=5 N=512 gpu: 0.000322s
+sobol/normal d=5 N=512 cpu: 0.000276s
+sobol/normal d=5 N=2048 cpu: 0.000896s
+sobol/normal d=5 N=2048 gpu: 0.000384s
+sobol/normal d=5 N=8192 gpu: 0.000482s
+sobol/normal d=5 N=8192 cpu: 0.003257s
+sobol/normal d=5 N=32768 cpu: 0.012857s
+sobol/normal d=5 N=32768 gpu: 0.000605s
+sobol/normal d=5 N=131072 gpu: 0.000709s
+sobol/normal d=5 N=131072 cpu: 0.061490s
+sobol/normal d=10 N=128 cpu: 0.000128s
+sobol/normal d=10 N=128 gpu: 0.000248s
+sobol/normal d=10 N=256 gpu: 0.000280s
+sobol/normal d=10 N=256 cpu: 0.000159s
+sobol/normal d=10 N=512 cpu: 0.000329s
+sobol/normal d=10 N=512 gpu: 0.000268s
+sobol/normal d=10 N=2048 gpu: 0.000373s
+sobol/normal d=10 N=2048 cpu: 0.000985s
+sobol/normal d=10 N=8192 cpu: 0.003148s
+sobol/normal d=10 N=8192 gpu: 0.000440s
+sobol/normal d=10 N=32768 gpu: 0.000501s
+sobol/normal d=10 N=32768 cpu: 0.012505s
+sobol/normal d=10 N=131072 cpu: 0.052412s
+sobol/normal d=10 N=131072 gpu: 0.000643s
+sobol/normal d=30 N=128 gpu: 0.000208s
+sobol/normal d=30 N=128 cpu: 0.000108s
+sobol/normal d=30 N=256 cpu: 0.000202s
+sobol/normal d=30 N=256 gpu: 0.000228s
+sobol/normal d=30 N=512 gpu: 0.000260s
+sobol/normal d=30 N=512 cpu: 0.000372s
+sobol/normal d=30 N=2048 cpu: 0.001168s
+sobol/normal d=30 N=2048 gpu: 0.000321s
+sobol/normal d=30 N=8192 gpu: 0.000338s
+sobol/normal d=30 N=8192 cpu: 0.003562s
+sobol/normal d=30 N=32768 cpu: 0.012801s
+sobol/normal d=30 N=32768 gpu: 0.000448s
+sobol/normal d=30 N=131072 gpu: 0.000671s
+sobol/normal d=30 N=131072 cpu: 0.055765s
+sobol/normal d=60 N=128 cpu: 0.000136s
+sobol/normal d=60 N=128 gpu: 0.000175s
+sobol/normal d=60 N=256 gpu: 0.000158s
+sobol/normal d=60 N=256 cpu: 0.000249s
+sobol/normal d=60 N=512 cpu: 0.000482s
+sobol/normal d=60 N=512 gpu: 0.000186s
+sobol/normal d=60 N=2048 gpu: 0.000316s
+sobol/normal d=60 N=2048 cpu: 0.001332s
+sobol/normal d=60 N=8192 cpu: 0.004178s
+sobol/normal d=60 N=8192 gpu: 0.000339s
+sobol/normal d=60 N=32768 gpu: 0.000474s
+sobol/normal d=60 N=32768 cpu: 0.016332s
+sobol/normal d=60 N=131072 cpu: 0.082274s
+sobol/normal d=60 N=131072 gpu: 0.000762s
+halton/normal d=2 N=128 gpu: 0.000586s
+halton/normal d=2 N=128 cpu: 0.000090s
+halton/normal d=2 N=256 cpu: 0.000156s
+halton/normal d=2 N=256 gpu: 0.000563s
+halton/normal d=2 N=512 gpu: 0.000572s
+halton/normal d=2 N=512 cpu: 0.000282s
+halton/normal d=2 N=2048 cpu: 0.001709s
+halton/normal d=2 N=2048 gpu: 0.000664s
+halton/normal d=2 N=8192 gpu: 0.000663s
+halton/normal d=2 N=8192 cpu: 0.004941s
+halton/normal d=2 N=32768 cpu: 0.018363s
+halton/normal d=2 N=32768 gpu: 0.000780s
+halton/normal d=2 N=131072 gpu: 0.001091s
+halton/normal d=2 N=131072 cpu: 0.085458s
+halton/normal d=5 N=128 cpu: 0.000128s
+halton/normal d=5 N=128 gpu: 0.000322s
+halton/normal d=5 N=256 gpu: 0.000354s
+halton/normal d=5 N=256 cpu: 0.000236s
+halton/normal d=5 N=512 cpu: 0.000325s
+halton/normal d=5 N=512 gpu: 0.000317s
+halton/normal d=5 N=2048 gpu: 0.000380s
+halton/normal d=5 N=2048 cpu: 0.000855s
+halton/normal d=5 N=8192 cpu: 0.003192s
+halton/normal d=5 N=8192 gpu: 0.000442s
+halton/normal d=5 N=32768 gpu: 0.000532s
+halton/normal d=5 N=32768 cpu: 0.013342s
+halton/normal d=5 N=131072 cpu: 0.057469s
+halton/normal d=5 N=131072 gpu: 0.000692s
+halton/normal d=10 N=128 gpu: 0.000266s
+halton/normal d=10 N=128 cpu: 0.000133s
+halton/normal d=10 N=256 cpu: 0.000200s
+halton/normal d=10 N=256 gpu: 0.000285s
+halton/normal d=10 N=512 gpu: 0.000261s
+halton/normal d=10 N=512 cpu: 0.000357s
+halton/normal d=10 N=2048 cpu: 0.000980s
+halton/normal d=10 N=2048 gpu: 0.000372s
+halton/normal d=10 N=8192 gpu: 0.000432s
+halton/normal d=10 N=8192 cpu: 0.003288s
+halton/normal d=10 N=32768 cpu: 0.013000s
+halton/normal d=10 N=32768 gpu: 0.000479s
+halton/normal d=10 N=131072 gpu: 0.000622s
+halton/normal d=10 N=131072 cpu: 0.054916s
+halton/normal d=30 N=128 cpu: 0.000194s
+halton/normal d=30 N=128 gpu: 0.000222s
+halton/normal d=30 N=256 gpu: 0.000205s
+halton/normal d=30 N=256 cpu: 0.000259s
+halton/normal d=30 N=512 cpu: 0.000382s
+halton/normal d=30 N=512 gpu: 0.000196s
+halton/normal d=30 N=2048 gpu: 0.000329s
+halton/normal d=30 N=2048 cpu: 0.001077s
+halton/normal d=30 N=8192 cpu: 0.003594s
+halton/normal d=30 N=8192 gpu: 0.000375s
+halton/normal d=30 N=32768 gpu: 0.000488s
+halton/normal d=30 N=32768 cpu: 0.013963s
+halton/normal d=30 N=131072 cpu: 0.058783s
+halton/normal d=30 N=131072 gpu: 0.000698s
+halton/normal d=60 N=128 gpu: 0.000159s
+halton/normal d=60 N=128 cpu: 0.000137s
+halton/normal d=60 N=256 cpu: 0.000315s
+halton/normal d=60 N=256 gpu: 0.000244s
+halton/normal d=60 N=512 gpu: 0.000247s
+halton/normal d=60 N=512 cpu: 0.000518s
+halton/normal d=60 N=2048 cpu: 0.001406s
+halton/normal d=60 N=2048 gpu: 0.000263s
+halton/normal d=60 N=8192 gpu: 0.000344s
+halton/normal d=60 N=8192 cpu: 0.004492s
+halton/normal d=60 N=32768 cpu: 0.018144s
+halton/normal d=60 N=32768 gpu: 0.000453s
+halton/normal d=60 N=131072 gpu: 0.000793s
+halton/normal d=60 N=131072 cpu: 0.086505s
+Benchmark completed.
+Running: ['/usr/bin/python3', '-u', '-m', 'sqmc.comparison.benchmark_sqmc', '--platforms', 'cpu', 'gpu', '--dimensions', '2', '5', '10', '30', '60', '--particle-counts', '128', '256', '512', '1024', '2048', '--budget-seconds', '0.01', '0.05', '0.1', '--n-steps', '100', '--datasets', '1', '--selection-reps', '8', '--validation-reps', '16', '--bootstrap-reps', '500', '--repeats', '7', '--warmups', '2', '--seed', '42', '--output-dir', '/content/sqmc-comparison-08092026_0048/sqmc']
+sqmc: /content/sqmc-comparison-08092026_0048/sqmc
+SQMC cpu d=2 N=128: 0.033879s, held-out RMSE=0.130075
+SQMC gpu d=2 N=128: 0.041510s, held-out RMSE=0.130075
+SQMC gpu d=2 N=256: 0.041343s, held-out RMSE=0.0901396
+SQMC cpu d=2 N=256: 0.064649s, held-out RMSE=0.0901396
+SQMC cpu d=2 N=512: 0.121773s, held-out RMSE=0.0630064
+SQMC gpu d=2 N=512: 0.053327s, held-out RMSE=0.0630064
+SQMC gpu d=2 N=1024: 0.060492s, held-out RMSE=0.03921
+SQMC cpu d=2 N=1024: 0.270507s, held-out RMSE=0.03921
+SQMC cpu d=2 N=2048: 0.438331s, held-out RMSE=0.0241805
+SQMC gpu d=2 N=2048: 0.070361s, held-out RMSE=0.0241805
+SQMC gpu d=5 N=128: 0.025546s, held-out RMSE=0.339217
+SQMC cpu d=5 N=128: 0.036368s, held-out RMSE=0.339217
+SQMC cpu d=5 N=256: 0.056259s, held-out RMSE=0.253617
+SQMC gpu d=5 N=256: 0.032366s, held-out RMSE=0.253617
+SQMC gpu d=5 N=512: 0.031670s, held-out RMSE=0.195704
+SQMC cpu d=5 N=512: 0.093128s, held-out RMSE=0.195704
+SQMC cpu d=5 N=1024: 0.168120s, held-out RMSE=0.133947
+SQMC gpu d=5 N=1024: 0.037464s, held-out RMSE=0.133947
+SQMC gpu d=5 N=2048: 0.048290s, held-out RMSE=0.103136
+SQMC cpu d=5 N=2048: 0.312341s, held-out RMSE=0.103136
+SQMC cpu d=10 N=128: 0.031138s, held-out RMSE=0.736599
+SQMC gpu d=10 N=128: 0.024964s, held-out RMSE=0.736599
+SQMC gpu d=10 N=256: 0.025673s, held-out RMSE=0.581607
+SQMC cpu d=10 N=256: 0.055752s, held-out RMSE=0.581607
+SQMC cpu d=10 N=512: 0.100260s, held-out RMSE=0.479821
+SQMC gpu d=10 N=512: 0.029740s, held-out RMSE=0.479821
+SQMC gpu d=10 N=1024: 0.035132s, held-out RMSE=0.380178
+SQMC cpu d=10 N=1024: 0.175932s, held-out RMSE=0.380178
+SQMC cpu d=10 N=2048: 0.352606s, held-out RMSE=0.29819
+SQMC gpu d=10 N=2048: 0.040632s, held-out RMSE=0.29819
+SQMC gpu d=30 N=128: 0.015303s, held-out RMSE=1.5709
+SQMC cpu d=30 N=128: 0.039951s, held-out RMSE=1.5709
+SQMC cpu d=30 N=256: 0.070654s, held-out RMSE=1.38678
+SQMC gpu d=30 N=256: 0.017635s, held-out RMSE=1.38678
+SQMC gpu d=30 N=512: 0.023272s, held-out RMSE=1.25257
+SQMC cpu d=30 N=512: 0.113721s, held-out RMSE=1.25257
+SQMC cpu d=30 N=1024: 0.209140s, held-out RMSE=1.13792
+SQMC gpu d=30 N=1024: 0.028237s, held-out RMSE=1.13792
+SQMC gpu d=30 N=2048: 0.035198s, held-out RMSE=1.03129
+SQMC cpu d=30 N=2048: 0.364370s, held-out RMSE=1.03129
+SQMC cpu d=60 N=128: 0.064924s, held-out RMSE=2.46079
+SQMC gpu d=60 N=128: 0.014204s, held-out RMSE=2.46079
+SQMC gpu d=60 N=256: 0.016708s, held-out RMSE=2.23995
+SQMC cpu d=60 N=256: 0.101570s, held-out RMSE=2.23995
+SQMC cpu d=60 N=512: 0.159654s, held-out RMSE=2.0598
+SQMC gpu d=60 N=512: 0.022120s, held-out RMSE=2.0598
+SQMC gpu d=60 N=1024: 0.027884s, held-out RMSE=1.92215
+SQMC cpu d=60 N=1024: 0.260996s, held-out RMSE=1.92215
+SQMC cpu d=60 N=2048: 0.440156s, held-out RMSE=1.79198
+SQMC gpu d=60 N=2048: 0.032918s, held-out RMSE=1.79198
+Budget result: {'dimension': 2, 'budget_seconds': 0.01, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 2, 'budget_seconds': 0.01, 'backend': 'gpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 2, 'budget_seconds': 0.05, 'backend': 'cpu', 'status': 'selected', 'n': 128, 'median_seconds': 0.03387915700022859, 'q75_seconds': 0.03408867299981466, 'selection_rmse': 0.1130675753734897, 'validation_rmse': 0.13007515406376371, 'validation_ci95': [0.12273537218071016, 0.13759683092610336], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 2, 'budget_seconds': 0.05, 'backend': 'gpu', 'status': 'selected', 'n': 256, 'median_seconds': 0.04134289300009186, 'q75_seconds': 0.042098433500086685, 'selection_rmse': 0.08633001082022813, 'validation_rmse': 0.09013960707123, 'validation_ci95': [0.08201650087016381, 0.09795447686110909], 'measured_fraction_within_budget': 0.8571428571428571}
+Budget result: {'dimension': 2, 'budget_seconds': 0.1, 'backend': 'cpu', 'status': 'selected', 'n': 256, 'median_seconds': 0.06464854100022421, 'q75_seconds': 0.06471048749995134, 'selection_rmse': 0.08633001082022813, 'validation_rmse': 0.09013960707123002, 'validation_ci95': [0.0820165008701638, 0.09795447686110907], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 2, 'budget_seconds': 0.1, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.07036091200006922, 'q75_seconds': 0.07045829900016543, 'selection_rmse': 0.022213897390964885, 'validation_rmse': 0.02418054059359806, 'validation_ci95': [0.020228266343964026, 0.029009546975964265], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 5, 'budget_seconds': 0.01, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 5, 'budget_seconds': 0.01, 'backend': 'gpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 5, 'budget_seconds': 0.05, 'backend': 'cpu', 'status': 'selected', 'n': 128, 'median_seconds': 0.03636815199979537, 'q75_seconds': 0.037081863500134205, 'selection_rmse': 0.3434872739213601, 'validation_rmse': 0.3392170133035258, 'validation_ci95': [0.32858895707195723, 0.34955050448445896], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 5, 'budget_seconds': 0.05, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.048289715999999316, 'q75_seconds': 0.04880319549988599, 'selection_rmse': 0.11301838953594265, 'validation_rmse': 0.10313637346676585, 'validation_ci95': [0.09633812739364145, 0.11149208288555389], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 5, 'budget_seconds': 0.1, 'backend': 'cpu', 'status': 'selected', 'n': 512, 'median_seconds': 0.09312822499987305, 'q75_seconds': 0.09333438249996107, 'selection_rmse': 0.19011206316857107, 'validation_rmse': 0.19570441190543092, 'validation_ci95': [0.18875972187017698, 0.20256783442150803], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 5, 'budget_seconds': 0.1, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.048289715999999316, 'q75_seconds': 0.04880319549988599, 'selection_rmse': 0.11301838953594265, 'validation_rmse': 0.10313637346676585, 'validation_ci95': [0.09633812739364145, 0.11149208288555389], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 10, 'budget_seconds': 0.01, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 10, 'budget_seconds': 0.01, 'backend': 'gpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 10, 'budget_seconds': 0.05, 'backend': 'cpu', 'status': 'selected', 'n': 128, 'median_seconds': 0.031137870000293333, 'q75_seconds': 0.031546262000119896, 'selection_rmse': 0.7220247819923548, 'validation_rmse': 0.7365986881520519, 'validation_ci95': [0.7232031797755989, 0.7500317229706709], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 10, 'budget_seconds': 0.05, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.04063188500003889, 'q75_seconds': 0.04093002749982588, 'selection_rmse': 0.29749849057275585, 'validation_rmse': 0.29818962725691467, 'validation_ci95': [0.2918485327308549, 0.3047192792768512], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 10, 'budget_seconds': 0.1, 'backend': 'cpu', 'status': 'selected', 'n': 256, 'median_seconds': 0.05575210699998934, 'q75_seconds': 0.05583811499991498, 'selection_rmse': 0.576437622240384, 'validation_rmse': 0.5816067111445262, 'validation_ci95': [0.5683722689309927, 0.5925204438123484], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 10, 'budget_seconds': 0.1, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.04063188500003889, 'q75_seconds': 0.04093002749982588, 'selection_rmse': 0.29749849057275585, 'validation_rmse': 0.29818962725691467, 'validation_ci95': [0.2918485327308549, 0.3047192792768512], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 30, 'budget_seconds': 0.01, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 30, 'budget_seconds': 0.01, 'backend': 'gpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 30, 'budget_seconds': 0.05, 'backend': 'cpu', 'status': 'selected', 'n': 128, 'median_seconds': 0.039950607999799104, 'q75_seconds': 0.040325379500018244, 'selection_rmse': 1.5369784650646985, 'validation_rmse': 1.5709026333370244, 'validation_ci95': [1.5438605186857872, 1.6007737337443537], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 30, 'budget_seconds': 0.05, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.035198055999899225, 'q75_seconds': 0.03562262000014016, 'selection_rmse': 1.064557272601128, 'validation_rmse': 1.031287114485816, 'validation_ci95': [1.016805916224632, 1.0467408141632166], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 30, 'budget_seconds': 0.1, 'backend': 'cpu', 'status': 'selected', 'n': 256, 'median_seconds': 0.07065440300038972, 'q75_seconds': 0.07082612499993957, 'selection_rmse': 1.3954852257643622, 'validation_rmse': 1.386782425346532, 'validation_ci95': [1.3643464291255922, 1.410107912590709], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 30, 'budget_seconds': 0.1, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.035198055999899225, 'q75_seconds': 0.03562262000014016, 'selection_rmse': 1.064557272601128, 'validation_rmse': 1.031287114485816, 'validation_ci95': [1.016805916224632, 1.0467408141632166], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 60, 'budget_seconds': 0.01, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 60, 'budget_seconds': 0.01, 'backend': 'gpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 60, 'budget_seconds': 0.05, 'backend': 'cpu', 'status': 'no_measured_configuration_within_budget'}
+Budget result: {'dimension': 60, 'budget_seconds': 0.05, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.032918079999944894, 'q75_seconds': 0.03943292449980618, 'selection_rmse': 1.7880993358602306, 'validation_rmse': 1.791981127781043, 'validation_ci95': [1.7739622235089323, 1.810532748008791], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 60, 'budget_seconds': 0.1, 'backend': 'cpu', 'status': 'selected', 'n': 128, 'median_seconds': 0.06492407199993977, 'q75_seconds': 0.0651086804998613, 'selection_rmse': 2.4443096606576007, 'validation_rmse': 2.4607890258072707, 'validation_ci95': [2.4179819521432977, 2.5046697038716683], 'measured_fraction_within_budget': 1.0}
+Budget result: {'dimension': 60, 'budget_seconds': 0.1, 'backend': 'gpu', 'status': 'selected', 'n': 2048, 'median_seconds': 0.032918079999944894, 'q75_seconds': 0.03943292449980618, 'selection_rmse': 1.7880993358602306, 'validation_rmse': 1.791981127781043, 'validation_ci95': [1.7739622235089323, 1.810532748008791], 'measured_fraction_within_budget': 1.0}
+Benchmark completed.

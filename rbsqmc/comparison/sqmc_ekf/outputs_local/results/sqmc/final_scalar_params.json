@@ -1,0 +1,16 @@
+{
+  "method": "sqmc",
+  "checkpoint_policy": "final_epoch",
+  "checkpoint_epoch": 3,
+  "run_id": null,
+  "source_revision": "846957bacb00a8673871aaf428115455832c9024",
+  "dataset_hash": "4db1d359d1438a23918df4af217da09b72dd92bb638f2a393d49d91616c92ce3",
+  "checkpoint_hash": "17eaf3d81befac8f68e26c3f2045f45548cf9d7c0ece603f7866864958857043",
+  "match_scale": 1,
+  "parameters": {
+    "alpha": 0.10757943553447255,
+    "beta": -3.8999620367989802,
+    "kappa": 0.0009057993500404363,
+    "friendly_scale": 2.0866278694419176
+  }
+}

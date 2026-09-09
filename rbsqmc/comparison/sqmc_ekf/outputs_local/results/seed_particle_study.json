@@ -1,0 +1,526 @@
+{
+  "fixture": {
+    "home": "Spain",
+    "away": "Argentina",
+    "date": "2026-07-19",
+    "full_sequence_match_index": 5110,
+    "prediction_index": 252
+  },
+  "checkpoint_hash": "17eaf3d81befac8f68e26c3f2045f45548cf9d7c0ece603f7866864958857043",
+  "dataset_hash": "4db1d359d1438a23918df4af217da09b72dd92bb638f2a393d49d91616c92ce3",
+  "schema_version": 2,
+  "source_revision": "e93981c8eea13c1b182148773ab52dcb2c952534",
+  "study_script_sha256": "ce9b9c75e23ce3cc5a5211b95727ba0cc980bb83b64f38bcf4e0ba9d0e951875",
+  "quantile_conventions": {
+    "predictive": "numpy linear interpolation, uniform particle weights",
+    "posterior": "inverse weighted empirical CDF, normalized posterior weights"
+  },
+  "n_particles_list": [
+    128,
+    512,
+    2048
+  ],
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "evaluations": [
+    {
+      "seed": 0,
+      "n_particles": 128,
+      "predictive_means": {
+        "home_attack": 0.5087678076791935,
+        "home_defence": 0.33631645217990913,
+        "away_attack": 0.7133266961688582,
+        "away_defence": 0.6219514614929952
+      },
+      "posterior_means": {
+        "home_attack": 0.494148747405461,
+        "home_defence": 0.43223708254129445,
+        "away_attack": 0.6614155131892392,
+        "away_defence": 0.6315861680196525
+      },
+      "total_strength_difference": {
+        "mean": -0.4901938978027507,
+        "q05": -1.2108096662426238,
+        "q50": -0.5376610385265376,
+        "q95": 0.38874700274967144,
+        "fraction_positive": 0.109375
+      },
+      "post_total_strength_difference": {
+        "mean": -0.36661585126213636,
+        "q05": -1.0148486023065075,
+        "q50": -0.3674045687494286,
+        "q95": 0.512307611529482,
+        "fraction_positive": 0.15786038045014725
+      },
+      "ess_before_resampling": 50.583362975008235,
+      "ess_after_update": 105.19259503928306,
+      "raw_grid_mass": 0.9991408076292736,
+      "outcome_probabilities": {
+        "home": 0.24335419067380393,
+        "draw": 0.2385583425026686,
+        "away": 0.5180874668235277
+      }
+    },
+    {
+      "seed": 1,
+      "n_particles": 128,
+      "predictive_means": {
+        "home_attack": 1.3306003780257125,
+        "home_defence": 0.6106951062712013,
+        "away_attack": 0.6253172196272745,
+        "away_defence": 1.712672112869242
+      },
+      "posterior_means": {
+        "home_attack": 1.3469332809835772,
+        "home_defence": 0.6689554299923897,
+        "away_attack": 0.5722329119551373,
+        "away_defence": 1.7275757969617271
+      },
+      "total_strength_difference": {
+        "mean": -0.3966938481996024,
+        "q05": -1.1666673990843286,
+        "q50": -0.441785818496759,
+        "q95": 0.33216074538683327,
+        "fraction_positive": 0.234375
+      },
+      "post_total_strength_difference": {
+        "mean": -0.28391999794089706,
+        "q05": -1.028500554412842,
+        "q50": -0.33945090183040505,
+        "q95": 0.3567565003599198,
+        "fraction_positive": 0.30736415047018734
+      },
+      "ess_before_resampling": 17.13837067904046,
+      "ess_after_update": 113.41076909519641,
+      "raw_grid_mass": 0.999942940119561,
+      "outcome_probabilities": {
+        "home": 0.2543860349786696,
+        "draw": 0.30289095172869673,
+        "away": 0.4427230132926341
+      }
+    },
+    {
+      "seed": 2,
+      "n_particles": 128,
+      "predictive_means": {
+        "home_attack": 0.6104525244468727,
+        "home_defence": 0.5717146970006417,
+        "away_attack": -0.1334037513862316,
+        "away_defence": 0.7163018230479585
+      },
+      "posterior_means": {
+        "home_attack": 0.6240648551113565,
+        "home_defence": 0.6037339326035294,
+        "away_attack": -0.15681006328049843,
+        "away_defence": 0.7118575088328924
+      },
+      "total_strength_difference": {
+        "mean": 0.5992691497857875,
+        "q05": -0.38810291675868963,
+        "q50": 0.5959125286996636,
+        "q95": 1.499883862026832,
+        "fraction_positive": 0.828125
+      },
+      "post_total_strength_difference": {
+        "mean": 0.6727513421624916,
+        "q05": -0.35030113167354393,
+        "q50": 0.6713761766268509,
+        "q95": 1.5944897710601666,
+        "fraction_positive": 0.8706794504186535
+      },
+      "ess_before_resampling": 54.845178708561455,
+      "ess_after_update": 123.26918059442096,
+      "raw_grid_mass": 0.9999676282498784,
+      "outcome_probabilities": {
+        "home": 0.46523201988146295,
+        "draw": 0.32776322642669214,
+        "away": 0.20700475369184423
+      }
+    },
+    {
+      "seed": 0,
+      "n_particles": 512,
+      "predictive_means": {
+        "home_attack": -0.051570211312204725,
+        "home_defence": 0.5307730490214958,
+        "away_attack": 0.8490990407755195,
+        "away_defence": 1.3613545676837515
+      },
+      "posterior_means": {
+        "home_attack": 0.047609508963840225,
+        "home_defence": 0.6643109254308787,
+        "away_attack": 0.7805852723311846,
+        "away_defence": 1.2799642097628945
+      },
+      "total_strength_difference": {
+        "mean": -1.7312507707499802,
+        "q05": -2.98722840303781,
+        "q50": -1.697254654856137,
+        "q95": -0.7703872717502815,
+        "fraction_positive": 0.0
+      },
+      "post_total_strength_difference": {
+        "mean": -1.3486290476993594,
+        "q05": -2.2693792376165636,
+        "q50": -1.3149926492888357,
+        "q95": -0.46188791215131925,
+        "fraction_positive": 0.0
+      },
+      "ess_before_resampling": 69.00101890811575,
+      "ess_after_update": 372.38176240808235,
+      "raw_grid_mass": 0.9987948097552978,
+      "outcome_probabilities": {
+        "home": 0.0752384572974582,
+        "draw": 0.244399513405555,
+        "away": 0.6803620292969874
+      }
+    },
+    {
+      "seed": 1,
+      "n_particles": 512,
+      "predictive_means": {
+        "home_attack": 0.5261506461699073,
+        "home_defence": 0.7462929571022593,
+        "away_attack": 1.018379118459068,
+        "away_defence": 1.8936702116916995
+      },
+      "posterior_means": {
+        "home_attack": 0.5862035951552346,
+        "home_defence": 0.8650276463194695,
+        "away_attack": 0.9512395901374957,
+        "away_defence": 1.7796399050693916
+      },
+      "total_strength_difference": {
+        "mean": -1.6396057268786006,
+        "q05": -2.6346561670454713,
+        "q50": -1.673959706940484,
+        "q95": -0.5177801627864621,
+        "fraction_positive": 0.013671875
+      },
+      "post_total_strength_difference": {
+        "mean": -1.2796482537321836,
+        "q05": -2.2721051383248967,
+        "q50": -1.3218929045669383,
+        "q95": -0.15811624931121693,
+        "fraction_positive": 0.04116283691444132
+      },
+      "ess_before_resampling": 55.15234701293714,
+      "ess_after_update": 371.92668988855996,
+      "raw_grid_mass": 0.9994456516360543,
+      "outcome_probabilities": {
+        "home": 0.08326954918437698,
+        "draw": 0.2548971968415201,
+        "away": 0.6618332539741021
+      }
+    },
+    {
+      "seed": 2,
+      "n_particles": 512,
+      "predictive_means": {
+        "home_attack": 0.3407652859059928,
+        "home_defence": 0.9080537406844856,
+        "away_attack": 0.21422109794997382,
+        "away_defence": 1.0752810057965247
+      },
+      "posterior_means": {
+        "home_attack": 0.36086772738910355,
+        "home_defence": 0.9419998596958824,
+        "away_attack": 0.1870330108909539,
+        "away_defence": 1.0506374784366874
+      },
+      "total_strength_difference": {
+        "mean": -0.04068307715602007,
+        "q05": -0.8124292519247053,
+        "q50": -0.10108162456419784,
+        "q95": 0.8478068981676806,
+        "fraction_positive": 0.435546875
+      },
+      "post_total_strength_difference": {
+        "mean": 0.06519709775734453,
+        "q05": -0.7117595088756108,
+        "q50": 0.046994090065081706,
+        "q95": 0.9297572032325394,
+        "fraction_positive": 0.5248146268675069
+      },
+      "ess_before_resampling": 20.670510213280625,
+      "ess_after_update": 483.1349846217133,
+      "raw_grid_mass": 0.999990191576021,
+      "outcome_probabilities": {
+        "home": 0.28220322825713556,
+        "draw": 0.4301415083649544,
+        "away": 0.28765526337790903
+      }
+    },
+    {
+      "seed": 0,
+      "n_particles": 2048,
+      "predictive_means": {
+        "home_attack": 0.14144218737327313,
+        "home_defence": -0.3239388756459352,
+        "away_attack": 1.0741922109101105,
+        "away_defence": 0.3750527414614598
+      },
+      "posterior_means": {
+        "home_attack": 0.17856926722180055,
+        "home_defence": -0.13473478483309656,
+        "away_attack": 0.8954937943628479,
+        "away_defence": 0.35129634832541295
+      },
+      "total_strength_difference": {
+        "mean": -1.6317416406442327,
+        "q05": -2.4782476806761884,
+        "q50": -1.626670789054647,
+        "q95": -0.7983185638408898,
+        "fraction_positive": 0.0009765625
+      },
+      "post_total_strength_difference": {
+        "mean": -1.202955660299557,
+        "q05": -1.9650762665550094,
+        "q50": -1.219165668069926,
+        "q95": -0.4315513063407982,
+        "fraction_positive": 0.006720468531886578
+      },
+      "ess_before_resampling": 98.42428705005904,
+      "ess_after_update": 779.803368548488,
+      "raw_grid_mass": 0.8974333801107383,
+      "outcome_probabilities": {
+        "home": 0.04938484191195956,
+        "draw": 0.07175428606228733,
+        "away": 0.8788608720257531
+      }
+    },
+    {
+      "seed": 1,
+      "n_particles": 2048,
+      "predictive_means": {
+        "home_attack": -0.14986584612804368,
+        "home_defence": 1.0967902810582766,
+        "away_attack": 1.8621445143616344,
+        "away_defence": 0.4094127715347785
+      },
+      "posterior_means": {
+        "home_attack": -0.11125529436911868,
+        "home_defence": 1.2531629842174823,
+        "away_attack": 1.779123561118374,
+        "away_defence": 0.3391504092514298
+      },
+      "total_strength_difference": {
+        "mean": -1.3246328509661804,
+        "q05": -2.2782463485692284,
+        "q50": -1.3184614602445455,
+        "q95": -0.3773391218028212,
+        "fraction_positive": 0.00537109375
+      },
+      "post_total_strength_difference": {
+        "mean": -0.9763662805214403,
+        "q05": -1.890480274704608,
+        "q50": -0.9437670605448756,
+        "q95": -0.16373025248277606,
+        "fraction_positive": 0.018059437566009126
+      },
+      "ess_before_resampling": 372.7509663198689,
+      "ess_after_update": 1315.9426132234203,
+      "raw_grid_mass": 0.9928767845728151,
+      "outcome_probabilities": {
+        "home": 0.1013904520141552,
+        "draw": 0.1589531403739784,
+        "away": 0.7396564076118672
+      }
+    },
+    {
+      "seed": 2,
+      "n_particles": 2048,
+      "predictive_means": {
+        "home_attack": 0.19959563875435277,
+        "home_defence": 0.7345985869146513,
+        "away_attack": 1.0905123787939757,
+        "away_defence": 1.9647540121465945
+      },
+      "posterior_means": {
+        "home_attack": 0.29642438312662345,
+        "home_defence": 0.8801710173022933,
+        "away_attack": 0.984756905813631,
+        "away_defence": 1.9106275138990547
+      },
+      "total_strength_difference": {
+        "mean": -2.1210721652715665,
+        "q05": -3.1389498394907926,
+        "q50": -2.130950517483851,
+        "q95": -1.078686835492596,
+        "fraction_positive": 0.0
+      },
+      "post_total_strength_difference": {
+        "mean": -1.718789019283768,
+        "q05": -2.6819224153386543,
+        "q50": -1.7191496721643524,
+        "q95": -0.719113146563316,
+        "fraction_positive": 0.0
+      },
+      "ess_before_resampling": 327.72568411613616,
+      "ess_after_update": 1357.486841602944,
+      "raw_grid_mass": 0.9989089710068195,
+      "outcome_probabilities": {
+        "home": 0.04791758850897593,
+        "draw": 0.23099972567107294,
+        "away": 0.7210826858199507
+      }
+    }
+  ],
+  "summary_by_particle_count": {
+    "128": {
+      "n_evaluations": 3,
+      "predictive_total_difference": {
+        "min": -0.4901938978027507,
+        "max": 0.5992691497857875,
+        "mean": -0.09587286540552187
+      },
+      "predictive_home_win": {
+        "min": 0.24335419067380393,
+        "max": 0.46523201988146295,
+        "mean": 0.32099074851131215
+      },
+      "predictive_draw": {
+        "min": 0.2385583425026686,
+        "max": 0.32776322642669214,
+        "mean": 0.2897375068860191
+      },
+      "predictive_away_win": {
+        "min": 0.20700475369184423,
+        "max": 0.5180874668235277,
+        "mean": 0.3892717446026686
+      },
+      "posterior_total_difference": {
+        "min": -0.36661585126213636,
+        "max": 0.6727513421624916,
+        "mean": 0.0074051643198193755
+      },
+      "ess_after_update": {
+        "min": 105.19259503928306,
+        "max": 123.26918059442096,
+        "mean": 113.95751490963347
+      },
+      "raw_grid_mass": {
+        "min": 0.9991408076292736,
+        "max": 0.9999676282498784,
+        "mean": 0.9996837919995709
+      }
+    },
+    "512": {
+      "n_evaluations": 3,
+      "predictive_total_difference": {
+        "min": -1.7312507707499802,
+        "max": -0.04068307715602007,
+        "mean": -1.1371798582615338
+      },
+      "predictive_home_win": {
+        "min": 0.0752384572974582,
+        "max": 0.28220322825713556,
+        "mean": 0.14690374491299027
+      },
+      "predictive_draw": {
+        "min": 0.244399513405555,
+        "max": 0.4301415083649544,
+        "mean": 0.3098127395373432
+      },
+      "predictive_away_win": {
+        "min": 0.28765526337790903,
+        "max": 0.6803620292969874,
+        "mean": 0.5432835155496661
+      },
+      "posterior_total_difference": {
+        "min": -1.3486290476993594,
+        "max": 0.06519709775734453,
+        "mean": -0.8543600678913995
+      },
+      "ess_after_update": {
+        "min": 371.92668988855996,
+        "max": 483.1349846217133,
+        "mean": 409.1478123061185
+      },
+      "raw_grid_mass": {
+        "min": 0.9987948097552978,
+        "max": 0.999990191576021,
+        "mean": 0.999410217655791
+      }
+    },
+    "2048": {
+      "n_evaluations": 3,
+      "predictive_total_difference": {
+        "min": -2.1210721652715665,
+        "max": -1.3246328509661804,
+        "mean": -1.69248221896066
+      },
+      "predictive_home_win": {
+        "min": 0.04791758850897593,
+        "max": 0.1013904520141552,
+        "mean": 0.0662309608116969
+      },
+      "predictive_draw": {
+        "min": 0.07175428606228733,
+        "max": 0.23099972567107294,
+        "mean": 0.15390238403577955
+      },
+      "predictive_away_win": {
+        "min": 0.7210826858199507,
+        "max": 0.8788608720257531,
+        "mean": 0.7798666551525236
+      },
+      "posterior_total_difference": {
+        "min": -1.718789019283768,
+        "max": -0.9763662805214403,
+        "mean": -1.2993703200349218
+      },
+      "ess_after_update": {
+        "min": 779.803368548488,
+        "max": 1357.486841602944,
+        "mean": 1151.0776077916173
+      },
+      "raw_grid_mass": {
+        "min": 0.8974333801107383,
+        "max": 0.9989089710068195,
+        "mean": 0.9630730452301243
+      }
+    }
+  },
+  "summary_all": {
+    "n_evaluations": 9,
+    "predictive_total_difference": {
+      "min": -2.1210721652715665,
+      "max": 0.5992691497857875,
+      "mean": -0.9751783142092384
+    },
+    "predictive_home_win": {
+      "min": 0.04791758850897593,
+      "max": 0.46523201988146295,
+      "mean": 0.17804181807866643
+    },
+    "predictive_draw": {
+      "min": 0.07175428606228733,
+      "max": 0.4301415083649544,
+      "mean": 0.25115087681971393
+    },
+    "predictive_away_win": {
+      "min": 0.20700475369184423,
+      "max": 0.8788608720257531,
+      "mean": 0.5708073051016195
+    },
+    "posterior_total_difference": {
+      "min": -1.718789019283768,
+      "max": 0.6727513421624916,
+      "mean": -0.7154417412021673
+    },
+    "ess_after_update": {
+      "min": 105.19259503928306,
+      "max": 1357.486841602944,
+      "mean": 558.0609783357899
+    },
+    "raw_grid_mass": {
+      "min": 0.8974333801107383,
+      "max": 0.999990191576021,
+      "mean": 0.987389018295162
+    }
+  }
+}

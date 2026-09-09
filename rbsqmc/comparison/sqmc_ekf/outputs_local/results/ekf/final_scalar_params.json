@@ -1,0 +1,16 @@
+{
+  "method": "ekf",
+  "checkpoint_policy": "final_epoch",
+  "checkpoint_epoch": 3,
+  "run_id": null,
+  "source_revision": "846957bacb00a8673871aaf428115455832c9024",
+  "dataset_hash": "4db1d359d1438a23918df4af217da09b72dd92bb638f2a393d49d91616c92ce3",
+  "checkpoint_hash": "3fc18e38c05a541bd1cc3f977b791893c4c8b72e4db43b7bef959d3874589e8d",
+  "match_scale": 1,
+  "parameters": {
+    "alpha": 0.21637708462958716,
+    "beta": -3.900045436979376,
+    "kappa": 0.0009050410470371767,
+    "friendly_scale": 2.086371970973393
+  }
+}

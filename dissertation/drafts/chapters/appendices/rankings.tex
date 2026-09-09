@@ -1,0 +1,78 @@
+\chapter{Rankings}
+\label{app:rankings}
+
+This appendix collects the full pre- and post-tournament team rankings produced by the EKF and RB-SQMC methods described in Section~\ref{sec:performance-comparison}, together with the FIFA Men's World Ranking \citep{fifaworldranking2026} used as an external reference in Section~\ref{sec:performance-comparison}. The model rankings are obtained by ordering the teams by their filtered total strength, the sum of the attacking and defensive components, at the relevant time point.
+
+\section{Pre-tournament rankings}
+
+Table~\ref{tab:rankings-pre} reports the top twenty teams before the World Cup under each method.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{clll}
+\toprule
+Rank & EKF & RB-SQMC \\
+\midrule
+1 & Belgium & Brazil \\
+2 & Brazil & England \\
+3 & Switzerland & Portugal \\
+4 & Colombia & Belgium \\
+5 & Austria & France \\
+6 & Portugal & Japan \\
+7 & France & Sweden \\
+8 & Algeria & Colombia \\
+9 & Ecuador & Germany \\
+10 & Japan & Argentina \\
+11 & Argentina & Czech Republic \\
+12 & Australia & United States \\
+13 & Germany & Croatia \\
+14 & Mexico & Uruguay \\
+15 & Canada & Ivory Coast \\
+16 & Netherlands & Switzerland \\
+17 & Morocco & Senegal \\
+18 & Ivory Coast & Algeria \\
+19 & Spain & Australia \\
+20 & Norway & Paraguay \\
+\bottomrule
+\end{tabular}
+\caption{Pre-tournament top-twenty team rankings under the EKF and RB-SQMC.}
+\label{tab:rankings-pre}
+\end{table}
+
+\section{Post-tournament rankings}
+
+Table~\ref{tab:rankings-post} reports the top twenty teams after the World Cup under each method, together with the FIFA ranking of 20 July 2026.
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{clll}
+\toprule
+Rank & EKF & RB-SQMC & FIFA \\
+\midrule
+1 & Spain & England & Spain \\
+2 & Argentina & France & Argentina \\
+3 & Brazil & Portugal & France \\
+4 & Belgium & Scotland & England \\
+5 & Portugal & Germany & Brazil \\
+6 & Colombia & United States & Morocco \\
+7 & England & Japan & Portugal \\
+8 & Morocco & Belgium & Belgium \\
+9 & Switzerland & Argentina & Netherlands \\
+10 & France & Brazil & Mexico \\
+11 & Mexico & Sweden & Colombia \\
+12 & Netherlands & Colombia & Germany \\
+13 & Norway & Ivory Coast & Croatia \\
+14 & Japan & Algeria & Switzerland \\
+15 & Senegal & Croatia & Italy \\
+16 & Canada & Austria & United States \\
+17 & Australia & Paraguay & Japan \\
+18 & Egypt & Switzerland & Senegal \\
+19 & Germany & Senegal & Norway \\
+20 & Uruguay & Algeria & Uruguay \\
+\bottomrule
+\end{tabular}
+\caption{Post-tournament top-twenty team rankings under the EKF and RB-SQMC, compared with the FIFA Men's World Ranking of 20 July 2026 \citep{fifaworldranking2026}.}
+\label{tab:rankings-post}
+\end{table}
+
+The EKF's post-tournament ranking aligns closely with the FIFA ranking, whereas RB-SQMC's does not. In particular, the EKF places Spain first and Argentina second, matching the FIFA ranking, while RB-SQMC omits Spain from the top ten and ranks Argentina ninth. The EKF also includes France, England, Brazil, Morocco, Portugal and Belgium in the top ten, all of which appear in the FIFA top ten, whereas RB-SQMC includes Scotland and the United States, which do not.

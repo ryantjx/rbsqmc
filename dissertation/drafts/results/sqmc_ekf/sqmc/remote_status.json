@@ -1,0 +1,9 @@
+{
+  "setup": "complete",
+  "run": {
+    "execution": "complete",
+    "started_utc": "2026-09-09T02:36:29.523565+00:00",
+    "finished_utc": "2026-09-09T03:38:24.074849+00:00",
+    "archive_ready": true
+  }
+}

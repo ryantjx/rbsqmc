@@ -1,0 +1,23 @@
+{
+  "setup": "complete",
+  "stages": {
+    "qmc": {
+      "execution": "complete",
+      "started_utc": "2026-09-08T00:49:39.598472+00:00",
+      "finished_utc": "2026-09-08T01:00:41.196031+00:00",
+      "archive_ready": true
+    },
+    "hilbert_sort": {
+      "execution": "complete",
+      "started_utc": "2026-09-08T01:01:09.222493+00:00",
+      "finished_utc": "2026-09-08T01:04:32.895445+00:00",
+      "archive_ready": true
+    },
+    "sqmc": {
+      "execution": "complete",
+      "started_utc": "2026-09-08T01:05:48.147319+00:00",
+      "finished_utc": "2026-09-08T01:11:21.355196+00:00",
+      "archive_ready": true
+    }
+  }
+}

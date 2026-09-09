@@ -1,0 +1,51 @@
+{
+  "kind": "qmc",
+  "source_commit": "e7363f8fa53cd6e761d1abfeefacbac4423662cd",
+  "config_sha256": "c6d93d159e5ecefd9ea4ac1441129ef04ced6e31ab8f944b3a14682fb1326479",
+  "files": {
+    "qmc/config.json": {
+      "sha256": "0b5f797db43b4301ceb3f8093c95f8a2d68080fab5205e792c1e01a4e0691b63",
+      "size": 444
+    },
+    "qmc/cpu_gpu_comparison.json": {
+      "sha256": "03ffa301ef1f87193478937bd8f80fb84e0e0fbfa73ac182169f724f67af5ac7",
+      "size": 12820
+    },
+    "qmc/logs.txt": {
+      "sha256": "93562e0f6752ad2dc9045e7cc60b2a4f27ef0ab21ebc48be80355535914b4d7c",
+      "size": 7977
+    },
+    "qmc/metadata.json": {
+      "sha256": "d3f3a8b26d08fef329376b52053ec007fb693192dcbd36477e12d2904ca36cc2",
+      "size": 2024
+    },
+    "qmc/process_logs.txt": {
+      "sha256": "93562e0f6752ad2dc9045e7cc60b2a4f27ef0ab21ebc48be80355535914b4d7c",
+      "size": 7977
+    },
+    "qmc/results.csv": {
+      "sha256": "eb8d1b85458c538993d57f2624c5e8adb51ab0313c47f5f2751b11065daa9119",
+      "size": 70102
+    },
+    "qmc/results.json": {
+      "sha256": "0e2a73b94ba1c9525f107ff622686fa544f00d4c1b5608a4db78f06bdc614b56",
+      "size": 141215
+    },
+    "qmc/runtime.pdf": {
+      "sha256": "ee3b178479ffa717fa92661a9a6f3c7849a69f4c7c399925bf9d72741bed2c4b",
+      "size": 22508
+    },
+    "qmc/runtime.png": {
+      "sha256": "f16800d1daae9c922cdd5b3ab712bc8ffd82fea113c8a959bf0f1d7fead36554",
+      "size": 359305
+    },
+    "qmc/scipy_comparison.json": {
+      "sha256": "7ea0498cccca34160872f2931b555950f81d521e3b9c7e9c4d1b133cf01c371c",
+      "size": 29120
+    },
+    "qmc/status.json": {
+      "sha256": "06f3ae79c482d25c2649b9fb72b52d16fe279ee73552bf0af48cb8a43d572849",
+      "size": 182
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "mode": "hybrid",
+  "run_id": "09092026_0235",
+  "status": "complete",
+  "config_sha256": "e3ccd78476dc7e871f0c3bf56581453f187ce7d63baae6fa6045d9ca9fb5c265",
+  "started_utc": "2026-09-09T02:35:27.847538+00:00",
+  "smoke": false,
+  "stages": {
+    "ekf": "complete",
+    "sqmc": "complete",
+    "combine": "complete"
+  },
+  "monitor_finished_utc": "2026-09-09T03:38:57.029043+00:00",
+  "finished_utc": "2026-09-09T03:38:57.029067+00:00"
+}
