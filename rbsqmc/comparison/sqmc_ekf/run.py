@@ -159,7 +159,8 @@ def compute_setup(config):
     }
 
 
-def run(cfg, data_path, smoke=False, output_dir=None, methods=("ekf", "sqmc")):
+def run(cfg, data_path, smoke=False, output_dir=None, methods=("ekf", "sqmc"),
+        evaluate_params=None):
     """Execute the comparison for the requested methods and return a results dict.
 
     When ``output_dir`` is given it is used as the exact run directory (no
@@ -169,7 +170,8 @@ def run(cfg, data_path, smoke=False, output_dir=None, methods=("ekf", "sqmc")):
     ``methods`` selects which methods to train/predict/evaluate. A single-method
     run persists that method's artifacts (predictions, metrics, history, images)
     but skips the combined report/plots/CSVs; use :func:`combine` to merge an
-    EKF run and an SQMC run into a complete comparison.
+    EKF run and an SQMC run into a complete comparison. When ``evaluate_params``
+    is supplied, training is skipped and the saved checkpoint is replayed.
     """
     # A stored ``smoke`` key in the config is authoritative so that a launcher
     # writing the effective config to disk reproduces the same subset as the
@@ -198,12 +200,28 @@ def run(cfg, data_path, smoke=False, output_dir=None, methods=("ekf", "sqmc")):
     _save_json(os.path.join(results_dir, "run_config.json"), compute_setup(cfg))
     _save_json(os.path.join(results_dir, "dataset_metadata.json"), dataset.metadata)
 
-    methods_obj = train.Methods(dataset, cfg)
+    if evaluate_params is not None and tuple(methods) != ("sqmc",):
+        raise ValueError("--evaluate-params currently requires --methods sqmc")
+    methods_obj = None if evaluate_params is not None else train.Methods(dataset, cfg)
     root = jax.random.PRNGKey(cfg["seed"])
 
     results = {"cfg": cfg}
     for name in methods:
-        results[name] = _run_method(name, methods_obj, dataset, cfg, root, results_dir, images_dir)
+        saved_checkpoint = None
+        if evaluate_params is not None:
+            saved_checkpoint = _resolve_checkpoint(evaluate_params, name)
+            destination = Path(results_dir) / name / "fitted_params.json"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(saved_checkpoint, destination)
+            _save_json(Path(results_dir) / "evaluation_metadata.json", {
+                "evaluation_only": True,
+                "parameter_source": str(saved_checkpoint),
+                "parameter_checkpoint": _read_json(saved_checkpoint).get("checkpoint_epoch"),
+            })
+        results[name] = _run_method(
+            name, methods_obj, dataset, cfg, root, results_dir, images_dir,
+            saved_checkpoint=saved_checkpoint,
+        )
         # Persist per-method artifacts so a partial run can be combined later.
         _save_json(os.path.join(results_dir, f"{name}_predictions.json"), results[name]["records"])
         _save_json(os.path.join(results_dir, f"{name}_metrics.json"), _metrics_flat(results[name]["metrics"]))
@@ -220,6 +238,25 @@ def run(cfg, data_path, smoke=False, output_dir=None, methods=("ekf", "sqmc")):
         validate_run(run_dir, cfg, methods=methods)
         print(f"Partial comparison ({', '.join(methods)}) complete: {run_dir}", flush=True)
     return results, run_dir
+
+
+def _resolve_checkpoint(path, method):
+    """Resolve a saved method checkpoint for evaluation-only replay."""
+    path = Path(path)
+    candidates = [
+        path if path.is_file() else None,
+        path / "fitted_params.json" if path.is_dir() else None,
+        path / method / "fitted_params.json" if path.is_dir() else None,
+    ]
+    for candidate in candidates:
+        if candidate is not None and candidate.is_file():
+            payload = _read_json(candidate)
+            if payload.get("method") != method:
+                raise ValueError(f"Checkpoint {candidate} is not for method {method!r}")
+            return candidate
+    raise FileNotFoundError(
+        f"Could not find {method} fitted_params.json under {path}"
+    )
 
 
 def _write_combined(results_dir, images_dir, dataset, results, cfg, run_dir):
@@ -414,10 +451,30 @@ def write_logz_history_csv(run_dir, results):
         writer.writerows(rows)
 
 
-def _run_method(method, methods, dataset, cfg, root, results_dir, images_dir):
-    """Train a method, then predict and evaluate it on the held-out split."""
-    raw, history, summary = methods.train(method, os.path.join(results_dir, method))
-    params = methods.params(method, raw)
+def _run_method(method, methods, dataset, cfg, root, results_dir, images_dir,
+                saved_checkpoint=None):
+    """Train or replay a method, then predict and evaluate it."""
+    if saved_checkpoint is None:
+        raw, history, summary = methods.train(method, os.path.join(results_dir, method))
+        params = methods.params(method, raw)
+    else:
+        saved_checkpoint = Path(saved_checkpoint)
+        raw = None
+        params = train.load_fitted_params(saved_checkpoint, method)
+        source_results = saved_checkpoint.parent.parent
+        history_path = source_results / f"{method}_history.json"
+        if not history_path.is_file():
+            # A combined bundle carries the fitted checkpoint under
+            # ``combined/results/<method>/`` but keeps per-method histories in
+            # the original partial run under ``<run>/<method>/results/``.
+            history_path = (
+                source_results.parent.parent / method / "results"
+                / f"{method}_history.json"
+            )
+        history = _read_json(history_path)
+        summary = dict(_read_json(saved_checkpoint.parent / "summary.json"))
+        summary["evaluation_only"] = True
+        summary["parameter_source"] = str(saved_checkpoint)
 
     # Time the prediction + evaluation phase separately from training.
     pred_start = time.perf_counter()
@@ -640,6 +697,8 @@ def main():
                         help="Optional explicit output directory.")
     parser.add_argument("--methods", default="both", choices=["both", "ekf", "sqmc"],
                         help="Which methods to run (default: both).")
+    parser.add_argument("--evaluate-params", default=None, type=str,
+                        help="Replay a saved fitted_params.json without training; currently SQMC only.")
     parser.add_argument("--combine", nargs=2, metavar=("EKF_DIR", "SQMC_DIR"),
                         help="Merge a local EKF run and a GPU SQMC run into a complete comparison.")
     args = parser.parse_args()
@@ -667,7 +726,10 @@ def main():
         return
 
     methods = ("ekf", "sqmc") if args.methods == "both" else (args.methods,)
-    run(cfg, args.data, smoke=args.smoke, output_dir=args.output_dir, methods=methods)
+    if args.evaluate_params and args.methods != "sqmc":
+        parser.error("--evaluate-params requires --methods sqmc")
+    run(cfg, args.data, smoke=args.smoke, output_dir=args.output_dir,
+        methods=methods, evaluate_params=args.evaluate_params)
 
 
 if __name__ == "__main__":

@@ -60,7 +60,7 @@ We represent the latent states of each team as a 2-dimensional vector $x = (x^{\
     x_0 \in \mathbb{R}^{2K}, \qquad x_0 \sim \mathcal{N}_{2K}(\mu_0, \Sigma_0)
 \end{equation}
 
-We make the further assumption that the relationship between attack and defence of all teams is the same, represented by the matrix $B \in \mathbb{R}^{2 \times 2}$. This assumption allows us to simplify the covariance matrix into a Kronecker product of the form $\Sigma_0 = \Gamma_0 \otimes B$, where $\Gamma_0 \in \mathbb{R}^{K \times K}$ is a covariance matrix that represents the relationship between teams. We require the conditions $\Gamma_0 \succ 0$, $B \succ 0$ and $\det(B) = 1$. The condition $\det(B) = 1$ ensures that the scale of the Kronecker product is identifiable since $(c\Gamma_0) \otimes (B/c) = \Gamma_0 \otimes B$ (i.e. we fix the determinant of $B$ so that $\Gamma_0$ is the free parameter in the Kronecker product). This paramterization is a natural choice for football as we can expect that attack and defence strengths of teams across all teams should share a similar relationship. It also reduces the number of free parameters in the initial covariance matrix from $K(2K+1)$ to $K(K+1)/2 + 2$ as seen in Proposition~\ref{prop:kronecker-dim}, allowing us to efficiently compute the models in the filtering, smoothing and parameter estimation steps. 
+We make the further assumption that the relationship between attack and defence of all teams is the same, represented by the matrix $B \in \mathbb{R}^{2 \times 2}$. This assumption allows us to simplify the covariance matrix into a Kronecker product of the form $\Sigma_0 = \Gamma_0 \otimes B$, where $\Gamma_0 \in \mathbb{R}^{K \times K}$ is the prior filter covariance that represents the relationship between teams. We require the conditions $\Gamma_0 \succ 0$, $B \succ 0$ and $\det(B) = 1$. The condition $\det(B) = 1$ ensures that the scale of the Kronecker product is identifiable since $(c\Gamma_0) \otimes (B/c) = \Gamma_0 \otimes B$ (i.e. we fix the determinant of $B$ so that $\Gamma_0$ is the free parameter in the Kronecker product). This paramterization is a natural choice for football as we can expect that attack and defence strengths of teams across all teams should share a similar relationship. It also reduces the number of free parameters in the initial covariance matrix from $K(2K+1)$ to $K(K+1)/2 + 2$ as seen in Proposition~\ref{prop:kronecker-dim}, allowing us to efficiently compute the models in the filtering, smoothing and parameter estimation steps. 
 
 % Proposition~\ref{prop:kronecker-dim} in Appendix~\ref{app:kronecker-proof} shows that this parameterisation reduces the number of free parameters of the initial covariance from $K(2K+1)$ to $K(K+1)/2 + 2$; the reduction is a factor of approximately four, but the parameter count remains of order $\mathcal{O}(K^2)$. This also allows us to efficiently compute the models in the following Section~\ref{sec:rb-smc} and \ref{sec:rb-sqmc}. 
 
@@ -114,7 +114,7 @@ As stated before, our transition model is linear-Gaussian, so the covariance rec
 
 \textbf{2 Bootstrap Proposal Sampling}: For particle $i$, the full predictive distribution is
 \begin{equation}
-x_t \mid I_{t-1}=i,y_{1:t-1} \sim \mathcal{N}\left(\mu_{t\mid t-1}^{(i)}, \Sigma_{t\mid t-1} \right). \end{equation}
+x_t \mid I_{t-1}=i,y_{1:t-1} \sim \mathcal{N}\left(\mu_{t\mid t-1}^{(i)}, \Sigma_{t\mid t-1} \right) \end{equation}
 
 At each observation, only the two playing teams are sampled. We extract the predictive mean and covariance for the playing teams' coordinates $x_t^{\mathcal{O}_t}$, and the following predictive marginal under the bootstrap proposal is defined as,
 
@@ -130,7 +130,7 @@ At each observation, only the two playing teams are sampled. We extract the pred
 
 and normalise,
 \begin{equation}
-    w_t^{(i)} = \frac{\tilde{w}_t^{(i)}}{\sum_{n=1}^N \tilde{w}_t^{(n)}}. \nonumber
+    w_t^{(i)} = \frac{\tilde{w}_t^{(i)}}{\sum_{n=1}^N \tilde{w}_t^{(n)}} \nonumber
 \end{equation}
 
 \textbf{4 Exact Marginalisation of Non-Playing Teams}: Given the predictive joint distribution and conditioning on the playing teams' coordinates $x_t^{\mathcal{O}_t}$, the non-playing coordinates $x_t^{\mathcal{R}_t}$ are Gaussian with a closed-form mean and covariance matrix defined by the Kalman filter equations,
@@ -140,9 +140,9 @@ and normalise,
 \end{equation}
 
 \begin{align}
-    \mu^{\mathcal{R}_t|\mathcal{O}_t,(i)}_{t \mid t-1} &= \mu_{t|t-1}^{\mathcal{R}_t} + K_t \left( x_t^{\mathcal{O}_t,(i)} - \mu_{t|t-1}^{\mathcal{O}_t} \right), \nonumber \\
-    \Sigma^{\mathcal{R}_t|\mathcal{O}_t}_{t \mid t-1} &= \Sigma_{t|t-1}^{\mathcal{R}_t\mathcal{R}_t} - K_t \Sigma_{t|t-1}^{\mathcal{O}_t\mathcal{R}_t}, \nonumber \\
-    K_t &= \Sigma_{t|t-1}^{\mathcal{R}_t\mathcal{O}_t} \left( \Sigma_{t|t-1}^{\mathcal{O}_t\mathcal{O}_t} \right)^{-1}. \nonumber
+    \mu^{\mathcal{R}_t|\mathcal{O}_t,(i)}_{t \mid t-1} &= \mu_{t|t-1}^{\mathcal{R}_t} + K_t \left( x_t^{\mathcal{O}_t,(i)} - \mu_{t|t-1}^{\mathcal{O}_t} \right) \nonumber \\
+    \Sigma^{\mathcal{R}_t|\mathcal{O}_t}_{t \mid t-1} &= \Sigma_{t|t-1}^{\mathcal{R}_t\mathcal{R}_t} - K_t \Sigma_{t|t-1}^{\mathcal{O}_t\mathcal{R}_t} \nonumber \\
+    K_t &= \Sigma_{t|t-1}^{\mathcal{R}_t\mathcal{O}_t} \left( \Sigma_{t|t-1}^{\mathcal{O}_t\mathcal{O}_t} \right)^{-1} \nonumber
 \end{align}
 
 In Section~\ref{sec:smc}, we made the assumption that our initial covariance is a Kronecker product of the form $\Sigma_0 = \Gamma_0 \otimes B$. Since our transition model is linear-Gaussian, the Kronecker structure is preserved recursively by induction, 
@@ -151,7 +151,7 @@ In Section~\ref{sec:smc}, we made the assumption that our initial covariance is 
     \Sigma_{t \mid t-1} &= \phi_t^2 \Sigma_{t-1} + (1 - \phi_t^2) \Sigma_0 \nonumber \\
     &= \phi_t^2 (\Gamma_{t-1} \otimes B) + (1 - \phi_t^2) (\Gamma_0 \otimes B) \nonumber \\
     &= \left( \phi_t^2 \Gamma_{t-1} + (1 - \phi_t^2) \Gamma_0 \right) \otimes B \nonumber \\
-    &= \Gamma_{t|t-1} \otimes B. \nonumber
+    &= \Gamma_{t|t-1} \otimes B \nonumber
 \end{align}
 
 so that the covariance blocks for the playing and non-playing teams factor as:
@@ -185,13 +185,13 @@ and the conditional covariance of the non-playing teams becomes
 To preserve the Kronecker structure after conditioning, we update the full component mean and the full covariance. Define the team-space Kalman gain
 
 \begin{equation}
-    \overline{K}_t = \Gamma_{t|t-1}^{:\mathcal{O}_t} \left( \Gamma_{t|t-1}^{\mathcal{O}_t\mathcal{O}_t} \right)^{-1}, \nonumber
+    \overline{K}_t = \Gamma_{t|t-1}^{:\mathcal{O}_t} \left( \Gamma_{t|t-1}^{\mathcal{O}_t\mathcal{O}_t} \right)^{-1} \nonumber
 \end{equation}
 
 where $\Gamma_{t|t-1}^{:\mathcal{O}_t}$ contains all rows and the two playing-team columns of $\Gamma_{t|t-1}$. The complete component mean is updated as
 
 \begin{equation}
-    \mu_t^{(i)} = \mu_{t|t-1}^{(i)} + (\overline{K}_t \otimes I_2) \left( x_t^{\mathcal{O}_t,(i)} - \mu_{t|t-1}^{\mathcal{O}_t,(i)} \right). \nonumber
+    \mu_t^{(i)} = \mu_{t|t-1}^{(i)} + (\overline{K}_t \otimes I_2) \left( x_t^{\mathcal{O}_t,(i)} - \mu_{t|t-1}^{\mathcal{O}_t,(i)} \right) \nonumber
 \end{equation}
 
 The rows of $\overline{K}_t$ belonging to $\mathcal{O}_t$ form the identity, so the playing-team entries of $\mu_t^{(i)}$ equal the sampled entries $x_t^{\mathcal{O}_t,(i)}$, while the $\mathcal{R}_t$ rows recover the conditional mean of the non-playing teams in closed form. The team-space filtered covariance $\Gamma_t$ is defined by the Schur complement
@@ -268,37 +268,37 @@ The RB-SMC smoothing algorithm is as follows:
 
 \textbf{1 Initialisation} ($t = T$): Sample the terminal particle index $I_T$ using the normalised weights $w_T^{(i)}$, and draw the full terminal state from the corresponding Gaussian mixture,
 \begin{equation}
-    I_T \sim \operatorname{Categorical}(w_T^{1:N}), \qquad X_T^* \sim \mathcal{N}(\mu_T^{(I_T)}, \Sigma_T). \nonumber
+    I_T \sim \operatorname{Categorical}(w_T^{1:N}), \qquad X_T^* \sim \mathcal{N}(\mu_T^{(I_T)}, \Sigma_T) \nonumber
 \end{equation}
 
 \textbf{2 Backward recursion} (for $t = T-1, T-2, \dots, 0$): Given the already-sampled state $X_{t+1}^*$, the backward kernel derived in Section~\ref{sec:rb-smc-smoothing} is a Gaussian mixture, and the recursion proceeds in three sub-steps.
 
 \textbf{2a Compute the backward weights}: For every particle $i$, propagate the filtering mean through the OU dynamics and form the predictive covariance,
 \begin{equation}
-    a_{t+1}^{(i)} = \mu_0 + \phi_{t+1}(\mu_t^{(i)} - \mu_0), \qquad R_{t+1} = \phi_{t+1}^2 \Sigma_t + (1 - \phi_{t+1}^2) \Sigma_0, \nonumber
+    a_{t+1}^{(i)} = \mu_0 + \phi_{t+1}(\mu_t^{(i)} - \mu_0), \qquad R_{t+1} = \phi_{t+1}^2 \Sigma_t + (1 - \phi_{t+1}^2) \Sigma_0 \nonumber
 \end{equation}
 then weight each component by its filtering weight and the predictive density of the conditioning state $X_{t+1}^*$,
 \begin{equation}
-    w_{t \mid t+1}^{(i)} \propto w_t^{(i)} \mathcal{N}\left( X_{t+1}^* \mid a_{t+1}^{(i)}, R_{t+1} \right), \nonumber
+    w_{t \mid t+1}^{(i)} \propto w_t^{(i)} \mathcal{N}\left( X_{t+1}^* \mid a_{t+1}^{(i)}, R_{t+1} \right) \nonumber
 \end{equation}
 normalised so that $\sum_{i=1}^N w_{t \mid t+1}^{(i)} = 1$.
 
 \textbf{2b Select and correct the backward component}: Sample the particle index from the backward weights,
 \begin{equation}
-    I_t \sim \operatorname{Categorical}(w_{t \mid t+1}^{1:N}), \nonumber
+    I_t \sim \operatorname{Categorical}(w_{t \mid t+1}^{1:N}) \nonumber
 \end{equation}
 and condition the chosen component on $X_{t+1}^*$ through the RTS equations with the gain
 \begin{equation}
-    J_t = \Sigma_t \phi_{t+1} R_{t+1}^{-1}, \nonumber
+    J_t = \Sigma_t \phi_{t+1} R_{t+1}^{-1} \nonumber
 \end{equation}
 \begin{align}
-    \mu_{t \mid t+1}^{(I_t)} &= \mu_t^{(I_t)} + J_t \left( X_{t+1}^* - a_{t+1}^{(I_t)} \right), \nonumber \\
-    \Sigma_{t \mid t+1} &= \Sigma_t - J_t R_{t+1} J_t^T. \nonumber
+    \mu_{t \mid t+1}^{(I_t)} &= \mu_t^{(I_t)} + J_t \left( X_{t+1}^* - a_{t+1}^{(I_t)} \right) \nonumber \\
+    \Sigma_{t \mid t+1} &= \Sigma_t - J_t R_{t+1} J_t^T \nonumber
 \end{align}
 
 \textbf{2c Draw the smoothed state}: Sample the full state from the corrected component,
 \begin{equation}
-    X_t^* \sim \mathcal{N}\left( \mu_{t \mid t+1}^{(I_t)}, \Sigma_{t \mid t+1} \right). \nonumber
+    X_t^* \sim \mathcal{N}\left( \mu_{t \mid t+1}^{(I_t)}, \Sigma_{t \mid t+1} \right) \nonumber
 \end{equation}
 
 The recursion terminates at $t = 0$, yielding the smoothed trajectory $\{X_0^*, \dots, X_T^*\}$. Repeating this procedure $M$ times produces $M$ independent smoothed trajectories $\{X_{0:T}^{*(m)}\}_{m=1}^M$. The resulting algorithm is similar to the pure particle smoother of \citet{godsilldoucetwest2004montecarlosmoothing}, but the backward weights combine the forward filtering weights with the predictive density, while the RTS backward estimates determine the Gaussian mixture component from which the full state is drawn \citep{sarkkabunchgodsill2012rbpsmoother}. This backward-simulation construction for a Rao-Blackwellised particle filter on a conditionally linear-Gaussian model follows \citet{lindstenschonbunchgodsill2012rbpsmoother}, and the use of backward simulation in particle methods more generally is discussed by \citet{lindstenschon2011backwardsimulation}. This process is extremely parallelisable due to the independence of each smoothed trajectory.
@@ -341,15 +341,15 @@ Similarly in Section~\ref{sec:rb-smc}, the RB-SQMC is the same as SQMC algorithm
 \textbf{2 Hilbert Sort}: Apply the deterministic OU prediction to each Rao-Blackwellised component. The predictive mean and covariance of the full state are
 \begin{equation}
     \mu_{t\mid t-1}^{(i)} = \mu_0 + \phi_t \left( \mu_{t-1}^{(i)} - \mu_0 \right), \qquad
-    \Sigma_{t\mid t-1} = \phi_t^2 \Sigma_{t-1} + \left(1 - \phi_t^2\right) \Sigma_0, \nonumber
+    \Sigma_{t\mid t-1} = \phi_t^2 \Sigma_{t-1} + \left(1 - \phi_t^2\right) \Sigma_0 \nonumber
 \end{equation}
 so that the playing-team block $\mu_{t\mid t-1}^{\mathcal{O}_t,(i)}$ and $\Sigma_{t\mid t-1}^{\mathcal{O}_t\mathcal{O}_t}$ are the corresponding sub-blocks. Define the four-dimensional sorting key as $z_t^{(i)} = \operatorname{vec}\left( \mu_{t\mid t-1}^{\mathcal{O}_t,(i)} \right) \in \mathbb{R}^4$. Let $\psi_t:\mathbb{R}^4\rightarrow[0,1]^4$ standardise and map these coordinates to the unit hypercube, and let $h:[0,1]^4\rightarrow[0,1]$ denote the inverse Hilbert-curve mapping. Find a permutation $\sigma_t$ such that
 \begin{equation}
-    h\left(\psi_t(z_t^{(\sigma_t(1))})\right) \leq \cdots \leq h\left(\psi_t(z_t^{(\sigma_t(N))})\right). \nonumber
+    h\left(\psi_t(z_t^{(\sigma_t(1))})\right) \leq \cdots \leq h\left(\psi_t(z_t^{(\sigma_t(N))})\right) \nonumber
 \end{equation}
 Use the previous normalised particle weights in the same order,
 \begin{equation}
-    \left( W_{t-1}^{(\sigma_t(1))}, \ldots, W_{t-1}^{(\sigma_t(N))} \right). \nonumber
+    \left( W_{t-1}^{(\sigma_t(1))}, \ldots, W_{t-1}^{(\sigma_t(N))} \right) \nonumber
 \end{equation}
 
 Once an ancestor is selected, its complete Rao-Blackwellised component, including the means of the non-playing teams, is retained and propagated.
@@ -364,27 +364,27 @@ Once an ancestor is selected, its complete Rao-Blackwellised component, includin
 
 \textbf{3 Resampling by inverse transform}: Sort the complete QMC pairs $(u_t^{(i)}, v_t^{(i)})$ by their first coordinate so that $u_t^{(1)} \le \cdots \le u_t^{(N)}$, preserving the pairing between each $u_t^{(i)}$ and $v_t^{(i)}$. Perform ancestor selection using the Hilbert-ordered weights $W_{t-1}$ and the first coordinate $u_t$,
 \begin{equation}
-    a_i = \min \left\{ j : W^{(j)} \ge u_t^{(i)} \right\}, \qquad W^{(j)} = \sum_{k=1}^{j} W_{t-1}^{(\sigma_t(k))}, \qquad b_i = \sigma_t(a_i). \nonumber
+    a_i = \min \left\{ j : W^{(j)} \ge u_t^{(i)} \right\}, \qquad W^{(j)} = \sum_{k=1}^{j} W_{t-1}^{(\sigma_t(k))}, \qquad b_i = \sigma_t(a_i) \nonumber
 \end{equation}
 
 \textbf{4 Propagate}: Propagate each chosen ancestor $b_i$ through the OU dynamics of Section~\ref{sec:model}, using the predictive mean $\mu_{t\mid t-1}^{\mathcal{O}_t,(b_i)}$ and covariance $\Sigma_{t\mid t-1}$ defined in Step 2. The playing-team coordinates are drawn from the predictive marginal by the inverse-CDF transform,
 \begin{equation}
-    x_t^{\mathcal{O}_t,(i)} = \mu_{t\mid t-1}^{\mathcal{O}_t,(b_i)} + L_{t\mid t-1}\, \Phi^{-1}\left( v_t^{(i)} \right), \nonumber
+    x_t^{\mathcal{O}_t,(i)} = \mu_{t\mid t-1}^{\mathcal{O}_t,(b_i)} + L_{t\mid t-1}\, \Phi^{-1}\left( v_t^{(i)} \right) \nonumber
 \end{equation}
 where $L_{t\mid t-1}$ is the Cholesky factor of the playing-team block $\Sigma_{t\mid t-1}^{\mathcal{O}_t\mathcal{O}_t} = \Gamma_{t\mid t-1}^{\mathcal{O}_t\mathcal{O}_t} \otimes B$, and $\Phi^{-1}$ is the coordinate-wise standard normal quantile, so that the uniform RQMC coordinates $v_t^{(i)}$ are transformed to the Gaussian predictive marginal. Proposition~\ref{prop:invcdf} in Appendix~\ref{app:inv-cdf-proof} shows that this transform samples the predictive marginal correctly. Recover the non-playing teams' coordinates in closed form via the OU prediction and the Kalman conditioning of Section~\ref{sec:model}.
 
 \textbf{5 Compute log-weights}: Because the ancestor weights were already used in the inverse-transform resampling, compute the unnormalised log-weights for each particle $(i)$ using only the likelihood function $G_t$,
 \begin{equation}
-    \log \tilde{w}_t^{(i)} = \log G_t\left( y_t \mid x_t^{\mathcal{O}_t,(i)} \right), \nonumber
+    \log \tilde{w}_t^{(i)} = \log G_t\left( y_t \mid x_t^{\mathcal{O}_t,(i)} \right) \nonumber
 \end{equation}
 and normalise,
 \begin{equation}
-    w_t^{(i)} = \frac{\tilde{w}_t^{(i)}}{\sum_{n=1}^N \tilde{w}_t^{(n)}}. \nonumber
+    w_t^{(i)} = \frac{\tilde{w}_t^{(i)}}{\sum_{n=1}^N \tilde{w}_t^{(n)}} \nonumber
 \end{equation}
 
 RB-SQMC Smoothing can be performed with the same algorithm as described in Section~\ref{sec:rb-smc-smoothing}, but with the random draws replaced by QMC points. At each backward step $t$, generate $M$ QMC points $(u_t^{1:M}, v_t^{1:M})$ of dimension $1 + 2K$, sort them by the conditioning state $X_{t+1}^{*(m)}$ to preserve low-discrepancy, and propagate analytically by selecting the Gaussian component via inverse transform of the backward weights and drawing
 \begin{equation}
-    X_t^{*(m)} = \mu_{t \mid t+1}^{(i)} + L_{t \mid t+1}\, \Phi^{-1}\left( v_t^{(m)} \right), \nonumber
+    X_t^{*(m)} = \mu_{t \mid t+1}^{(i)} + L_{t \mid t+1}\, \Phi^{-1}\left( v_t^{(m)} \right) \nonumber
 \end{equation}
 where $L_{t \mid t+1}$ is the Cholesky factor of the backward covariance $\Sigma_{t \mid t+1}$.
 
@@ -413,12 +413,12 @@ where $w_T^{(i)}$ are the (normalised) particle weights at the final time $T$ an
 Furthermore, we can estimate the log-likelihood gradient using the stop-gradient trick described by \citet{scibior2021differentiableparticlefiltering} without modifying our filter. With resampling at every step and carried numerical weights $1/N$, the normalising-constant estimator is
 
 \begin{equation}
-    \widehat Z_0 = 1, \qquad \widehat Z_t = \widehat Z_{t-1} \left[ \frac{1}{N} \sum_{i=1}^N G_t(y_t \mid x_t^{\mathcal{O}_t,(i)}) \right], \nonumber
+    \widehat Z_0 = 1, \qquad \widehat Z_t = \widehat Z_{t-1} \left[ \frac{1}{N} \sum_{i=1}^N G_t(y_t \mid x_t^{\mathcal{O}_t,(i)}) \right] \nonumber
 \end{equation}
 
 so that
 \begin{equation}
-    \log \widehat Z_T = \sum_{t=1}^T \log \left[ \frac{1}{N} \sum_{i=1}^N G_t(y_t \mid x_t^{\mathcal{O}_t,(i)}) \right]. \nonumber
+    \log \widehat Z_T = \sum_{t=1}^T \log \left[ \frac{1}{N} \sum_{i=1}^N G_t(y_t \mid x_t^{\mathcal{O}_t,(i)}) \right] \nonumber
 \end{equation}
 
 We therefore maximise the marginal log-likelihood $\log p(y_{1:T} \mid \Theta)$ by gradient ascent on the static parameters $\Theta$. The gradient is obtained by backpropagating through the normalising-constant estimator $\log \widehat Z_T$, which is differentiable with respect to $\Theta$ because the OU transition and the bivariate-Poisson likelihood are differentiable. The stop-gradient trick of \citet{scibior2021differentiableparticlefiltering} makes the resampling step differentiable by blocking the gradient through the resampled ancestor indices, so that the resampling does not contribute a spurious gradient while the transition and likelihood terms remain differentiable.
@@ -426,9 +426,9 @@ We therefore maximise the marginal log-likelihood $\log p(y_{1:T} \mid \Theta)$ 
 \section{Performance comparison}
 \label{sec:performance-comparison}
 
-We attempt to model the performance of teams during the World Cup 2026. There are $K = 48$ teams competing in the World Cup 2026.
+We compare the RB-SQMC model, a particle approximation of the latent state, against a factorial state-space model, specifically a biased Gaussian extended Kalman filter (EKF) baseline implemented in the \texttt{cuthberto-carlos} package \citep{cuthbertocarlos2026}, for the World Cup 2026
 
-We compare RB-SQMC against a factorial state-space model, specifically a moment-based extended Kalman filter (EKF) baseline implemented in the \texttt{cuthberto-carlos} package \citep{cuthbertocarlos2026}, which builds on the \texttt{cuthbert} library for factorial filtering. We are comparing two different methods for approximating the same underlying model, RB-SQMC which uses a particle approximation of the latent state and EKF which uses a biased Gaussian approximation. 
+% We attempt to model the performance of $K=48$ teams during the World Cup 2026. We compare RB-SQMC against a factorial state-space model, specifically a moment-based extended Kalman filter (EKF) baseline implemented in the \texttt{cuthberto-carlos} package \citep{cuthbertocarlos2026}, which builds on the \texttt{cuthbert} library for factorial filtering. We are comparing two different methods for approximating the same underlying model, RB-SQMC which uses a particle approximation of the latent state and EKF which uses a biased Gaussian approximation. 
 
 % The comparison is meant to evaluate the performance of the two methods in terms of their ability to estimate the model parameters and make predictions.
 
@@ -436,32 +436,30 @@ We compare RB-SQMC against a factorial state-space model, specifically a moment-
 
 \subsection{Experimental design}
 
-Both methods consume a single chronologically ordered data set of football results, so that the comparison is not confounded by differences in data preparation. The data are split chronologically into a training period $[1980\text{-}01\text{-}01, 2024\text{-}01\text{-}01)$, a test period $[2024\text{-}01\text{-}01, 2026\text{-}06\text{-}11)$, and a prediction period from 11 June 2026. The prediction period contains the four World Cup 2026 fixtures used for the headline scoring. Matches with scores exceeding the truncation threshold $\max\_goals = 8$ are excluded before the split, and same-day repeats are retained as separate rows with zero elapsed time.
-
-The static parameters $\Theta = (\Gamma_0, B, \kappa, \alpha, \beta)$ are estimated by maximising the marginal log-likelihood as mentioned in Section~\ref{sec:parameter-estimation}. Both methods use Adam with a cosine-decay learning-rate schedule, learning rate $0.02$, seed $0$ and exactly $50$ updates. Because the SQMC log-likelihood is a particle estimate, its gradient is averaged over $10$ independently randomised RQMC replicas at each update, whereas the EKF gradient is deterministic. The EKF integrates the bivariate-Poisson likelihood under the predictive Gaussian by Gauss--Hermite quadrature of degree $32$ \citep{ghq}; RB-SQMC evaluates the same likelihood on the sampled playing-team coordinates. The full parameter set and the exact configuration are listed in Appendix~\ref{app:config}.
+There are $K=48$ teams that played in the 2026 World Cup. The data is split chronologically into a training period $[1980\text{-}01\text{-}01, 2024\text{-}01\text{-}01)$, a test period $[2024\text{-}01\text{-}01, 2026\text{-}06\text{-}11)$, and a prediction period from 11 June 2026. The prediction period contains the 104 World Cup 2026 fixtures used for the headline scoring. Matches with scores exceeding the truncation threshold of \texttt{max\_goals = 8} are excluded before the split.
 
 \subsection{Training: marginal log-likelihood}
 
-Table~\ref{tab:logz} reports the training and test log-likelihoods. 
+The static parameters $\Theta = (\Gamma_0, B, \kappa, \alpha, \beta)$ are estimated by maximising the marginal log-likelihood as mentioned in Section~\ref{sec:parameter-estimation}. The SQMC log-likelihood is a particle estimate, its gradient is averaged over independently randomised RQMC replicas at each update, whereas the EKF gradient is deterministic. RB-SQMC evaluates the same likelihood on the sampled playing-team coordinates; the EKF integrates the bivariate-Poisson likelihood under the predictive Gaussian by Gauss--Hermite quadrature of degree $32$ \citep{ghq}. The full parameter set and the exact configuration are listed in Appendix~\ref{app:config}. Table~\ref{tab:logz} reports the training and test log-likelihoods.
 
-% The two columns are not directly comparable as exact marginal likelihoods: the EKF value is a Gaussian-approximate normalising constant from moment filtering, while the SQMC value is a particle estimate with finite-sample error. The two methods also adopt different time-step conventions, the EKF propagating only the two playing teams by each team's last-appearance gap and RB-SQMC propagating the full covariance per row. The raw gap must therefore not be read as a superiority verdict.
+% Both methods use Adam with a cosine-decay learning-rate schedule, learning rate $0.02$, seed $0$ and exactly $50$ updates.
 
-\begin{table}[htbp]
+\begin{table}[H]
 \centering
 \begin{tabular}{lcc}
 \toprule
  & EKF & RB-SQMC \\
 \midrule
-Final train log-likelihood & $-1.568\times10^{4}$ & $-1.499\times10^{4}$ \\
-Final test log-likelihood & $-1.040\times10^{3}$ & $-1.005\times10^{3}$ \\
-Best test log-likelihood (epoch) & $-1.040\times10^{3}$ (50) & $-9.709\times10^{2}$ (26) \\
+Final train log-likelihood & $-15675.04$ & $-14649.74$ \\
+Final test log-likelihood & $-1040.01$ & $-1005.42$ \\
+Best test log-likelihood (epoch) & $-1040.01$ (50) & $-959.96$ (49) \\
 \bottomrule
 \end{tabular}
-\caption{Training and test log-likelihoods for the EKF and RB-SQMC. The EKF value is a Gaussian-approximate normalising constant; the SQMC value is a particle estimate. The two are not directly comparable as exact marginal likelihoods.}
+\caption{Training and test log-likelihoods for the EKF and RB-SQMC. Higher (less negative) values indicate a better fit.}
 \label{tab:logz}
 \end{table}
 
-Figure~\ref{fig:logz-overlay} overlays the training and test log-likelihood trajectories across epochs for both methods.
+RB-SQMC attained a higher final train log-likelihood than the EKF ($-14649.74$ versus $-15675.04$) and a higher best test log-likelihood ($-959.96$ at epoch 49 versus $-1040.01$ at epoch 50). A key point to note is that the EKF value is a Gaussian-approximate normalising constant from moment filtering, whereas the SQMC value is a particle estimate with finite-sample error, so the raw gap is not an exact measure of model fit. So the raw results here does not necessarily indicate superiority. Figure~\ref{fig:logz-overlay} shows the training and test log-likelihood trajectories across epochs for both methods. 
 
 \begin{figure}[htbp]
 \centering
@@ -470,81 +468,53 @@ Figure~\ref{fig:logz-overlay} overlays the training and test log-likelihood traj
 \label{fig:logz-overlay}
 \end{figure}
 
-Within the range examined, RB-SQMC attained a higher final train log-likelihood than the EKF ($-1.499\times10^{4}$ versus $-1.568\times10^{4}$) and a higher best test log-likelihood ($-9.709\times10^{2}$ at epoch 26 versus $-1.040\times10^{3}$ at epoch 50). This is consistent with the particle method evaluating the non-Gaussian likelihood without the Gaussian approximation. The comparison is nevertheless confounded in two ways. First, the EKF value is a Gaussian-approximate normalising constant from moment filtering, whereas the SQMC value is a particle estimate with finite-sample error, so the raw gap is not a direct measure of model fit. Second, the two methods adopt different time-step conventions, the EKF propagating only the two playing teams by each team's last-appearance gap and RB-SQMC propagating the full covariance per row. The raw gap must therefore not be read as a superiority verdict.
+The SQMC test log-likelihood is also markedly less stable across epochs than the EKF's. The EKF trajectory is smooth and monotone, improving steadily from $-1101.76$ to $-1040.01$ over the 50 updates. The SQMC trajectory ranges between approximately $-1044.84$ and $-959.96$. This instability comes from SQMC's Monte Carlo error; the best test value is a favourable draw instead of a robust optimum.
 
-The SQMC test log-likelihood is also markedly less stable across epochs than the EKF's. The EKF trajectory is smooth and monotone, improving steadily from $-1.102\times10^{3}$ to $-1.040\times10^{3}$ over the 50 updates. The SQMC trajectory oscillates between approximately $-9.7\times10^{2}$ and $-1.06\times10^{3}$, with the best value reached at epoch 26 rather than at the final checkpoint. This instability reflects the particle estimate's Monte Carlo error, which the ten-replica gradient average reduces but does not eliminate; the best test value is therefore a favourable draw in a noisy trajectory rather than a robust optimum.
+% The two columns are not directly comparable as exact marginal likelihoods: the EKF value is a Gaussian-approximate normalising constant from moment filtering, while the SQMC value is a particle estimate with finite-sample error. The two methods also adopt different time-step conventions, the EKF propagating only the two playing teams by each team's last-appearance gap and RB-SQMC propagating the full covariance per row. The raw gap must therefore not be read as a superiority verdict.
 
 \subsection{Prediction}
 
-For each prediction-split match, both methods produce a one-step-ahead score grid before assimilating the known result, so that the current score cannot enter its own forecast. We score the resulting distributions with the mean Brier score over the three outcomes (home win, draw, away win), the mean predictive log-score, and outcome accuracy, all restricted to the four World Cup 2026 fixtures. The Brier score is defined as,
+Both methods produce a one-step-ahead score grid for the 104 matches. We score the resulting distributions with the mean Brier score over the three outcomes (home win, draw, away win), the mean predictive log-score, and outcome accuracy of the 104 World Cup 2026 fixtures. The Brier score is defined as,
 
 \begin{equation}
-    \text{Brier score} = \frac{1}{N} \sum_{i=1}^N \sum_{j=1}^{N} (p_{ij} - o_{ij})^2, \nonumber
+    \text{Brier score} = \frac{1}{N} \sum_{i=1}^N \sum_{c\in\{H,D,A\}} (p_{ic} - o_{ic})^2 \nonumber
 \end{equation}
 
-where $p_{ij}$ is the predicted probability of outcome $j$ for match $i$, and $o_{ij}$ is the observed outcome indicator. The predictive log-score is defined as,
+where $p_{ic}$ is the predicted probability of outcome $c$ for match $i$, and $o_{ic}$ is the observed outcome indicator. The inner sum is over the three outcomes (home win, draw, away win), so the uniform reference is $2/3$ under this convention. The predictive log-score is defined as,
 
 \begin{equation}
-    \text{Predictive log-score} = \frac{1}{N} \sum_{i=1}^N \log p_{i,o_i}, \nonumber
+    \text{Predictive log-score} = \frac{1}{N} \sum_{i=1}^N \log p_{i,o_i} \nonumber
 \end{equation}
 
-which is the average log-probability assigned to the observed outcome $o_i$ for match $i$. Outcome accuracy is defined as the proportion of matches for which the predicted outcome with the highest probability matches the observed outcome.
-
-Table~\ref{tab:prediction} reports the results, and the full win--loss predictions for the fixtures and the knockout stage are collected in Appendix~\ref{app:prediction}.
-
-\begin{table}[htbp]
+which is the average log-probability assigned to the observed outcome $o_i$ for match $i$. Outcome accuracy is defined as the proportion of matches for which the predicted outcome with the highest probability matches the observed outcome. Table~\ref{tab:prediction} reports the results, and the full win--loss predictions for the fixtures and the knockout stage are collected in Appendix~\ref{app:prediction}.
+\begin{table}[H]
 \centering
 \begin{tabular}{lcc}
 \toprule
  & EKF & RB-SQMC \\
 \midrule
-Mean Brier score & $0.5442$ & $0.6521$ \\
+Mean Brier score & $0.5442$ & $0.6878$ \\
 Uniform reference Brier score & $2/3$ & $2/3$ \\
-Brier skill score vs.\ uniform & $0.1838$ & $0.0218$ \\
-Mean predictive log-score & $-3.131$ & $-3.523$ \\
-Outcome accuracy & $0.5288$ & $0.5096$ \\
-Exact-score accuracy & $0.0769$ & $0.0673$ \\
-Scored matches & $104$ & $104$ \\
+Brier skill score vs.\ uniform & $0.1838$ & $-0.0316$ \\
+Mean predictive log-score & $-3.131$ & $-3.664$ \\
+Outcome accuracy & $0.5288$ & $0.4712$ \\
+Exact-score accuracy & $0.0769$ & $0.0481$ \\
 \bottomrule
 \end{tabular}
-\caption{One-step-ahead prediction metrics on the World Cup 2026 fixtures. The Brier skill score is relative to the uniform reference $2/3$.}
+\caption{One-step-ahead prediction metrics on the World Cup 2026 fixtures. The Brier skill score is relative to the uniform reference $2/3$ and lower Brier scores indicate better prediction on Home Win/Draw/Away Win.}
 \label{tab:prediction}
 \end{table}
 
-Table~\ref{tab:pre-tournament} reports the pre-tournament top-ten team rankings under each method, ordered by total strength (the sum of the attacking and defensive components) before the World Cup.
+We review the finals of 2026 World Cup, Spain vs.\ Argentina, played on 19 July 2026. The images in Figure~\ref{fig:prediction-final} show the pre-match predicted score grids for both methods, with the actual result (a $1$--$0$ win for Spain) marked by a red outline. The EKF assigns the highest probability to a home win ($0.479$) and a draw ($0.207$), with the modal score at $1$--$1$. RB-SQMC instead assigns the highest probability to an Argentina win ($0.470$), then a draw ($0.384$) and a Spain win ($0.146$), with the modal score at $0$--$0$. Neither method's modal score matches the actual $1$--$0$ result. The EKF model had a better Brier score of $0.413$ compared to RB-SQMC's $1.097$, which favoured an Argentina win heavily. The predicted results for the Knockout stages can be found in Appendix~\ref{app:prediction} and the Github repository for all 104 matches.
 
-\begin{table}[htbp]
+\begin{figure}[H]
 \centering
-\begin{tabular}{clll}
-\toprule
-Rank & EKF & RB-SQMC \\
-\midrule
-1 & Belgium & Brazil \\
-2 & Brazil & England \\
-3 & Switzerland & Portugal \\
-4 & Colombia & Belgium \\
-5 & Austria & France \\
-6 & Portugal & Japan \\
-7 & France & Sweden \\
-8 & Algeria & Colombia \\
-9 & Ecuador & Germany \\
-10 & Japan & Argentina \\
-\bottomrule
-\end{tabular}
-\caption{Pre-tournament top-ten team rankings under the EKF and RB-SQMC, ordered by total strength before the World Cup.}
-\label{tab:pre-tournament}
-\end{table}
-
-We review the final match of the tournament, Spain vs.\ Argentina, played on 19 July 2026. The images below show the predicted score grids for both methods, with the actual result (a $1$--$0$ win for Spain) marked by a red cross. The EKF assigns the highest probability to a draw ($0.207$) and a home win ($0.479$), whereas RB-SQMC assigns the highest probability to a home win ($0.537$); both methods place the modal score at $1$--$1$ or $2$--$1$, neither of which matches the actual $1$--$0$ result.
-
-\begin{figure}[htbp]
-\centering
-\begin{subfigure}{0.9\textwidth}
+\begin{subfigure}{\textwidth}
 \includegraphics[width=\textwidth]{results/sqmc_ekf/combined/images/ekf_predictions/prediction_plots/2026-07-19_Spain_vs_Argentina.png}
 \caption{EKF predicted score grid.}
 \label{fig:prediction-final-ekf}
 \end{subfigure}
-\begin{subfigure}{0.9\textwidth}
+\begin{subfigure}{\textwidth}
 \includegraphics[width=\textwidth]{results/sqmc_ekf/combined/images/sqmc_predictions/prediction_plots/2026-07-19_Spain_vs_Argentina.png}
 \caption{RB-SQMC predicted score grid.}
 \label{fig:prediction-final-sqmc}
@@ -570,79 +540,81 @@ We review the final match of the tournament, Spain vs.\ Argentina, played on 19 
 % \label{tab:prediction-knockout}
 % \end{table}
 
-On the 104 prediction-split matches, the EKF produced the lower mean Brier score ($0.5442$ versus $0.6521$) and the higher Brier skill score relative to the uniform reference ($0.1838$ versus $0.0218$). The EKF also attained the higher mean predictive log-score ($-3.131$ versus $-3.523$) and the higher outcome accuracy ($0.5288$ versus $0.5096$). RB-SQMC is therefore barely better than the uniform reference on the Brier skill score, whereas the EKF is substantially better. This is a negative result for RB-SQMC within the range examined, and it is reported directly. It should not be over-interpreted: 104 matches cannot fully separate the methods, the SQMC forecast is a single particle realisation with no averaging over scrambles, and the EKF's advantage may reflect the particular fixtures rather than a systematic property. The appropriate reading is that the prediction protocol runs end to end and produces well-formed, properly normalised score grids for both methods; a definitive performance comparison would require more held-out matches and averaging over scrambles.
+% The EKF produced the lower mean Brier score ($0.5442$ versus $0.6878$) and the higher Brier skill score relative to the uniform reference ($0.1838$ versus $-0.0316$) for the 104 World Cup 2026 fixtures. 
+
+% The EKF produced the lower mean Brier score ($0.5442$ versus $0.6878$) and the higher Brier skill score relative to the uniform reference ($0.1838$ versus $-0.0316$). The EKF also attained the higher mean predictive log-score ($-3.131$ versus $-3.664$) and the higher outcome accuracy ($0.5288$ versus $0.4712$). RB-SQMC is therefore worse than the uniform reference on the Brier skill score, whereas the EKF is substantially better. Despite having a much better log-likelihood score, RB-SQMC produces worse predictive performance than EKF empirically.
+
+% On the 104 prediction-split matches, the EKF produced the lower mean Brier score ($0.5442$ versus $0.6878$) and the higher Brier skill score relative to the uniform reference ($0.1838$ versus $-0.0316$). The EKF also attained the higher mean predictive log-score ($-3.131$ versus $-3.664$) and the higher outcome accuracy ($0.5288$ versus $0.4712$). RB-SQMC is therefore worse than the uniform reference on the Brier skill score, whereas the EKF is substantially better. 
+
+% This is a negative result for RB-SQMC within the range examined, and it is reported directly. It should not be over-interpreted: 104 matches cannot fully separate the methods, the SQMC forecast is a single particle realisation with no averaging over scrambles, and the EKF's advantage may reflect the particular fixtures rather than a systematic property. The appropriate reading is that the prediction protocol runs end to end and produces well-formed, properly normalised score grids for both methods; a definitive performance comparison would require more held-out matches and averaging over scrambles.
+
+% The EKF produced the lower mean Brier score ($0.5442$ versus $0.6878$) and the higher Brier skill score relative to the uniform reference ($0.1838$ versus $-0.0316$). The EKF also attained the higher mean predictive log-score ($-3.131$ versus $-3.664$) and the higher outcome accuracy ($0.5288$ versus $0.4712$). RB-SQMC is therefore worse than the uniform reference on the Brier skill score, whereas the EKF is substantially better. Despite having a much better log-likelihood score, RB-SQMC produces worse predictive performance than EKF empirically. This is a common occurence in the next section where we discuss the qualitatitve evaluation of the model.
 
 \subsection{Evaluation}
 
-Figure~\ref{fig:timeseries} shows the filtered attacking and defensive strength trajectories for a representative team under each method. The EKF produces a single deterministic trajectory, whereas RB-SQMC reports the weighted particle mean with the particle spread as an uncertainty band.
+The EKF produces a single deterministic trajectory, thus the filtering states are linear, whereas RB-SQMC reports the weighted particle mean of the posterior, which appear to be more stochastic, representing the random evolution of teams. Figure~\ref{fig:timeseries} shows the filtered attacking and defensive strength trajectories for the final top-five teams under each method. 
 
 \begin{figure}[htbp]
 \centering
-\begin{subfigure}{0.9\textwidth}
+\begin{subfigure}{\textwidth}
 \includegraphics[width=\textwidth]{results/sqmc_ekf/combined/images/ekf_timeseries_states.png}
 \caption{EKF filtered states.}
 \label{fig:timeseries-ekf}
 \end{subfigure}
-\begin{subfigure}{0.9\textwidth}
+\begin{subfigure}{\textwidth}
 \includegraphics[width=\textwidth]{results/sqmc_ekf/combined/images/sqmc_timeseries_states.png}
 \caption{RB-SQMC filtered states.}
 \label{fig:timeseries-sqmc}
 \end{subfigure}
-\caption{Filtered attacking and defensive strengths over time for a representative team under the EKF and RB-SQMC.}
+\caption{Filtered attacking and defensive strengths over time for the final top-five teams under the EKF and RB-SQMC.}
 \label{fig:timeseries}
 \end{figure}
 
-Figure~\ref{fig:topn-correlation} reports the correlation between the RB-SQMC top-$N$ rankings before and after the World Cup, which summarises how much the tournament results reorder the strongest teams.
+The difference between EKF and RB-SQMC is that RB-SQMC retains the cross-team covariance, whereas the EKF discards it after every match. Figure~\ref{fig:topn-correlation} reports the strongest positive and negative between-team correlations carried by the prior filter covariance $\Gamma_0$. The strongest positive pairs are dominated by teams in the same confederation, such as England--France and Argentina--Colombia, which is consistent with the assumption that regional teams evolve together.
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.9\textwidth]{results/sqmc_ekf/combined/images/sqmc_correlation_topn_bar.png}
-\caption{Correlation between the RB-SQMC top-$N$ team rankings before and after the World Cup, as a function of $N$.}
+\includegraphics[width=\textwidth]{results/sqmc_ekf/combined/images/sqmc_correlation_topn_bar.png}
+\caption{Strongest positive and negative between-team correlations carried by the prior filter covariance $\Gamma_0$ under RB-SQMC.}
 \label{fig:topn-correlation}
 \end{figure}
 
 \subsection{Comparison with the FIFA ranking}
 
-The quantitative metrics above favour the EKF on prediction but RB-SQMC on the log-likelihood. To assess which method produces the more plausible ranking of team strengths, we compare the post-tournament rankings of both methods with the FIFA Men's World Ranking \citep{fifaworldranking2026}. Since August 2018 the FIFA ranking has been computed by an Elo-style rating system, in which each team's points are updated after every match according to the expected-result formula
-\begin{equation}
-P_{\text{after}} = P_{\text{before}} + I\,(W - W_e), \qquad W_e = \frac{1}{10^{-\Delta/c} + 1},
-\end{equation}
-where $I$ is a match-importance coefficient, $W$ is the match result, $\Delta$ is the pre-match rating difference and $c = 600$ is a scale constant. The FIFA ranking therefore provides an independent, continuously updated measure of relative team strength against which the two model rankings can be judged.
+The quantitative metrics above favour the EKF on prediction but RB-SQMC on the log-likelihood. To assess which method produces the more plausible ranking of team strengths, we compare the post-tournament rankings of both methods with the FIFA Men's World Ranking \citep{fifaworldranking2026}, which uses the Elo-stye rating system of \citet{elo1978rating} to rank national teams, used commonly in chess and go. Table~\ref{tab:fifa-comparison} reports the top ten teams under each method after the World Cup, together with the FIFA ranking published on 20 July 2026.
 
-Table~\ref{tab:fifa-comparison} reports the top ten teams under each method after the World Cup, together with the FIFA ranking published on 20 July 2026.
-
-\begin{table}[htbp]
+\begin{table}[H]
 \centering
 \begin{tabular}{clll}
 \toprule
 Rank & EKF & RB-SQMC & FIFA \\
 \midrule
-1 & Spain & England & Spain \\
-2 & Argentina & France & Argentina \\
-3 & Brazil & Portugal & France \\
-4 & Belgium & Scotland & England \\
-5 & Portugal & Germany & Brazil \\
-6 & Colombia & United States & Morocco \\
-7 & England & Japan & Portugal \\
-8 & Morocco & Belgium & Belgium \\
-9 & Switzerland & Argentina & Netherlands \\
-10 & France & Brazil & Mexico \\
+1 & Spain & Germany & Spain \\
+2 & Argentina & Brazil & Argentina \\
+3 & Brazil & Sweden & France \\
+4 & Belgium & Norway & England \\
+5 & Portugal & England & Brazil \\
+6 & Colombia & Argentina & Morocco \\
+7 & England & Australia & Portugal \\
+8 & Morocco & Ivory Coast & Belgium \\
+9 & Switzerland & Canada & Netherlands \\
+10 & France & Netherlands & Mexico \\
 \bottomrule
 \end{tabular}
 \caption{Post-tournament top-ten team rankings under the EKF and RB-SQMC, compared with the FIFA Men's World Ranking of 20 July 2026 \citep{fifaworldranking2026}.}
 \label{tab:fifa-comparison}
 \end{table}
 
-The EKF's post-tournament ranking aligns closely with the FIFA ranking: both place Spain first and Argentina second, and both include France, England, Brazil, Morocco, Portugal and Belgium in the top ten. The EKF's principal discrepancies are the omission of the Netherlands and Mexico and the inclusion of Colombia and Switzerland. RB-SQMC's ranking is less plausible: it omits Spain from the top ten entirely, places Scotland fourth and the United States sixth, and ranks Argentina ninth despite the FIFA ranking placing it second. The EKF therefore produces the more justifiable qualitative ranking, consistent with its better prediction metrics, even though RB-SQMC attains the higher log-likelihood. The full pre- and post-tournament rankings for both methods are collected in Appendix~\ref{app:rankings}.
+The EKF's post-tournament ranking aligns closely with the FIFA ranking: both place Spain first and Argentina second, and both include France, England, Brazil, Morocco, Portugal and Belgium in the top ten. RB-SQMC's ranking is less plausible: it omits Spain, France, Portugal and Belgium from the top ten entirely despite these teams advancing to the top 8 of the 2026 World Cup. It also places Argentina sixth despite Argentina reaching the final and Germany first, despite Germany being eliminated in the round of 32. The EKF therefore produces the more justifiable qualitative ranking, along with its better prediction metrics, even though RB-SQMC attains the higher log-likelihood. The full pre- and post-tournament rankings for both methods are collected in Appendix~\ref{app:rankings}.
 
 \subsection{Discussion and Limitations}
 
-The comparison is designed so that any difference between the methods is attributable to the correlated Rao-Blackwellised construction rather than to data preparation, because both methods consume the same frozen chronological data set and the same optimiser. Within the range examined, RB-SQMC attained a higher test log-likelihood, but the EKF produced the better prediction scores on the World Cup fixtures and the more plausible ranking of team strengths. These observations are not contradictory: the log-likelihood comparison is confounded by the approximation status of the EKF normalising constant and by the different time-step conventions, while the prediction comparison is based on a limited number of held-out matches.
+Within the range examined, RB-SQMC attained a higher test log-likelihood than the EKF, yet it produced worse predictive performance on the 104 World Cup 2026 fixtures. 
 
-The computational cost of RB-SQMC is a material limitation. The EKF is a closed-form moment filter: it compiled in $0.97$\,s and executed in $12.5$\,s, with prediction in $0.96$\,s. RB-SQMC compiled in $16.0$\,s and executed in $3.66\times10^{3}$\,s (approximately one hour) on an A100 GPU, with prediction in $17.5$\,s, dominated by the repeated particle-filter evaluations and the Hilbert sorting. The comparison therefore separates a statistical question from a computational one: RB-SQMC is a particle method whose cost scales with the particle count and the number of optimisation epochs, while the EKF is a fast approximation. For a sequential forecasting problem in which match results arrive at low frequency, the RB-SQMC filtering cost is acceptable, but the parameter-estimation cost is the material bottleneck. A more efficient estimator of the static parameters, for example a variational or stochastic-gradient procedure, would reduce this start-up cost.
+% This is not contradictory: the log-likelihood comparison is confounded by the approximation status of the EKF normalising constant and by the different time-step conventions, while the prediction comparison is based on a limited number of held-out matches. The observed differences should therefore be read as the joint effect of the Gaussian moment approximation versus the particle approximation, the deterministic versus stochastic likelihood-gradient estimates, and the particle and RQMC replica counts, rather than as isolating the correlated Rao-Blackwellised construction alone.
 
-The SQMC test log-likelihood's instability across epochs, reported in Section~\ref{sec:performance-comparison}, indicates that the particle estimate is not fully converged at $128$ particles and $10$ gradient replicas. Increasing the particle count or the number of replicas would reduce the Monte Carlo error, at a further computational cost. The prediction metrics are also restricted to a single particle realisation with no averaging over scrambles; averaging over several RQMC scrambles would give a more reliable estimate of RB-SQMC's predictive performance.
+\textbf{Computational cost is the principal limitation} The factorial SSM is extremely efficient: it runs on a CPU in seconds and can be run on a laptop. In contrast, a single optimisation run of RB-SQMC with $512$ particles took approximately $1.6$ hours on an A100 GPU, dominated by the repeated particle-filter evaluations and the Hilbert sorting. This cost prevented running multiple seeds or multiple RQMC scrambles, so the reported SQMC results are a single finite-particle realisation. A fixed-checkpoint sensitivity analysis over particle counts and random seeds would be needed to establish numerical stability, and averaging over several RQMC scrambles would give a more reliable estimate of RB-SQMC's predictive performance.
 
-The model assigns low probability to extreme scorelines. In the knockout stage, the France--England match ended $4$--$6$, a result to which both methods assigned very low probability (EKF log-likelihood $-8.43$, RB-SQMC $-11.29$). The bivariate-Poisson likelihood with a shared component does not capture the tail behaviour of very high-scoring matches, and the truncation at $\max\_goals = 8$ excludes the most extreme outcomes from the training data. A more flexible observation model, or a heavier-tailed score distribution, would be required to estimate these probabilities reliably.
+\textbf{An approximate model is suitable for this problem} Particle methods are more flexible for non-Gaussian likelihoods than the Gaussian moment approximation of the EKF, and the Rao-Blackwellised construction retains the cross-team covariance that the factorial EKF discards. Empirically,, this additional flexibility did not translate into better prediction on the World Cup fixtures. We also observed that filter states of the EKF was similar to the Fifa 2026 rankings. One explanation is that the independent-evolution and Gaussian assumptions of the factorial model are adequate for this data set. The RB-SQMC construction may be better suited to settings in which the latent states are more strongly non-Gaussian, for example in finance or biology, but this is a hypothesis to be tested rather than a conclusion of the present study.
 
-Although the model is developed for the World Cup 2026, the same construction applies to league matches: the summer break between seasons also involves other games, so the sparse pairwise likelihood and the Rao-Blackwellised sampling of the playing teams carry over directly. A more exact comparison of the two methods would compare the predicted probabilities with those implied by prediction markets (for example Polymarket, Kalshi or sports bookmakers), which aggregate the beliefs of many market participants and provide an external benchmark for calibration.
+The principal limitation of parameter estimation is the computational cost in particle methods. The simplest solution is to run the parameter estimation on better hardware for a longer duration. We consider a few approaches that could help address the computational limitation without sacrificing estimation performance or simply getting better hardware: alternative algorithms such as \textit{particle stitching} \citep{duffieldsingh2022onlinesmoothing}, which uses a fixed-lag approximation to obtain the full smoothing distribution without storing all $T$ particle clouds at the cost of a controllable bias, and expectation--maximisation with closed-form smoothing \citep{duffieldpowerrimella2024factorialssm}, which converges in far fewer iterations than gradient ascent; and reducing the memory used in computations, for example the marginal particle filter \citep{klaasdefreitasdoucet2005marginalpf}, which keeps only the current marginals, or the PaRIS algorithm \citep{olssonwesterborn2017paris}, which computes online smoothing for additive functionals in a single forward pass.

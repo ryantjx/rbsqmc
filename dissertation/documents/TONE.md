@@ -229,7 +229,11 @@ Notation should be well chosen, stable and economical.
 - State the domain of important mappings and distributions.
 - Number equations that are referred to later.
 - Refer to numbered equations as "equation (3.2)", not "the equation above".
-- Punctuate displayed equations as part of the surrounding sentence.
+- Do not place a comma or full stop inside a displayed equation. Trailing
+  punctuation at the end of an equation line is omitted; the surrounding
+  sentence carries the punctuation. Internal mathematical separators, such as
+  the comma in \(\mathcal{N}(\mu, \Sigma)\) or in a set \(\{a, b\}\), are
+  retained.
 - Introduce an equation with its purpose; do not leave it to speak for itself.
 - Follow a derivation with a statistical interpretation.
 - Index observations from \(1\): write \(y_{1:t}=(y_1,\ldots,y_t)\), so that

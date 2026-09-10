@@ -1,0 +1,126 @@
+Provisioned; waiting for the verified source bundle.
+Running: ['git', 'init', '/content/rbsqmc']
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint: 
+hint: 	git config --global init.defaultBranch <name>
+hint: 
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint: 
+hint: 	git branch -m <name>
+Initialized empty Git repository in /content/rbsqmc/.git/
+Running: ['git', 'remote', 'add', 'origin', 'https://github.com/ryantjx/rbsqmc.git']
+Running: ['git', 'bundle', 'verify', '/content/sqmc-ekf-09092026_0235/source.bundle']
+/content/sqmc-ekf-09092026_0235/source.bundle is okay
+The bundle contains this ref:
+846957bacb00a8673871aaf428115455832c9024 refs/heads/main
+The bundle records a complete history.
+Running: ['git', 'fetch', '/content/sqmc-ekf-09092026_0235/source.bundle', 'refs/heads/main']
+From /content/sqmc-ekf-09092026_0235/source.bundle
+ * branch            main       -> FETCH_HEAD
+Running: ['git', 'checkout', '--detach', 'FETCH_HEAD']
+HEAD is now at 846957b update config to lower reps, higher epochs
+Running: ['/usr/bin/python3', '-m', 'pip', 'install', '-c', '/content/sqmc-ekf-09092026_0235/jax_constraints.txt', 'cuthbert', 'cuthbertlib', 'ghq']
+Collecting cuthbert
+  Downloading cuthbert-0.0.15-py3-none-any.whl.metadata (7.9 kB)
+Collecting cuthbertlib
+  Downloading cuthbertlib-0.0.15-py3-none-any.whl.metadata (779 bytes)
+Collecting ghq
+  Downloading ghq-0.0.5-py3-none-any.whl.metadata (4.6 kB)
+Requirement already satisfied: jax>=0.4.35 in /usr/local/lib/python3.13/dist-packages (from cuthbertlib) (0.11.1)
+Requirement already satisfied: numba>=0.60.0 in /usr/local/lib/python3.13/dist-packages (from cuthbertlib) (0.61.2)
+Requirement already satisfied: jaxlib<=0.11.1,>=0.11.1 in /usr/local/lib/python3.13/dist-packages (from jax>=0.4.35->cuthbertlib) (0.11.1)
+Requirement already satisfied: ml_dtypes>=0.5.0 in /usr/local/lib/python3.13/dist-packages (from jax>=0.4.35->cuthbertlib) (0.6.0)
+Requirement already satisfied: numpy>=2.1 in /usr/local/lib/python3.13/dist-packages (from jax>=0.4.35->cuthbertlib) (2.1.3)
+Requirement already satisfied: opt_einsum in /usr/local/lib/python3.13/dist-packages (from jax>=0.4.35->cuthbertlib) (3.4.0)
+Requirement already satisfied: scipy>=1.15 in /usr/local/lib/python3.13/dist-packages (from jax>=0.4.35->cuthbertlib) (1.16.3)
+Requirement already satisfied: llvmlite<0.45,>=0.44.0dev0 in /usr/local/lib/python3.13/dist-packages (from numba>=0.60.0->cuthbertlib) (0.44.0)
+Downloading cuthbert-0.0.15-py3-none-any.whl (66 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 66.4/66.4 kB 6.9 MB/s eta 0:00:00
+Downloading cuthbertlib-0.0.15-py3-none-any.whl (56 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 56.9/56.9 kB 7.2 MB/s eta 0:00:00
+Downloading ghq-0.0.5-py3-none-any.whl (9.7 kB)
+Installing collected packages: ghq, cuthbertlib, cuthbert
+Successfully installed cuthbert-0.0.15 cuthbertlib-0.0.15 ghq-0.0.5
+Running: ['/usr/bin/python3', 'sqmc/qmc/_generate_sobol_data.py', '--verify-scipy']
+Generated direction integers match SciPy exactly.
+Wrote (21201, 30) uint32 direction integers to /content/rbsqmc/sqmc/qmc/_sobol_direction_numbers.npz.
+Hardware: NVIDIA A100-SXM4-40GB, 40960 MiB, 580.82.07
+Running: ['/usr/bin/python3', '-u', '-m', 'rbsqmc.comparison.sqmc_ekf.run', '--config', '/content/sqmc-ekf-09092026_0235/comparison_config.json', '--data', '/content/rbsqmc/rbsqmc/data/results.csv', '--output-dir', '/content/sqmc-ekf-09092026_0235', '--methods', 'sqmc']
+Default initial parameters: num_teams=48, gamma_0.shape=(48, 48), B.shape=(2, 2)
+    B: [[1.  0.2]
+ [0.2 1. ]]
+    mean_0: 0.0
+    gamma_0: 0.134375
+    kappa: 0.001
+    alpha: 0.2
+    beta: -4.0
+sqmc: compiled in 16.0s
+sqmc epoch 1/50: train -15622.8006, test -1047.0169, |grad| 676.4904, 74.5s
+sqmc epoch 2/50: train -15679.0386, test -1040.3734, |grad| 624.6219, 73.2s
+sqmc epoch 3/50: train -15611.9918, test -1057.4842, |grad| 622.8352, 73.1s
+sqmc epoch 4/50: train -15654.1924, test -1025.5278, |grad| 597.4906, 73.2s
+sqmc epoch 5/50: train -15571.2725, test -1044.0186, |grad| 603.7905, 73.0s
+sqmc epoch 6/50: train -15587.8111, test -1057.3157, |grad| 558.2671, 73.0s
+sqmc epoch 7/50: train -15479.4356, test -1015.8632, |grad| 592.1469, 73.1s
+sqmc epoch 8/50: train -15442.1848, test -1031.3304, |grad| 532.5610, 72.8s
+sqmc epoch 9/50: train -15386.7411, test -1013.0151, |grad| 531.7299, 73.1s
+sqmc epoch 10/50: train -15380.3449, test -1007.8735, |grad| 553.1751, 73.1s
+sqmc epoch 11/50: train -15381.1764, test -1057.2552, |grad| 508.6410, 72.9s
+sqmc epoch 12/50: train -15274.8014, test -1055.1693, |grad| 506.0697, 72.9s
+sqmc epoch 13/50: train -15395.7460, test -1022.7713, |grad| 514.0408, 72.8s
+sqmc epoch 14/50: train -15182.2991, test -1049.2770, |grad| 483.4427, 72.6s
+sqmc epoch 15/50: train -15467.5807, test -1038.6974, |grad| 522.4809, 73.0s
+sqmc epoch 16/50: train -15162.3575, test -1036.8876, |grad| 523.8555, 73.2s
+sqmc epoch 17/50: train -15342.5851, test -1011.5611, |grad| 514.7772, 73.3s
+sqmc epoch 18/50: train -15233.4137, test -1026.3316, |grad| 496.7323, 73.0s
+sqmc epoch 19/50: train -15121.7539, test -1041.6061, |grad| 494.1383, 72.8s
+sqmc epoch 20/50: train -15158.4826, test -991.1685, |grad| 508.2928, 73.2s
+sqmc epoch 21/50: train -15039.9010, test -1036.3942, |grad| 510.6849, 73.1s
+sqmc epoch 22/50: train -15049.4514, test -994.8125, |grad| 459.3248, 73.1s
+sqmc epoch 23/50: train -15080.6845, test -1016.8677, |grad| 448.9795, 73.4s
+sqmc epoch 24/50: train -14825.6880, test -1007.9534, |grad| 491.6270, 72.8s
+sqmc epoch 25/50: train -15209.0263, test -1008.1285, |grad| 458.3517, 73.0s
+sqmc epoch 26/50: train -15107.3426, test -970.8976, |grad| 464.5069, 73.0s
+sqmc epoch 27/50: train -14995.5152, test -1014.9472, |grad| 481.0816, 73.0s
+sqmc epoch 28/50: train -14997.7555, test -1027.9251, |grad| 449.5817, 73.0s
+sqmc epoch 29/50: train -14962.4235, test -1039.5278, |grad| 463.1862, 73.0s
+sqmc epoch 30/50: train -15003.6252, test -1024.1342, |grad| 445.0106, 72.9s
+sqmc epoch 31/50: train -15095.2838, test -996.3353, |grad| 454.2563, 72.9s
+sqmc epoch 32/50: train -15053.6686, test -1014.3350, |grad| 469.3928, 73.0s
+sqmc epoch 33/50: train -14973.1623, test -1005.4341, |grad| 452.9190, 73.4s
+sqmc epoch 34/50: train -14944.8518, test -998.9146, |grad| 442.8493, 73.6s
+sqmc epoch 35/50: train -15091.4527, test -991.9695, |grad| 450.8022, 73.5s
+sqmc epoch 36/50: train -15117.2190, test -977.0593, |grad| 448.1422, 73.7s
+sqmc epoch 37/50: train -14903.0371, test -990.9730, |grad| 419.9241, 73.4s
+sqmc epoch 38/50: train -14934.6474, test -1024.7299, |grad| 440.5889, 73.0s
+sqmc epoch 39/50: train -14946.5409, test -989.8309, |grad| 445.3593, 72.7s
+sqmc epoch 40/50: train -14959.8602, test -1035.0648, |grad| 429.4819, 73.0s
+sqmc epoch 41/50: train -14822.5847, test -1009.8056, |grad| 441.5099, 73.5s
+sqmc epoch 42/50: train -15022.7621, test -985.9205, |grad| 461.5046, 73.3s
+sqmc epoch 43/50: train -14928.7640, test -1020.7686, |grad| 436.7702, 72.9s
+sqmc epoch 44/50: train -14869.3710, test -976.4855, |grad| 426.3938, 73.4s
+sqmc epoch 45/50: train -14899.0983, test -1011.6063, |grad| 439.4383, 73.3s
+sqmc epoch 46/50: train -14763.7738, test -1017.4292, |grad| 450.0196, 73.5s
+sqmc epoch 47/50: train -14946.3967, test -1030.4527, |grad| 440.2397, 73.4s
+sqmc epoch 48/50: train -14862.2414, test -995.6836, |grad| 435.1946, 73.2s
+sqmc epoch 49/50: train -14830.2758, test -1021.1122, |grad| 444.4233, 73.6s
+sqmc epoch 50/50: train -14991.4213, test -1005.2262, |grad| 470.4242, 73.3s
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_correlation_topn_bar.png
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_top5_strengths.png
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_timeseries_states.png
+Saved timeseries data to /content/sqmc-ekf-09092026_0235/images/sqmc_timeseries_states.json
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_pre_worldcup_rankings.png
+Saved rankings data to /content/sqmc-ekf-09092026_0235/images/sqmc_pre_worldcup_rankings.json
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_post_worldcup_rankings.png
+Saved rankings data to /content/sqmc-ekf-09092026_0235/images/sqmc_post_worldcup_rankings.json
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_predictions/prediction_plots/2026-07-10_Spain_vs_Belgium.png
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_predictions/prediction_plots/2026-07-11_Norway_vs_England.png
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_predictions/prediction_plots/2026-07-11_Argentina_vs_Switzerland.png
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_predictions/prediction_plots/2026-07-14_France_vs_Spain.png
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_predictions/prediction_plots/2026-07-15_England_vs_Argentina.png
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_predictions/prediction_plots/2026-07-18_France_vs_England.png
+Saved plot to /content/sqmc-ekf-09092026_0235/images/sqmc_predictions/prediction_plots/2026-07-19_Spain_vs_Argentina.png
+Partial comparison (sqmc) complete: /content/sqmc-ekf-09092026_0235

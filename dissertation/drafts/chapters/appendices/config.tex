@@ -13,34 +13,37 @@ The static parameters are $\Theta = (\Gamma_0, B, \kappa, \alpha, \beta)$, with 
 
 \section{Optimisation}
 
-Both methods use Adam with a cosine-decay learning-rate schedule, learning rate $0.02$, seed $0$ and exactly $50$ updates. The SQMC log-likelihood gradient is averaged over $10$ independently randomised RQMC replicas at each update; the EKF gradient is deterministic. The EKF integrates the bivariate-Poisson likelihood under the predictive Gaussian by Gauss--Hermite quadrature of degree $32$.
+Both methods use Adam with a cosine-decay learning-rate schedule, learning rate $0.02$, seed $0$ and exactly $50$ updates. The SQMC log-likelihood gradient is averaged over $15$ independently randomised RQMC replicas at each update; the EKF gradient is deterministic. The EKF integrates the bivariate-Poisson likelihood under the predictive Gaussian by Gauss--Hermite quadrature of degree $32$.
 
 \section{Full configuration}
 
-Table~\ref{tab:config} lists the complete configuration.
+Table~\ref{tab:config} lists the complete configuration. The values correspond to the authoritative comparison run \texttt{09092026\_1431} at source commit \texttt{336842f}, which is the run reported in Section~\ref{sec:performance-comparison}.
 
-\begin{table}[htbp]
+\begin{table}[H]
 \centering
-\begin{tabular}{ll}
+\begin{tabularx}{\textwidth}{lXX}
 \toprule
-Setting & Value \\
+Setting & Value & Description \\
 \midrule
-Number of teams $K$ & $48$ \\
-Particles $N$ & $128$ \\
-Epochs & $50$ \\
-Learning rate & $0.02$ \\
-Learning-rate schedule & cosine decay \\
-Seed & $0$ \\
-SQMC gradient replicas & $10$ \\
-Gauss--Hermite degree & $32$ \\
-$\max\_goals$ & $8$ \\
-$\text{match\_scale}$ & $1$ \\
-Include friendlies & yes \\
-Training start & $1980\text{-}01\text{-}01$ \\
-Test start & $2024\text{-}01\text{-}01$ \\
-Prediction start & $2026\text{-}06\text{-}11$ \\
+Number of teams $K$ & $48$ & Teams in the World Cup 2026 model \\
+Particles $N$ & $512$ & SQMC particle count \\
+Epochs & $50$ & Optimisation updates \\
+Learning rate & $0.02$ & Adam step size \\
+Learning-rate schedule & cosine decay & Decay of the learning rate over epochs \\
+Seed & $0$ & Random seed for optimisation and RQMC \\
+SQMC gradient replicas & $15$ & RQMC replicas averaged per gradient \\
+Gauss--Hermite degree & $32$ & Quadrature degree for the EKF likelihood \\
+$\max\_goals$ & $8$ & Score truncation threshold \\
+$\text{match\_scale}$ & $1$ & Observation scale for non-friendly matches \\
+Include friendlies & yes & Friendly fixtures retained in training \\
+Training start & $1980\text{-}01\text{-}01$ & Start of the training period \\
+Test start & $2024\text{-}01\text{-}01$ & Start of the test period \\
+Prediction start & $2026\text{-}06\text{-}11$ & Start of the prediction period \\
+GPU & A100 & Hardware for the SQMC run \\
+Source commit & \texttt{336842f} & Repository revision of the run \\
+Run ID & \texttt{09092026\_1431} & Identifier of the authoritative run \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \caption{Configuration for the performance comparison of Section~\ref{sec:performance-comparison}.}
 \label{tab:config}
 \end{table}

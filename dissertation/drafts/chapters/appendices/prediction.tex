@@ -1,45 +1,117 @@
-\chapter{Prediction Tables}
+\chapter{Prediction}
 \label{app:prediction}
 
-This appendix collects the win--loss predictions of the bivariate-Poisson model under the EKF and RB-SQMC methods described in Section~\ref{sec:performance-comparison}. For each match, the predicted outcome is the mode of the three-outcome distribution (home win, draw, away win) induced by the one-step-ahead score grid, computed before the known result is assimilated.
+The tables below report the predicted outcome for each of the 104 World Cup 2026 fixtures under both methods described in Section~\ref{sec:performance-comparison}, together with the actual result. The fixtures are grouped by tournament stage. For each match, the predicted outcome is the mode of the three-outcome distribution (home win, draw, away win) induced by the one-step-ahead score grid.
 
 \section{World Cup 2026 fixtures}
 \label{app:prediction-fixtures}
 
-Table~\ref{tab:prediction-appendix} reports the predicted outcome for each of the four World Cup 2026 fixtures under both methods, together with the actual result.
+\section{Round of 32}
 
-\begin{table}[htbp]
+\begin{table}[H]
 \centering
 \begin{tabular}{llccc}
 \toprule
-Home team & Away team & Actual result & EKF predicted & RB-SQMC predicted \\
+Match & Actual & EKF & RB-SQMC \\
 \midrule
-Spain & Belgium & $2$--$1$ & Away win & Home win \\
-Norway & England & $1$--$2$ & Home win & Away win \\
-Argentina & Switzerland & $3$--$1$ & Away win & Home win \\
-France & Spain & $0$--$2$ & Home win & Away win \\
+South Africa--Canada & 0--1 & 0--1 & 0--3 \\
+Brazil--Japan & 2--1 & 1--0 & 1--0 \\
+Germany--Paraguay & 1--1 & 1--0 & 5--0 \\
+Netherlands--Morocco & 1--1 & 1--1 & 1--0 \\
+Ivory Coast--Norway & 1--2 & 1--1 & 1--1 \\
+France--Sweden & 3--0 & 3--1 & 0--5 \\
+Mexico--Ecuador & 2--0 & 0--0 & 0--0 \\
+England--DR Congo & 2--1 & 0--0 & 1--0 \\
+Belgium--Senegal & 3--2 & 2--0 & 0--1 \\
+United States--Bosnia and Herzegovina & 2--0 & 2--1 & 3--1 \\
+Spain--Austria & 3--0 & 1--1 & 1--1 \\
+Portugal--Croatia & 2--1 & 2--0 & 2--2 \\
+Switzerland--Algeria & 2--0 & 2--1 & 1--0 \\
+Australia--Egypt & 1--1 & 0--0 & 0--0 \\
+Argentina--Cape Verde & 3--2 & 1--0 & 2--0 \\
+Colombia--Ghana & 1--0 & 2--0 & 1--1 \\
 \bottomrule
 \end{tabular}
-\caption{Win--loss predictions of the bivariate-Poisson model for the World Cup 2026 fixtures. The predicted outcome is the mode of the three-outcome distribution under each method.}
-\label{tab:prediction-appendix}
+\caption{Win--loss predictions of the bivariate-Poisson model for the Round of 32. The predicted outcome is the mode of the three-outcome distribution under each method.}
 \end{table}
 
-\section{Knockout fixtures}
-\label{app:prediction-knockout}
+\section{Round of 16}
 
-Table~\ref{tab:prediction-knockout-appendix} reports the predicted outcome for the two semi-finals and the final.
-
-\begin{table}[htbp]
+\begin{table}[H]
 \centering
 \begin{tabular}{llccc}
 \toprule
-Home team & Away team & Actual result & EKF predicted & RB-SQMC predicted \\
+Match & Actual & EKF & RB-SQMC \\
 \midrule
-England & Argentina & $1$--$2$ & Away win & Away win \\
-France & Spain & $0$--$2$ & Home win & Away win \\
-Spain & Argentina & $1$--$0$ & Home win & Home win \\
+Canada--Morocco & 0--3 & 0--0 & 1--0 \\
+Paraguay--France & 0--1 & 0--2 & 0--2 \\
+Brazil--Norway & 1--2 & 3--1 & 0--0 \\
+Mexico--England & 2--3 & 1--0 & 0--0 \\
+Portugal--Spain & 0--1 & 1--0 & 0--0 \\
+United States--Belgium & 1--4 & 1--2 & 2--3 \\
+Argentina--Egypt & 3--2 & 2--0 & 0--0 \\
+Switzerland--Colombia & 0--0 & 1--0 & 3--0 \\
 \bottomrule
 \end{tabular}
-\caption{Win--loss predictions of the bivariate-Poisson model for the two semi-finals and the final. The predicted outcome is the mode of the three-outcome distribution under each method.}
-\label{tab:prediction-knockout-appendix}
+\caption{Win--loss predictions of the bivariate-Poisson model for the Round of 16. The predicted outcome is the mode of the three-outcome distribution under each method.}
+\end{table}
+
+\section{Quarter-finals}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llccc}
+\toprule
+Match & Actual & EKF & RB-SQMC \\
+\midrule
+France--Morocco & 2--0 & 1--0 & 0--0 \\
+Spain--Belgium & 2--1 & 1--1 & 1--1 \\
+Norway--England & 1--2 & 1--1 & 0--0 \\
+Argentina--Switzerland & 3--1 & 1--1 & 0--0 \\
+\bottomrule
+\end{tabular}
+\caption{Win--loss predictions of the bivariate-Poisson model for the Quarter-finals. The predicted outcome is the mode of the three-outcome distribution under each method.}
+\end{table}
+
+\section{Semi-finals}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llccc}
+\toprule
+Match & Actual result & EKF predicted & RB-SQMC predicted \\
+\midrule
+France--Spain & 0--2 & 1--0 & 1--1 \\
+England--Argentina & 1--2 & 1--1 & 0--0 \\
+\bottomrule
+\end{tabular}
+\caption{Win--loss predictions of the bivariate-Poisson model for the Semi-finals. The predicted outcome is the mode of the three-outcome distribution under each method.}
+\end{table}
+
+\section{3rd place}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llccc}
+\toprule
+Match & Actual result & EKF predicted & RB-SQMC predicted \\
+\midrule
+France--England & 4--6 & 1--0 & 0--1 \\
+\bottomrule
+\end{tabular}
+\caption{Win--loss predictions of the bivariate-Poisson model for the 3rd place. The predicted outcome is the mode of the three-outcome distribution under each method.}
+\end{table}
+
+\section{Final}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llccc}
+\toprule
+Match & Actual result & EKF predicted & RB-SQMC predicted \\
+\midrule
+Spain--Argentina & 1--0 & 1--1 & 0--0 \\
+\bottomrule
+\end{tabular}
+\caption{Win--loss predictions of the bivariate-Poisson model for the Final. The predicted outcome is the mode of the three-outcome distribution under each method.}
 \end{table}
